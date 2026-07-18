@@ -16,6 +16,12 @@ The dataset's `validation_list.txt` and `testing_list.txt` define the official
 speaker-aware partitions. Before training, the manifest builder must independently
 derive speaker IDs from filenames and show that no speaker crosses partitions.
 
+The first audit completed on 2026-07-18. It found 84,843 training clips, 9,981
+validation clips, and 11,005 test clips. The 2,618 derived speakers were disjoint
+across those partitions. Two clean builds produced byte-identical JSONL output; the
+counts and digest are kept in
+[reports/speech-commands-audit.json](../reports/speech-commands-audit.json).
+
 The ten standard commands are target classes. Other recorded words are `unknown`;
 background recordings supply silence/noise windows. Unknown and silence sampling
 rates belong to the experiment configuration and will be reported with every result.

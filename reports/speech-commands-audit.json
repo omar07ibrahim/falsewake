@@ -1,0 +1,76 @@
+{
+  "audit_date": "2026-07-18",
+  "background": [
+    {
+      "path": "_background_noise_/doing_the_dishes.wav",
+      "sample_count": 1522930
+    },
+    {
+      "path": "_background_noise_/dude_miaowing.wav",
+      "sample_count": 988891
+    },
+    {
+      "path": "_background_noise_/exercise_bike.wav",
+      "sample_count": 980062
+    },
+    {
+      "path": "_background_noise_/pink_noise.wav",
+      "sample_count": 960000
+    },
+    {
+      "path": "_background_noise_/running_tap.wav",
+      "sample_count": 978488
+    },
+    {
+      "path": "_background_noise_/white_noise.wav",
+      "sample_count": 960000
+    }
+  ],
+  "label_counts": {
+    "down": 3917,
+    "go": 3880,
+    "left": 3801,
+    "no": 3941,
+    "off": 3745,
+    "on": 3845,
+    "right": 3778,
+    "stop": 3872,
+    "unknown": 67283,
+    "up": 3723,
+    "yes": 4044
+  },
+  "manifest": {
+    "builds_compared": 2,
+    "byte_identical": true,
+    "jsonl_sha256": "ade3ded28685b97db3e08486094e84a147f03f0dc0dcf15b0d3995acd690964c",
+    "schema_version": 1
+  },
+  "record_count": 105829,
+  "source": {
+    "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+    "name": "speech_commands_v0.02",
+    "url": "https://storage.googleapis.com/download.tensorflow.org/data/speech_commands_v0.02.tar.gz"
+  },
+  "speaker_counts": {
+    "test": 250,
+    "train": 2112,
+    "validation": 256
+  },
+  "split_counts": {
+    "test": 11005,
+    "train": 84843,
+    "validation": 9981
+  },
+  "target_words": [
+    "yes",
+    "no",
+    "up",
+    "down",
+    "left",
+    "right",
+    "on",
+    "off",
+    "stop",
+    "go"
+  ]
+}
