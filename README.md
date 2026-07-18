@@ -27,6 +27,13 @@ feature extractions were byte-identical, and an independent refit reproduced eve
 coefficient and prediction. These are threshold-free clip diagnostics: false
 accepts per hour and false reject rate have not been measured.
 
+![Validation and test open-set clips predicted as a target command](reports/experiment-000-open-set.png)
+
+The hatched bars are validation. The exact numerators and denominators are printed
+on the figure; the companion
+[per-class recall chart](reports/experiment-000-class-recall.svg) keeps the same
+zero-based scale across both splits.
+
 The initial study uses:
 
 - the ten-command Speech Commands v0.02 task (`yes`, `no`, `up`, `down`, `left`,

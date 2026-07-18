@@ -44,6 +44,7 @@ def test_static_plots_render_with_titles_and_without_remote_assets(
         assert "<svg" in contents
         assert "http://www.w3.org/2000/svg" in contents
         assert "https://" not in contents
+        assert all(line == line.rstrip() for line in contents.splitlines())
 
 
 def test_plot_loader_rejects_threshold_results(tmp_path: Path) -> None:

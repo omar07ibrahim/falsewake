@@ -186,6 +186,7 @@ def _style_axis(axis: Axes) -> None:
 
 
 def _save(figure: Figure, output_stem: Path) -> None:
+    svg_path = output_stem.with_suffix(".svg")
     figure.savefig(
         output_stem.with_suffix(".png"),
         dpi=180,
@@ -193,11 +194,18 @@ def _save(figure: Figure, output_stem: Path) -> None:
         metadata={"Software": "FalseWake experiment 000"},
     )
     figure.savefig(
-        output_stem.with_suffix(".svg"),
+        svg_path,
         facecolor=BACKGROUND,
         metadata={"Creator": "FalseWake experiment 000", "Date": None},
     )
     plt.close(figure)
+    try:
+        lines = svg_path.read_text(encoding="utf-8").splitlines()
+        svg_path.write_text(
+            "\n".join(line.rstrip() for line in lines) + "\n", encoding="utf-8"
+        )
+    except OSError as error:
+        raise ResultPlotError(f"cannot normalize SVG output: {error}") from error
 
 
 def plot_class_recall(rows: Sequence[ClassRecall], output_stem: Path) -> None:
@@ -251,7 +259,7 @@ def plot_class_recall(rows: Sequence[ClassRecall], output_stem: Path) -> None:
         fontsize=14,
         pad=16,
     )
-    axis.legend(frameon=False, loc="lower right", fontsize=9)
+    axis.legend(frameon=False, loc="upper right", fontsize=9)
     axis.text(
         0,
         -0.12,
@@ -291,7 +299,7 @@ def plot_open_set(rows: Sequence[OpenSetRate], output_stem: Path) -> None:
             va="center",
             color=INK,
             fontsize=9,
-            fontweight="semibold",
+            fontweight="bold",
         )
     axis.set_yticks(y, [row.label for row in rows])
     axis.invert_yaxis()

@@ -108,6 +108,8 @@ and seven of the 25 source words have zero recall in that sampled slice. The mod
 therefore recognizes some isolated commands but is a poor open-set detector. This
 is a useful negative floor for the streaming model, not a result to optimize away.
 
+![Open-set target-prediction rates](../reports/experiment-000-open-set.png)
+
 The zero target predictions for test `silence` must stay in context: all 405 clips
 are overlapping windows with unique starts from one `white_noise.wav` recording.
 They are correlated, cover little acoustic diversity, and say nothing about false
@@ -116,6 +118,8 @@ reject rate, or continuous-stream metric has been evaluated.
 
 The complete confusion matrices, per-class metrics, and all 25 lexical slices are
 in [reports/experiment-000-linear.json](../reports/experiment-000-linear.json).
+The [per-class recall figure](../reports/experiment-000-class-recall.svg) compares
+validation and test on a shared zero-based scale.
 The scaler and linear weights are portable JSON in
 [models/experiment-000-linear.json](../models/experiment-000-linear.json). An
 independent refit reproduced the scaler, coefficients, iteration count, and every
