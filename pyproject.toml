@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
+falsewake-features = "falsewake.feature_matrix:main"
 falsewake-manifest = "falsewake.speech_commands:main"
 
 [project.optional-dependencies]
