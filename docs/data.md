@@ -1,0 +1,45 @@
+# Data plan
+
+FalseWake keeps downloaded audio outside the repository. Generated manifests contain
+relative source identifiers and experiment splits, not copied recordings.
+
+## Speech Commands v0.02
+
+- Role: training, validation, and clip-level testing.
+- Source: [TensorFlow download](https://storage.googleapis.com/download.tensorflow.org/data/speech_commands_v0.02.tar.gz)
+- Documentation: [TensorFlow Datasets catalog](https://www.tensorflow.org/datasets/catalog/speech_commands)
+- License: Creative Commons Attribution 4.0.
+- Download size: approximately 2.37 GiB.
+- Archive SHA-256: `af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58`.
+
+The dataset's `validation_list.txt` and `testing_list.txt` define the official
+speaker-aware partitions. Before training, the manifest builder must independently
+derive speaker IDs from filenames and show that no speaker crosses partitions.
+
+The ten standard commands are target classes. Other recorded words are `unknown`;
+background recordings supply silence/noise windows. Unknown and silence sampling
+rates belong to the experiment configuration and will be reported with every result.
+
+## LibriSpeech
+
+- Role: continuous negative speech only; it is never a positive command source.
+- Source: [OpenSLR SLR12](https://www.openslr.org/12/)
+- License: Creative Commons Attribution 4.0.
+- Validation stream: `dev-clean` (337 MiB archive).
+- Held-out test stream: `test-clean` (346 MiB archive).
+
+Thresholds, debounce, and smoothing parameters may be chosen on `dev-clean`. The
+`test-clean` stream remains untouched until one configuration has been selected. A
+result that changes the configuration after viewing `test-clean` starts a new
+experiment rather than replacing the old one.
+
+## Attribution
+
+Results using Speech Commands will cite Pete Warden, *Speech Commands: A Dataset for
+Limited-Vocabulary Speech Recognition* (2018). Results using LibriSpeech will cite
+Vassil Panayotov, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur, *LibriSpeech: An
+ASR Corpus Based on Public Domain Audio Books* (2015).
+
+The future browser demo will ship only original code, model weights trained by this
+project, aggregate results, and a few recordings contributed specifically for the
+demo. It will not bundle either source corpus.
