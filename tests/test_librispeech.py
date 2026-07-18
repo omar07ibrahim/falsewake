@@ -130,6 +130,7 @@ def test_canonical_directory_entries_and_legacy_regular_type_are_allowed(
     inspection = inspect_librispeech_archive(archive, source_identity=None)
 
     assert inspection.directory_count == 4
+    assert inspection.directory_paths == tuple(member.name for member, _ in directories)
     assert inspection.summary()["member_count"] == 12
 
 
@@ -290,7 +291,7 @@ def test_same_inode_mutation_during_scan_is_rejected(
 
     def inspect_then_mutate(
         opened: tarfile.TarFile,
-    ) -> tuple[int, int, tuple[librispeech.ArchiveMember, ...]]:
+    ) -> tuple[tuple[str, ...], int, tuple[librispeech.ArchiveMember, ...]]:
         result = original(opened)
         with archive.open("r+b") as stream:
             stream.seek(-1, io.SEEK_END)
