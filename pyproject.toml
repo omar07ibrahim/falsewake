@@ -22,6 +22,7 @@ dependencies = [
 falsewake-features = "falsewake.feature_matrix:main"
 falsewake-linear = "falsewake.linear_baseline:main"
 falsewake-manifest = "falsewake.speech_commands:main"
+falsewake-plots = "falsewake.result_plots:main"
 
 [project.optional-dependencies]
 dev = [
