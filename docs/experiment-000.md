@@ -42,5 +42,6 @@ one-second, 16 kHz mono window. It predicts the ten target commands plus `unknow
 ## Results
 
 The source-data audit is complete; the classifier has not been run yet. The audit
-report records 105,829 usable command clips and a byte-stable manifest. No model
-metric has been calculated, and LibriSpeech has not been inspected.
+report records 105,829 usable command clips, six partitioned background recordings,
+and a byte-stable payload-bound manifest. No model metric has been calculated, and
+LibriSpeech has not been inspected.

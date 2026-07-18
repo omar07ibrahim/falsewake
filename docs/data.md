@@ -13,18 +13,23 @@ relative source identifiers and experiment splits, not copied recordings.
 - Archive SHA-256: `af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58`.
 
 The dataset's `validation_list.txt` and `testing_list.txt` define the official
-speaker-aware partitions. Before training, the manifest builder must independently
-derive speaker IDs from filenames and show that no speaker crosses partitions.
+speaker-aware partitions. The manifest builder pins both files, derives speaker IDs
+independently, and rejects a source if any speaker crosses partitions. It also hashes
+every WAV payload; matching names and headers are not enough to pass the audit.
 
 The first audit completed on 2026-07-18. It found 84,843 training clips, 9,981
 validation clips, and 11,005 test clips. The 2,618 derived speakers were disjoint
-across those partitions. Two clean builds produced byte-identical JSONL output; the
-counts and digest are kept in
+across those partitions. Two payload-bound builds produced byte-identical JSONL
+output; the counts and digests are kept in
 [reports/speech-commands-audit.json](../reports/speech-commands-audit.json).
 
-The ten standard commands are target classes. Other recorded words are `unknown`;
-background recordings supply silence/noise windows. Unknown and silence sampling
-rates belong to the experiment configuration and will be reported with every result.
+The ten standard commands are target classes. Other recorded words are `unknown`.
+The six long background recordings have a file-level split: four for training,
+`running_tap.wav` for validation, and `white_noise.wav` for test. A window never
+crosses those boundaries. This small, source-specific validation/test background set
+is a limitation, not a general acoustic-noise benchmark. Unknown and silence
+sampling rates belong to the experiment configuration and will be reported with
+every result.
 
 ## LibriSpeech
 
@@ -49,3 +54,7 @@ ASR Corpus Based on Public Domain Audio Books* (2015).
 The future browser demo will ship only original code, model weights trained by this
 project, aggregate results, and a few recordings contributed specifically for the
 demo. It will not bundle either source corpus.
+
+The audit runs on an exclusively owned extraction and output directory. It rejects
+symlinks and unexpected inventories, but it is not intended to defend against a
+same-user process mutating those directories concurrently.

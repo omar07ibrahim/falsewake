@@ -1,31 +1,47 @@
 {
+  "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
   "audit_date": "2026-07-18",
   "background": [
     {
       "path": "_background_noise_/doing_the_dishes.wav",
-      "sample_count": 1522930
+      "sample_count": 1522930,
+      "sha256": "099eafcd7c4c266612012b5622b97157042e5288acaf4cbf3dc475814bfcdaa8",
+      "split": "train"
     },
     {
       "path": "_background_noise_/dude_miaowing.wav",
-      "sample_count": 988891
+      "sample_count": 988891,
+      "sha256": "1acd62f115d4c3f9daca9c5ec0c2e0c3e174a2a08be30200003a51de52b288ff",
+      "split": "train"
     },
     {
       "path": "_background_noise_/exercise_bike.wav",
-      "sample_count": 980062
+      "sample_count": 980062,
+      "sha256": "e453813ed45b2f9f81d5600ec3ac2a5e22d3f2c947fe6f0a3ff1f3d6018c014d",
+      "split": "train"
     },
     {
       "path": "_background_noise_/pink_noise.wav",
-      "sample_count": 960000
+      "sample_count": 960000,
+      "sha256": "b6e038c83fb342e39267d4fe69663f76ef0c1121ff60232e7b79171c00318cd6",
+      "split": "train"
     },
     {
       "path": "_background_noise_/running_tap.wav",
-      "sample_count": 978488
+      "sample_count": 978488,
+      "sha256": "c199c5fd61f5bf9fd57f1c346c8a51c0c035d63d176348dd9f0f7d671d7eb8eb",
+      "split": "validation"
     },
     {
       "path": "_background_noise_/white_noise.wav",
-      "sample_count": 960000
+      "sample_count": 960000,
+      "sha256": "aa97784fe735002c407aa66efd0e44d87d9d2da97e7a35fc6bac48632be11f2d",
+      "split": "test"
     }
   ],
+  "background_count": 6,
+  "inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+  "jsonl_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
   "label_counts": {
     "down": 3917,
     "go": 3880,
@@ -39,17 +55,17 @@
     "up": 3723,
     "yes": 4044
   },
-  "manifest": {
+  "record_count": 105829,
+  "reproduction": {
     "builds_compared": 2,
     "byte_identical": true,
-    "jsonl_sha256": "ade3ded28685b97db3e08486094e84a147f03f0dc0dcf15b0d3995acd690964c",
-    "schema_version": 1
+    "summary_sha256": "bf130f8e86178e1d2a8a3ddefc2a3ca122f9a983000aa3de9a4cdde325fd6525"
   },
-  "record_count": 105829,
-  "source": {
-    "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
-    "name": "speech_commands_v0.02",
-    "url": "https://storage.googleapis.com/download.tensorflow.org/data/speech_commands_v0.02.tar.gz"
+  "schema_version": 2,
+  "source": "speech_commands_v0.02",
+  "source_files": {
+    "testing_list_sha256": "2d17c6b3faf63be43eda93cfeb0c747cfd79b7b236282039dbac65a2cb5f1df5",
+    "validation_list_sha256": "5747407275538b4056e823982f0db1fc993776ab532048196a19be701bdc87d2"
   },
   "speaker_counts": {
     "test": 250,

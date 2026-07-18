@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import wave
 from pathlib import Path
@@ -35,8 +36,12 @@ def _fixture(root: Path) -> Path:
 
 def test_manifest_is_stable_and_keeps_speakers_disjoint(tmp_path: Path) -> None:
     root = _fixture(tmp_path / "dataset")
-    first = build_speech_commands_manifest(root, tmp_path / "first")
-    second = build_speech_commands_manifest(root, tmp_path / "second")
+    first = build_speech_commands_manifest(
+        root, tmp_path / "first", source_identity=None
+    )
+    second = build_speech_commands_manifest(
+        root, tmp_path / "second", source_identity=None
+    )
 
     assert first == second
     assert first.jsonl_sha256 == second.jsonl_sha256
@@ -58,6 +63,7 @@ def test_manifest_is_stable_and_keeps_speakers_disjoint(tmp_path: Path) -> None:
         )
     )
     assert summary["record_count"] == 4
+    assert summary["schema_version"] == 2
     assert summary["split_counts"] == {"test": 1, "train": 2, "validation": 1}
     assert summary["speaker_counts"] == {
         "test": 1,
@@ -70,9 +76,24 @@ def test_manifest_is_stable_and_keeps_speakers_disjoint(tmp_path: Path) -> None:
         "unknown": 1,
         "yes": 1,
     }
-    assert summary["background"] == [
-        {"path": "_background_noise_/room.wav", "sample_count": 32_000}
-    ]
+    assert summary["background_count"] == 1
+    assert summary["background"][0]["path"] == "_background_noise_/room.wav"
+    assert summary["background"][0]["split"] == "train"
+    assert summary["background"][0]["sample_count"] == 32_000
+    assert summary["source"] == "unverified"
+
+    rows = (tmp_path / "first" / "speech-commands.jsonl").read_bytes()
+    assert rows.count(b"\n") == 5
+    assert rows == (tmp_path / "second" / "speech-commands.jsonl").read_bytes()
+    assert first.jsonl_sha256 == (
+        "63867b45349e73c8765aeaa93fd47d536f33da3fe90505fe0acef9dac4084982"
+    )
+    assert (
+        hashlib.sha256(
+            (tmp_path / "first" / "speech-commands-summary.json").read_bytes()
+        ).hexdigest()
+        == "43ee8f813b5a9231d7038e97713663c190729171d3cfd9e6b0286bf7fd6bd173"
+    )
 
 
 def test_speaker_crossing_splits_is_rejected(tmp_path: Path) -> None:
@@ -83,7 +104,7 @@ def test_speaker_crossing_splits_is_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(SpeechCommandsError, match="speaker 'bob' crosses"):
-        inspect_speech_commands(root)
+        inspect_speech_commands(root, source_identity=None)
 
 
 def test_split_entry_for_missing_audio_is_rejected(tmp_path: Path) -> None:
@@ -93,7 +114,7 @@ def test_split_entry_for_missing_audio_is_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(SpeechCommandsError, match="missing file"):
-        inspect_speech_commands(root)
+        inspect_speech_commands(root, source_identity=None)
 
 
 def test_non_pcm_command_audio_is_rejected(tmp_path: Path) -> None:
@@ -106,4 +127,31 @@ def test_non_pcm_command_audio_is_rejected(tmp_path: Path) -> None:
         audio.writeframes(b"\x00\x00" * 320)
 
     with pytest.raises(SpeechCommandsError, match="unsupported WAV format"):
+        inspect_speech_commands(root, source_identity=None)
+
+
+def test_registered_source_rejects_an_unregistered_split(tmp_path: Path) -> None:
+    root = _fixture(tmp_path / "dataset")
+
+    with pytest.raises(SpeechCommandsError, match="registered source"):
         inspect_speech_commands(root)
+
+
+def test_truncated_wav_payload_is_rejected(tmp_path: Path) -> None:
+    root = _fixture(tmp_path / "dataset")
+    audio = root / "yes" / "alice_nohash_0.wav"
+    audio.write_bytes(audio.read_bytes()[:-20])
+
+    with pytest.raises(SpeechCommandsError, match="truncated WAV payload"):
+        inspect_speech_commands(root, source_identity=None)
+
+
+def test_output_symlink_is_rejected(tmp_path: Path) -> None:
+    root = _fixture(tmp_path / "dataset")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    output = tmp_path / "output"
+    output.symlink_to(destination, target_is_directory=True)
+
+    with pytest.raises(SpeechCommandsError, match="output path"):
+        build_speech_commands_manifest(root, output, source_identity=None)
