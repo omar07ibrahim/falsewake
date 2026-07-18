@@ -32,6 +32,17 @@ dev = [
   "pytest>=9.1,<10",
   "ruff>=0.15,<1",
 ]
+export = [
+  "onnx>=1.22,<2",
+  "onnxscript>=0.7.1,<0.8",
+]
+runtime = [
+  "onnxruntime>=1.27,<2",
+]
+train = [
+  "safetensors>=0.8,<1",
+  "torch>=2.13,<3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/falsewake"]

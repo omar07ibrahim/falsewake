@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import struct
+import tomllib
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +26,26 @@ def _experiment_001_scorer_digest(paths: list[str]) -> str:
         digest.update(struct.pack("<Q", len(contents)))
         digest.update(contents)
     return digest.hexdigest()
+
+
+def test_neural_toolchain_extras_are_separated_and_bounded() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    extras = pyproject["project"]["optional-dependencies"]
+
+    assert extras["export"] == ["onnx>=1.22,<2", "onnxscript>=0.7.1,<0.8"]
+    assert extras["runtime"] == ["onnxruntime>=1.27,<2"]
+    assert extras["train"] == ["safetensors>=0.8,<1", "torch>=2.13,<3"]
+
+    runtime_lock = _config()["runtime_lock"]
+    assert runtime_lock == {
+        "numpy": "2.5.1",
+        "onnx": "1.22.0",
+        "onnxruntime": "1.27.0",
+        "onnxscript": "0.7.1",
+        "python": "3.12.3",
+        "safetensors": "0.8.0",
+        "torch": "2.13.0+cpu",
+    }
 
 
 def test_training_preregistration_is_canonical_and_has_exact_sections() -> None:

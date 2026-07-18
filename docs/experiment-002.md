@@ -44,6 +44,29 @@ clips. Per-mel sums and sums of squares are accumulated in a fixed manifest/fram
 order in `float64`; the 40 means and 40 population standard deviations are frozen
 as little-endian `float32` values.
 
+## Reproducing the neural toolchain
+
+Experiment 002 separates training, export, and inference dependencies so a runtime
+installation need not carry PyTorch or ONNX export tooling. The registered run uses
+Python 3.12.3 and the exact direct dependency versions below. On a CPU machine,
+create an isolated environment from the repository root and install PyTorch from
+its official CPU wheel index before installing the project extras:
+
+```console
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0+cpu"
+python -m pip install "numpy==2.5.1" "onnx==1.22.0" "onnxscript==0.7.1" \
+  "onnxruntime==1.27.0" "safetensors==0.8.0"
+python -m pip install -e ".[dev,train,export,runtime]"
+```
+
+The `+cpu` build tag is deliberately recorded in the experiment contract and the
+reproduction command rather than imposed as a portable project requirement. The
+bounded extras describe compatible environments; the exact registered versions
+remain the authority for Experiment 002 evidence.
+
 ## Deterministic augmentation and training
 
 Sampling, ordering, and augmentation are stateless HMAC-SHA256 functions of the
