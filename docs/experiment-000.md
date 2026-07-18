@@ -29,9 +29,10 @@ as signed little-endian integers divided by 32,768, producing `float32` values i
 ## Split and tuning rule
 
 - Train only on the Speech Commands training partition.
-- Fit any normalization statistics on training features only. Validation may choose
-  the normalization method, regularization, and acceptance threshold, but never
-  contributes scaler statistics.
+- Convert cached `float32` features to C-contiguous `float64`, then fit scaler
+  statistics on training rows only.
+- Experiment 000 performs no hyperparameter selection: scaler and logistic settings
+  are already fixed. Validation metrics are diagnostic and cannot change them.
 - Evaluate clip classification on the Speech Commands test partition.
 - Evaluate continuous false accepts once on LibriSpeech `test-clean` after selecting
   a configuration.
@@ -65,11 +66,17 @@ acceptance threshold exists in this phase. The report will also expose support a
 predicted-`unknown` recall for each of the 25 source words inside the sampled
 `unknown` class.
 
+Training rows are selected by their explicit split value rather than their position
+in the sampling plan. Score columns are mapped through `classifier.classes_`, which
+need not match the report's class order. A convergence warning invalidates the run;
+the fitted iteration count and exact configuration SHA-256 are stored with it.
+
 ## Reported numbers
 
 - clip accuracy, 12-class macro F1, and per-class precision, recall, F1, and
   support;
 - target-command argmax error rate and per-source-word `unknown` recall;
+- the rate at which `unknown` and `silence` clips are predicted as any target;
 - false reject rate and false accepts per hour only after the continuous replay
   threshold is registered;
 - the number of evaluated negative hours and 95% Poisson confidence intervals;

@@ -41,11 +41,21 @@
   "evaluation": {
     "clip_prediction": "argmax",
     "confusion_matrix_labels": "class_order",
+    "decision_columns": "classifier.classes_",
+    "headline_split": "test",
     "macro_f1": {
       "labels": "class_order",
       "zero_division": 0
     },
+    "open_set_target_prediction_rate": [
+      "unknown",
+      "silence"
+    ],
     "per_class": "precision_recall_f1_support",
+    "reported_splits": [
+      "validation",
+      "test"
+    ],
     "target_argmax_error_rate": {
       "denominator": "clips_with_one_of_the_ten_target_labels",
       "numerator": "argmax_prediction_differs_from_label"
@@ -81,5 +91,13 @@
     "unknown_count": "median_low_target_count_per_split"
   },
   "schema_version": 1,
-  "seed": 20260718
+  "seed": 20260718,
+  "training": {
+    "cache_dtype": "float32",
+    "convergence_warning": "error",
+    "fit_input_dtype": "float64_c_contiguous",
+    "fit_split": "train",
+    "store_n_iter": true,
+    "validation_role": "diagnostic_only_no_selection"
+  }
 }
