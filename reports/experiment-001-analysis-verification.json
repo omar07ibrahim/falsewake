@@ -1,0 +1,31 @@
+{
+  "artifact_sha256": "a328da94bbea7f72a1271059560140b57fc2409348786659a944ccdbc34c6863",
+  "browser_verification": {
+    "code": "browser_unavailable",
+    "source_dialog": "not_verified",
+    "source_interaction": "not_verified",
+    "viewports": []
+  },
+  "builder": "deliver_portable_artifact.mjs",
+  "counts": {
+    "blocks": 19,
+    "charts": 2,
+    "html": 0,
+    "metrics": 5,
+    "tables": 1
+  },
+  "html_sha256": "5ed3a2423c7f3901a8d540afd96497316a29147f487dc88e2997e33a3fc7fadb",
+  "repeated_build_byte_identical": true,
+  "schema_version": 1,
+  "source_query_reconciliation": {
+    "dataset_row_count": 1016,
+    "engine": "SQLite JSON1 3.45.1",
+    "query_count": 5,
+    "status": "passed"
+  },
+  "stages": {
+    "package": "passed",
+    "validation": "passed",
+    "verification": "structural_only"
+  }
+}

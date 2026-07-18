@@ -41,17 +41,28 @@ every result.
 
 Every continuous experiment must register its threshold grid, event rule, cooldown,
 and smoothing policy before inspecting `dev-clean`. Experiment 001 fixes everything
-except the choice of one point on its threshold grid. The `test-clean` stream remains
-untouched until one configuration has been selected and the implemented access
-firewall passes. Its official size, MD5, and SHA-256 were registered from public
-checksum metadata before archive access. A result that changes the configuration
-after viewing `test-clean` starts a new experiment rather than replacing the old one.
+except the choice of one point on its threshold grid. Two byte-identical development
+replays found no point satisfying both registered gates, so the canonical selection
+is `reject` with a null threshold. The official `test-clean` archive remains absent
+and unread, and the implemented firewall denies access before invoking an archive
+supplier. Its official size, MD5, and SHA-256 were registered from public checksum
+metadata without archive access. A future experiment that changes the configuration
+must register that change rather than replacing this result.
 
 After that registration and a header-only inspection, two full `dev-clean` audits
 decoded all 2,703 FLAC members without filesystem extraction. They produced
 byte-identical manifests and reports. The manifest remains a generated local
 artifact; its digest and the four domain-separated inventory digests are recorded in
 [reports/dev-clean-audit.json](../reports/dev-clean-audit.json).
+
+The development replay scored 2,703 utterances from 40 speakers, totaling 5.352611
+hours of full-window exposure. Its complete 1,001-point
+[report](../reports/experiment-001-dev-replay.json), canonical
+[selection](../reports/experiment-001-selection.json), portable
+[analysis](../reports/experiment-001-analysis.html), and
+[reproducibility record](../reports/experiment-001-reproducibility.json) are retained
+even though the grid was rejected. These development outputs do not contain or
+summarize any `test-clean` observation.
 
 ## Attribution
 

@@ -13,6 +13,31 @@ false accepts per hour, missed commands, detection delay, and CPU cost.
 
 ## Current status
 
+Experiment 001 completed two byte-identical development replays and rejected the
+registered threshold grid. No threshold satisfies both gates, so the machine-readable
+selection is `reject` with `selected_threshold_milli: null`; the held-out
+LibriSpeech `test-clean` archive remains absent and unread.
+
+At the last threshold that preserves the registered 80% conditional-retention gate
+(`0.395`), the listener emits 1,895.7103 false events per scored hour. At the first
+threshold that meets the 1.0-event/hour negative gate (`0.991`), it retains only
+0.14368% of the baseline's correct decisions. The two frontiers are 0.596 threshold
+units apart.
+
+[![Experiment 001 has no feasible threshold on the registered grid](reports/experiment-001-gate-feasibility.svg)](reports/experiment-001-analysis.html)
+
+The portable [analysis](reports/experiment-001-analysis.html), its canonical
+[artifact](reports/experiment-001-analysis.artifact.json), full
+[1,001-point replay report](reports/experiment-001-dev-replay.json), canonical
+[selection](reports/experiment-001-selection.json), and
+[reproducibility record](reports/experiment-001-reproducibility.json) preserve the
+negative result. Packaging and source-query checks are recorded in the
+[analysis verification](reports/experiment-001-analysis-verification.json). The two
+replay reports have SHA-256
+`b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d`; the
+selection artifact has SHA-256
+`1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318`.
+
 The frozen linear floor reaches 56.4% accuracy and 0.558 macro F1 on 4,884 held-out
 Speech Commands clips. Its more important failure is open-set: 329 of 405 sampled
 `unknown` words are misclassified as one of the ten target commands. The perfect
@@ -25,7 +50,8 @@ The full metrics are in
 [models/experiment-000-linear.json](models/experiment-000-linear.json). Two exact
 feature extractions were byte-identical, and an independent refit reproduced every
 coefficient and prediction. These are threshold-free clip diagnostics: false
-accepts per hour and false reject rate have not been measured.
+events per hour were measured separately by experiment 001 on development speech,
+not on the held-out stream.
 
 ![Validation and test open-set clips predicted as a target command](reports/experiment-000-open-set.png)
 
@@ -57,8 +83,8 @@ A fail-closed loader now requires a reviewed, tracked development-selection arti
 before it can acquire `test-clean`. It validates Git through an isolated object-only
 snapshot and gives the eventual supplier an anonymous descriptor rather than a
 path. That descriptor is irreversibly sealed and matched to the pre-registered
-official archive identity before evaluation. The artifact does not exist yet, so no
-continuous metric has been calculated and `test-clean` remains untouched.
+official archive identity before evaluation. The tracked artifact now records
+`reject`, so the loader denies holdout access before any supplier can provide bytes.
 
 ## What will count as progress
 

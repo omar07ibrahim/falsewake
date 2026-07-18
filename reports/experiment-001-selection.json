@@ -1,0 +1,13 @@
+{
+  "dev_archive_sha256": "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3",
+  "dev_audit_report_sha256": "810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74",
+  "dev_manifest_sha256": "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7",
+  "dev_replay_report_sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+  "experiment_config_sha256": "7e27ba554ef357a2de4a929088a99efc20b9ee0285cb0c242a05474cc944b217",
+  "implementation_git_commit": "d13efd50467a4315982ab607d3d8338483c9bdb9",
+  "runtime_identity_sha256": "76afcf83e0d4463fb68c756ceb718cc50a1955ed241fcee4e7570539a0c3ecd3",
+  "schema_version": 1,
+  "scorer_source_sha256": "93bd11f50e11ed481f3f2306ef377a9dd106dd908853f7f9478b86bf5f62aeb9",
+  "selected_threshold_milli": null,
+  "status": "reject"
+}

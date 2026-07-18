@@ -1,0 +1,36 @@
+{
+  "byte_identical": true,
+  "implementation_git_commit": "d13efd50467a4315982ab607d3d8338483c9bdb9",
+  "report_sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+  "runs": [
+    {
+      "elapsed_seconds": 139.26,
+      "input_copy_set": "primary",
+      "max_rss_kib": 320804,
+      "python_hash_seed": 1,
+      "report_sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+      "selection_artifact_sha256": "1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318",
+      "user_cpu_seconds": 138.48
+    },
+    {
+      "elapsed_seconds": 138.29,
+      "input_copy_set": "independent_byte_identical_copies",
+      "max_rss_kib": 321056,
+      "python_hash_seed": 987654,
+      "report_sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+      "selection_artifact_sha256": "1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318",
+      "user_cpu_seconds": 137.51
+    }
+  ],
+  "runtime_identity_sha256": "76afcf83e0d4463fb68c756ceb718cc50a1955ed241fcee4e7570539a0c3ecd3",
+  "schema_version": 1,
+  "selected_threshold_milli": null,
+  "selection_artifact_sha256": "1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318",
+  "status": "reject",
+  "thread_limits": {
+    "MKL_NUM_THREADS": 1,
+    "NUMEXPR_NUM_THREADS": 1,
+    "OMP_NUM_THREADS": 1,
+    "OPENBLAS_NUM_THREADS": 1
+  }
+}

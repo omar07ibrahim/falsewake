@@ -126,10 +126,10 @@ report. Its JSON serialization excludes NaN and infinity.
 
 ## Test firewall contract
 
-Finishing a development replay does not authorize opening `test-clean`. This commit
-implements the fail-closed loader, but the required tracked selection artifact does
-not exist yet. The loader therefore refuses access until a development replay has
-been completed and independently checked.
+Finishing a development replay does not authorize opening `test-clean`. The
+completed replay's tracked selection artifact records `reject` and no selected
+threshold, so the fail-closed loader refuses access before invoking any archive
+supplier. `test-clean` is absent and has not been read.
 
 A separate selection artifact must bind the experiment config SHA, the exact
 seven-file scorer-source bundle, its clean implementation commit, a canonical
@@ -191,6 +191,53 @@ Only after a valid selection may the same threshold be evaluated once on both
 LibriSpeech `test-clean` and the Speech Commands test target clips. Neither final
 source can influence selection.
 
+## Development replay result
+
+Two complete runs over independent byte-identical copies of the audited inputs
+produced byte-for-byte identical reports despite different `PYTHONHASHSEED` values.
+The scored population contains 2,703 utterances from 40 speakers and 5.352611 hours
+of full-window exposure. At threshold zero, the linear model correctly accepts
+2,088 of 3,703 validation target clips, or 56.3867% absolute recall.
+
+The registered grid has no feasible point:
+
+- `threshold_milli = 395` is the highest threshold that still passes the 80%
+  retention gate. It retains 80.1724% of the baseline's correct decisions, but
+  produces 1,895.7103 false events per scored hour.
+- `threshold_milli = 991` is the lowest threshold that passes the 1.0-event/hour
+  negative gate. It produces 0.74730 false events per scored hour, but retains only
+  0.14368% of the baseline's correct decisions.
+- The two frontiers are 596 milli-threshold steps, or 0.596, apart. Consequently
+  the result is `reject` and `selected_threshold_milli` is `null`.
+
+[![The registered retention and negative gates never overlap](../reports/experiment-001-gate-feasibility.svg)](../reports/experiment-001-analysis.html)
+
+The durable outputs are:
+
+- the portable [technical analysis](../reports/experiment-001-analysis.html);
+- its canonical [artifact](../reports/experiment-001-analysis.artifact.json) and
+  [verification record](../reports/experiment-001-analysis-verification.json);
+- the complete [development replay report](../reports/experiment-001-dev-replay.json),
+  SHA-256
+  `b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d`;
+- the canonical [selection artifact](../reports/experiment-001-selection.json),
+  SHA-256
+  `1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318`;
+- the [two-run reproducibility record](../reports/experiment-001-reproducibility.json);
+  and
+- the feasibility figure as [SVG](../reports/experiment-001-gate-feasibility.svg)
+  and [PNG](../reports/experiment-001-gate-feasibility.png).
+
+This is a development-only negative result, not a `test-clean` estimate. Because
+the registered grid failed, the holdout firewall does not authorize evaluation and
+the official `test-clean` archive remains absent and unread.
+
+The portable builder passed schema validation, packaging, deterministic rebuild,
+semantic fallback, and all five SQLite/JSON1 source-query reconciliations over 1,016
+published dataset rows. Browser interaction remains explicitly `structural_only`:
+this server has no installed Chromium executable, so source-dialog behavior and
+viewport rendering are not claimed as browser-tested.
+
 ## What this experiment will not claim
 
 - `dev-clean` is clean read speech, not a complete acoustic-noise benchmark.
@@ -206,11 +253,10 @@ model limitation from making the continuous negative stream irrelevant.
 
 ## Status
 
-The protocol and fail-closed firewall are implemented and synthetic-tested. The
-development replay and its required tracked selection artifact do not exist yet, so
-the firewall still denies holdout access. `dev-clean` was downloaded only after the
-initial registration; its size and official MD5 were verified and its SHA-256 was
-recorded. A committed, synthetic-tested header inspector then accepted exactly
+The protocol, replay runner, and fail-closed firewall are implemented and tested.
+`dev-clean` was downloaded only after the initial registration; its size and
+official MD5 were verified and its SHA-256 was recorded. A committed,
+synthetic-tested header inspector then accepted exactly
 2,703 FLAC files, 97 matching chapter transcripts, five metadata files, and 138
 canonical directory entries. Its deterministic summary is in
 [reports/dev-clean-header-inspection.json](../reports/dev-clean-header-inspection.json).
@@ -224,5 +270,8 @@ The byte-identical report has SHA-256
 `810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74`
 and is checked in as
 [reports/dev-clean-audit.json](../reports/dev-clean-audit.json). It records
-310,337,932 decoded samples, or 5.388 hours. No continuous metric has been
-calculated, and `test-clean` remains untouched.
+310,337,932 decoded samples, or 5.388 source hours.
+
+The subsequent two development replays were byte-identical and produced the
+`reject` result above. No holdout threshold was selected. `test-clean` was never
+downloaded, supplied, or read, and the firewall continues to deny access by design.
