@@ -127,25 +127,65 @@ report. Its JSON serialization excludes NaN and infinity.
 ## Test firewall contract
 
 Finishing a development replay does not authorize opening `test-clean`. This commit
-registers the firewall contract; it does not yet claim that the loader exists. Its
-implementation and negative tests are mandatory before acquiring, opening a path
-to, or reading any byte from `test-clean`.
+implements the fail-closed loader, but the required tracked selection artifact does
+not exist yet. The loader therefore refuses access until a development replay has
+been completed and independently checked.
 
 A separate selection artifact must bind the experiment config SHA, the exact
 seven-file scorer-source bundle, its clean implementation commit, a canonical
 runtime-identity digest, dev archive, dev manifest, distinct audit and replay
 reports, status, and exact integer `selected_threshold_milli`. Source paths and the
 domain-separated length-prefixed digest are fixed in the config; each file must
-equal its blob at the recorded `HEAD`. This means a later documentation-only commit
-does not invalidate a result. The replay report records exact Python, NumPy, SciPy,
-SoundFile, libsndfile, and platform versions. The validator must independently
-recompute whether the hash-bound replay report has a
-passing grid point from integer counts and samples and, if so, the lowest such
-integer point. A hand-written `pass` is not trusted. Before accepting or opening any
-test path, the future loader must reject absent, rejected, tampered, dirty,
-runtime-mismatched, or identity-mismatched state. Tests must cover each of those
-cases and a wrong selected threshold. A
-protocol or scorer change starts a new experiment.
+equal its blob at the recorded implementation commit. The canonical artifact itself
+must then appear in a strictly later clean commit at the hard-coded path
+`reports/experiment-001-selection.json`; callers cannot substitute a path or digest.
+This means a later documentation-only commit does not invalidate a result. The
+replay report records exact Python, NumPy, SciPy, SoundFile, libsndfile, and platform
+versions. The validator independently recomputes whether the hash-bound replay
+report has a passing grid point from integer counts and samples and, if so, the
+lowest such integer point. A hand-written `pass` is not trusted. Before invoking any
+test supplier, the loader rejects absent, rejected, tampered, protected-working-byte,
+index, runtime, or identity mismatches. The manifest, audit report, source
+population, and exact scored exposure are separately pinned in the frozen config.
+
+The repository root and config path are not caller inputs: they are anchored to the
+physical checkout containing the executing `holdout.py`, whose import-time source
+digest must equal the validated scorer file. Git validation copies only bounded
+physical object files into a new bare snapshot. It does not copy or consult
+repository-local config, `objects/info`, alternates, replacement objects, or
+lazy-fetch metadata, and it runs only non-worktree plumbing with full commit
+IDs—never `status`, hooks, clean filters, or another worktree command. A separately
+captured physical index must represent the exact
+artifact-HEAD tree. The validator does not trust the index cache-tree extension: it
+compares every actual stage-zero mode, object ID, and raw path from
+`ls-files --stage -z` with the recursive artifact-HEAD tree and rejects unmerged or
+sparse entries. Working config, scorer, and portable-model bytes are compared
+directly with their implementation and artifact-commit blobs.
+
+Only after a second complete state validation does the firewall create an anonymous
+Linux `memfd` with sealing enabled. The one trusted supplier receives only an
+unbuffered writable binary stream, never a filesystem path. After the supplier
+returns, the firewall fsyncs and applies `F_SEAL_WRITE`, `F_SEAL_GROW`,
+`F_SEAL_SHRINK`, and `F_SEAL_SEAL`. Any retained writable descriptor is then unable
+to change the inode, and a retained writable mapping makes authorization fail
+closed. The evaluator receives a separately reopened read-only file description for
+the same verified inode; a supplier-retained descriptor therefore shares neither
+its offset nor status flags. The sealed bytes must match the 346,663,984-byte
+official archive, OpenSLR MD5 `32fa31d27d2e1cad72775fee3f4849a9`, and
+pre-registered SHA-256
+`39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23`.
+The MD5 comes from the [OpenSLR checksum file](https://www.openslr.org/resources/12/md5sum.txt);
+the exact byte count and SHA-256 are independently recorded in the
+[OpenSLR dataset metadata](https://huggingface.co/datasets/openslr/librispeech_asr/commit/0611d170173cd48b5f8e07aa2d1f311c10396ff0).
+No Git command runs after the supplier.
+
+Authorization is a point-in-time snapshot: the returned object carries the captured
+implementation commit and exact portable-model JSON, so the final evaluator must
+consume those bytes instead of reopening mutable working paths. Negative tests
+exercise absent and mismatched artifacts, staged and working-byte drift, wrong
+thresholds, malicious Git config, fsmonitor and clean-filter helpers, retained file
+descriptors, writable mappings, and state changes during authorization. A protocol
+or scorer change starts a new experiment.
 
 Only after a valid selection may the same threshold be evaluated once on both
 LibriSpeech `test-clean` and the Speech Commands test target clips. Neither final
@@ -166,12 +206,13 @@ model limitation from making the continuous negative stream irrelevant.
 
 ## Status
 
-The protocol and the future firewall contract are registered. The firewall is not
-yet implemented. `dev-clean` was downloaded only after the initial registration;
-its size and official MD5 were verified and its SHA-256 was recorded. A committed,
-synthetic-tested header inspector then accepted exactly 2,703 FLAC files, 97 matching
-chapter transcripts, five metadata files, and 138 canonical directory entries. Its
-deterministic summary is in
+The protocol and fail-closed firewall are implemented and synthetic-tested. The
+development replay and its required tracked selection artifact do not exist yet, so
+the firewall still denies holdout access. `dev-clean` was downloaded only after the
+initial registration; its size and official MD5 were verified and its SHA-256 was
+recorded. A committed, synthetic-tested header inspector then accepted exactly
+2,703 FLAC files, 97 matching chapter transcripts, five metadata files, and 138
+canonical directory entries. Its deterministic summary is in
 [reports/dev-clean-header-inspection.json](../reports/dev-clean-header-inspection.json).
 
 Only after the payload-audit implementation passed synthetic tests and two

@@ -28,10 +28,11 @@
   "model": {
     "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
     "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
+    "portable_json_path": "models/experiment-000-linear.json",
     "portable_json_sha256": "d5ac3579f539288c6ed7769894dd30ad2272480956b2f9b24b7e730baaeb0cd3"
   },
   "implementation_identity": {
-    "git_state": "record_lowercase_40_hex_HEAD_and_require_each_scorer_source_path_to_be_a_regular_non_symlink_whose_bytes_equal_the_same_path_blob_at_HEAD",
+    "git_state": "record_lowercase_40_hex_implementation_commit_strictly_before_artifact_HEAD;require_every_actual_stage_zero_mode_OID_path_entry_from_the_captured_physical_index_to_equal_the_recursive_artifact_HEAD_tree;require_hard_coded_config_portable_model_and_each_scorer_source_path_to_be_regular_non_symlinks_whose_bytes_equal_the_same_path_blobs_at_both_commits",
     "runtime_versions": [
       "python",
       "numpy",
@@ -93,6 +94,14 @@
         "audit_report": "dev-clean.audit.json",
         "manifest": "dev-clean.manifest.jsonl"
       },
+      "verified_dev_clean_output": {
+        "audit_report_sha256": "810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74",
+        "manifest_sha256": "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7",
+        "scored_exposure_samples": 308310400,
+        "source_samples": 310337932,
+        "speaker_count": 40,
+        "utterance_count": 2703
+      },
       "transcripts": "strict_UTF8_and_LF_lines_only_reject_CR;each_nonempty_line_is_canonical_utterance_id_ASCII_space_nonempty_transcript;preserve_text_after_first_space_without_normalization;require_unique_utterance_ids_and_exact_FLAC_bijection"
     },
     "archive_bytes": 337926286,
@@ -102,7 +111,15 @@
     "archive_url": "https://www.openslr.org/resources/12/dev-clean.tar.gz",
     "dataset": "LibriSpeech dev-clean",
     "role": "threshold_diagnostics_only",
-    "test_clean_access": "forbidden_until_one_configuration_is_selected"
+    "test_clean_access": "forbidden_until_one_configuration_is_selected",
+    "test_clean_official_identity": {
+      "archive_bytes": 346663984,
+      "archive_md5": "32fa31d27d2e1cad72775fee3f4849a9",
+      "archive_sha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23",
+      "archive_url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "dataset": "LibriSpeech test-clean",
+      "identity_provenance": "OpenSLR_12_md5sum_and_openslr_librispeech_asr_download_checksum_metadata_registered_before_archive_access"
+    }
   },
   "positive_validation": {
     "baseline_correct_by_target": [
@@ -283,8 +300,10 @@
     "min_validation_conditional_correct_retention": 0.8
   },
   "selection_artifact": {
-    "enforcement_status": "registered_contract_not_yet_implemented",
-    "implementation_deadline": "before_any_test_clean_acquisition_path_open_or_byte_read",
+    "acquisition_contract": "after_final_artifact_HEAD_config_index_scorer_model_runtime_and_development_evidence_revalidation_create_one_anonymous_memfd_with_sealing_enabled;invoke_one_trusted_supplier_once_with_only_a_writable_binary_stream;fsync_then_apply_F_SEAL_WRITE_F_SEAL_GROW_F_SEAL_SHRINK_F_SEAL_SEAL;require_exact_registered_test_clean_size_MD5_and_SHA256;run_no_Git_after_supplier;return_the_same_sealed_inode_through_an_independent_read_only_open_file_description",
+    "enforcement_status": "implemented_fail_closed",
+    "git_validation_contract": "copy_only_physical_bounded_object_files_into_a_new_bare_snapshot;ignore_repository_local_config_info_alternates_replacements_and_lazy_fetch;use_only_non_worktree_plumbing_with_full_commit_IDs;capture_one_physical_bounded_index_and_require_every_stage_zero_mode_OID_path_entry_to_equal_the_recursive_artifact_HEAD_tree;reject_unmerged_or_sparse_entries;never_run_status_hooks_filters_or_other_worktree_commands",
+    "implementation_deadline": "before_invoking_any_test_clean_supplier_or_reading_any_test_clean_byte",
     "required_fields": [
       "schema_version",
       "status",
@@ -305,7 +324,8 @@
       "pass",
       "reject"
     ],
-    "test_loader_contract": "before_accepting_or_opening_any_test_path_recompute_status_and_threshold_milli_from_integer_fields_in_the_bound_dev_replay_report_then_match_current_config_scorer_source_runtime_git_commit_archive_manifest_audit_report_replay_report_and_artifact_identities;refuse_absent_reject_tampered_dirty_or_mismatched_state",
+    "test_loader_contract": "load_the_hard_coded_checkout_config_and_exact_clean_tracked_artifact_from_captured_HEAD_using_an_isolated_object_only_Git_snapshot;require_every_actual_captured_index_entry_equal_the_recursive_artifact_HEAD_tree_and_implementation_commit_strictly_precede_artifact_commit;recompute_status_and_threshold_milli_from_integer_fields_in_the_bound_dev_replay_report;match_and_revalidate_config_scorer_model_runtime_git_archive_manifest_audit_report_replay_report_and_artifact_identities_at_the_authorization_snapshot;only_then_invoke_the_trusted_supplier_into_an_anonymous_irreversibly_sealed_memfd;require_official_test_clean_size_MD5_and_SHA256;return_captured_model_bytes_and_refuse_absent_reject_tampered_staged_working_byte_or_identity_mismatched_state",
+    "trusted_git_path": "reports/experiment-001-selection.json",
     "schema_version": 1
   },
   "windowing": {

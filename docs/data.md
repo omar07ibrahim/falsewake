@@ -42,8 +42,9 @@ every result.
 Every continuous experiment must register its threshold grid, event rule, cooldown,
 and smoothing policy before inspecting `dev-clean`. Experiment 001 fixes everything
 except the choice of one point on its threshold grid. The `test-clean` stream remains
-untouched until one configuration has been selected and the registered access
-firewall has been implemented and passed. A result that changes the configuration
+untouched until one configuration has been selected and the implemented access
+firewall passes. Its official size, MD5, and SHA-256 were registered from public
+checksum metadata before archive access. A result that changes the configuration
 after viewing `test-clean` starts a new experiment rather than replacing the old one.
 
 After that registration and a header-only inspection, two full `dev-clean` audits

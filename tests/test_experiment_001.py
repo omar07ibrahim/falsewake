@@ -18,6 +18,7 @@ def test_continuous_protocol_binds_the_published_linear_floor() -> None:
             experiment_000.read_bytes()
         ).hexdigest(),
         "features_sha256": features["features_sha256"],
+        "portable_json_path": "models/experiment-000-linear.json",
         "portable_json_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
     }
     assert (
@@ -56,8 +57,52 @@ def test_continuous_thresholds_and_holdout_rule_are_fixed() -> None:
         config["negative_source"]["test_clean_access"]
         == "forbidden_until_one_configuration_is_selected"
     )
+    assert config["negative_source"]["test_clean_official_identity"] == {
+        "archive_bytes": 346_663_984,
+        "archive_md5": "32fa31d27d2e1cad72775fee3f4849a9",
+        "archive_sha256": (
+            "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23"
+        ),
+        "archive_url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+        "dataset": "LibriSpeech test-clean",
+        "identity_provenance": (
+            "OpenSLR_12_md5sum_and_openslr_librispeech_asr_download_checksum_"
+            "metadata_registered_before_archive_access"
+        ),
+    }
+    verified = config["negative_source"]["archive_audit"]["verified_dev_clean_output"]
+    assert verified == {
+        "audit_report_sha256": (
+            "810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74"
+        ),
+        "manifest_sha256": (
+            "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7"
+        ),
+        "scored_exposure_samples": 308_310_400,
+        "source_samples": 310_337_932,
+        "speaker_count": 40,
+        "utterance_count": 2_703,
+    }
     firewall = config["selection_artifact"]
-    assert firewall["enforcement_status"] == ("registered_contract_not_yet_implemented")
+    assert firewall["enforcement_status"] == "implemented_fail_closed"
+    assert firewall["acquisition_contract"] == (
+        "after_final_artifact_HEAD_config_index_scorer_model_runtime_and_"
+        "development_evidence_revalidation_create_one_anonymous_memfd_with_sealing_"
+        "enabled;invoke_one_trusted_supplier_once_with_only_a_writable_binary_"
+        "stream;fsync_then_apply_F_SEAL_WRITE_F_SEAL_GROW_F_SEAL_SHRINK_F_SEAL_"
+        "SEAL;require_exact_registered_test_clean_size_MD5_and_SHA256;run_no_Git_"
+        "after_supplier;return_the_same_sealed_inode_through_an_independent_read_"
+        "only_open_file_description"
+    )
+    assert firewall["git_validation_contract"] == (
+        "copy_only_physical_bounded_object_files_into_a_new_bare_snapshot;ignore_"
+        "repository_local_config_info_alternates_replacements_and_lazy_fetch;use_"
+        "only_non_worktree_plumbing_with_full_commit_IDs;capture_one_physical_"
+        "bounded_index_and_require_every_stage_zero_mode_OID_path_entry_to_equal_"
+        "the_recursive_artifact_HEAD_tree;reject_unmerged_or_sparse_entries;never_"
+        "run_status_hooks_filters_or_other_worktree_commands"
+    )
+    assert firewall["trusted_git_path"] == ("reports/experiment-001-selection.json")
     assert firewall["schema_version"] == 1
     assert firewall["status_for_test_access"] == "pass"
     assert firewall["required_fields"] == [

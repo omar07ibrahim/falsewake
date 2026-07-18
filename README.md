@@ -53,7 +53,12 @@ Before replay, two complete `dev-clean` payload audits independently produced th
 same 2,703-row manifest (`SHA-256 6494fa…cff7`) and the same compact
 [audit report](reports/dev-clean-audit.json). The audit binds every compressed FLAC,
 decoded PCM stream, transcript, and metadata file without extracting the archive.
-No continuous metric has been calculated, and `test-clean` remains untouched.
+A fail-closed loader now requires a reviewed, tracked development-selection artifact
+before it can acquire `test-clean`. It validates Git through an isolated object-only
+snapshot and gives the eventual supplier an anonymous descriptor rather than a
+path. That descriptor is irreversibly sealed and matched to the pre-registered
+official archive identity before evaluation. The artifact does not exist yet, so no
+continuous metric has been calculated and `test-clean` remains untouched.
 
 ## What will count as progress
 
