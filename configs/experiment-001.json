@@ -1,0 +1,135 @@
+{
+  "experiment": "continuous_linear_replay",
+  "metrics": {
+    "aggregation": "micro_over_all_eligible_examples_or_scored_exposure",
+    "correct_accept_recall": "correct_target_argmax_and_probability_gte_threshold_over_target_validation_clips",
+    "conditional_correct_retention": "correct_accept_count_divided_by_correct_target_argmax_count_at_threshold_zero",
+    "events_by_predicted_target": true,
+    "false_events_per_hour": "event_count_divided_by_scored_exposure_hours",
+    "per_target_positive_breakdown": true,
+    "source_duration_hours": true,
+    "top_false_events_per_threshold": {
+      "count": 50,
+      "fields": [
+        "utterance_id",
+        "window_start_sample",
+        "predicted_target",
+        "target_probability",
+        "transcript"
+      ],
+      "rank": "target_probability_desc_then_utterance_id_asc_then_window_start_sample_asc"
+    },
+    "uncertainty": {
+      "garwood_95_percent": "lower_is_zero_if_k_is_zero_else_0.5_times_chi2_ppf_0.025_df_2k_divided_by_hours;upper_is_0.5_times_chi2_ppf_0.975_df_2(k_plus_1)_divided_by_hours",
+      "speaker_bootstrap_95_percent": "speakers_in_ascending_integer_ID_order;one_shared_int64_matrix_Generator(PCG64(20260718)).integers(0,S,size=(10000,S))_used_for_every_threshold;resample_speakers_with_replacement_then_sum_events_divided_by_sum_scored_hours_then_numpy_percentile_method_linear_at_2.5_and_97.5"
+    }
+  },
+  "model": {
+    "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
+    "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
+    "portable_json_sha256": "d5ac3579f539288c6ed7769894dd30ad2272480956b2f9b24b7e730baaeb0cd3"
+  },
+  "negative_source": {
+    "archive_audit": {
+      "archive_members": "directories_or_regular_files_only;reject_links_devices_absolute_paths_dotdot_and_normalized_aliases",
+      "canonical_flac": "LibriSpeech/dev-clean/<speaker>/<chapter>/<speaker>-<chapter>-<utterance>.flac_with_ascii_decimal_ids",
+      "canonical_order": "relative_POSIX_path_ascending",
+      "decoder": "no_resampling;require_FLAC_PCM_16_mono_16000_Hz;decode_directly_to_int16",
+      "manifest_fields": [
+        "utterance_id",
+        "relative_path",
+        "speaker_id",
+        "chapter_id",
+        "sample_count",
+        "raw_flac_sha256",
+        "decoded_pcm16le_sha256",
+        "transcript"
+      ],
+      "regular_member_population": {
+        "flac": "every_canonical_dev_clean_FLAC_exactly_once",
+        "metadata_exact_paths": [
+          "LibriSpeech/BOOKS.TXT",
+          "LibriSpeech/CHAPTERS.TXT",
+          "LibriSpeech/LICENSE.TXT",
+          "LibriSpeech/README.TXT",
+          "LibriSpeech/SPEAKERS.TXT"
+        ],
+        "other": "reject",
+        "transcripts": "exactly_one_canonical_<speaker>-<chapter>.trans.txt_for_each_and_only_each_represented_chapter"
+      },
+      "report": "archive_MD5_and_SHA256;raw_and_decoded_inventory_SHA256;manifest_SHA256;utterance_speaker_chapter_counts;source_samples_and_duration;decoder_versions",
+      "transcripts": "bind_each_<speaker>-<chapter>.trans.txt_bytes;require_unique_utterance_ids_and_exact_FLAC_bijection"
+    },
+    "archive_filename": "dev-clean.tar.gz",
+    "archive_md5": "42e2234ba48799c1f50f24a7926300a1",
+    "archive_url": "https://www.openslr.org/resources/12/dev-clean.tar.gz",
+    "dataset": "LibriSpeech dev-clean",
+    "role": "threshold_diagnostics_only",
+    "test_clean_access": "forbidden_until_one_configuration_is_selected"
+  },
+  "positive_validation": {
+    "examples_sha256": "36a12b1779ca68fa995789255b603f06339fe216051d520f9ab76642a48f53c2",
+    "labels": "ten_targets_only",
+    "source": "Speech Commands validation",
+    "use": "report_correct_accept_recall_without_refitting"
+  },
+  "final_evaluation_if_selected": {
+    "negative": "LibriSpeech_test-clean_at_the_exact_selected_threshold",
+    "positive": "Speech_Commands_test_targets_at_the_exact_selected_threshold",
+    "selection_inputs_forbidden": true
+  },
+  "schema_version": 1,
+  "scoring": {
+    "argmax_tie_break": "first_index_in_portable_model_class_order",
+    "event_rule": "at_start_s_emit_iff_window_qualifies_and_s_gte_next_allowed_then_set_next_allowed_to_s_plus_16000",
+    "event_time": "window_start_sample",
+    "initial_next_allowed_sample": 0,
+    "qualifying_window": "argmax_class_is_target_and_target_probability_gte_threshold",
+    "refractory_samples": 16000,
+    "refractory_scope": "all_targets_within_each_utterance",
+    "softmax": "subtract_max_then_exp_normalize_float64",
+    "state": "independent_for_each_threshold_and_reset_at_each_utterance",
+    "threshold_comparison": "greater_than_or_equal",
+    "threshold_grid": {
+      "count": 1001,
+      "definition": "float64(integer_milli)_divided_by_float64(1000)",
+      "start_milli": 0,
+      "step_milli": 1,
+      "stop_milli_inclusive": 1000
+    }
+  },
+  "selection": {
+    "if_multiple_pass": "lowest_threshold",
+    "if_none_pass": "reject_registered_threshold_grid_and_keep_test_clean_untouched",
+    "max_dev_false_events_per_hour": 1.0,
+    "min_validation_conditional_correct_retention": 0.8
+  },
+  "selection_artifact": {
+    "enforcement_status": "registered_contract_not_yet_implemented",
+    "implementation_deadline": "before_any_test_clean_acquisition_path_open_or_byte_read",
+    "required_fields": [
+      "schema_version",
+      "status",
+      "experiment_config_sha256",
+      "scorer_source_sha256",
+      "implementation_git_commit",
+      "dev_archive_sha256",
+      "dev_manifest_sha256",
+      "dev_report_sha256",
+      "selected_threshold"
+    ],
+    "status_recomputation": "pass_iff_the_hash_bound_dev_report_has_a_registered_grid_point_meeting_both_selection_constraints;selected_threshold_must_equal_the_lowest_such_point;otherwise_reject_with_null_threshold",
+    "status_for_test_access": "pass",
+    "test_loader_contract": "before_accepting_or_opening_any_test_path_recompute_status_and_threshold_from_the_bound_dev_report_then_match_current_config_scorer_clean_git_commit_archive_manifest_report_and_artifact_identities;refuse_absent_reject_tampered_dirty_or_mismatched_state",
+    "schema_version": 1
+  },
+  "windowing": {
+    "clip_samples": 16000,
+    "hop_samples": 1600,
+    "partial_tail": "drop",
+    "sample_rate": 16000,
+    "scored_exposure_hours": "sum_over_utterances(0_if_window_count_is_zero_else_16000_plus_(window_count_minus_1)_times_1600)_divided_by_57600000",
+    "utterance_boundaries": "reset_and_never_cross",
+    "window_count": "max(0,1_plus_floor((sample_count_minus_16000)_divided_by_1600))"
+  }
+}

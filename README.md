@@ -46,6 +46,8 @@ The initial study uses:
 Dataset roles, licenses, and contamination rules are recorded in
 [docs/data.md](docs/data.md). The first experiment and its go/no-go decisions are in
 [docs/experiment-000.md](docs/experiment-000.md).
+The confidence-threshold continuous replay protocol is registered separately in
+[docs/experiment-001.md](docs/experiment-001.md).
 
 ## What will count as progress
 

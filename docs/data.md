@@ -39,10 +39,12 @@ every result.
 - Validation stream: `dev-clean` (337 MiB archive).
 - Held-out test stream: `test-clean` (346 MiB archive).
 
-Thresholds, debounce, and smoothing parameters may be chosen on `dev-clean`. The
-`test-clean` stream remains untouched until one configuration has been selected. A
-result that changes the configuration after viewing `test-clean` starts a new
-experiment rather than replacing the old one.
+Every continuous experiment must register its threshold grid, event rule, cooldown,
+and smoothing policy before inspecting `dev-clean`. Experiment 001 fixes everything
+except the choice of one point on its threshold grid. The `test-clean` stream remains
+untouched until one configuration has been selected and the registered access
+firewall has been implemented and passed. A result that changes the configuration
+after viewing `test-clean` starts a new experiment rather than replacing the old one.
 
 ## Attribution
 
