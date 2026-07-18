@@ -242,3 +242,78 @@ def test_continuous_event_state_and_exposure_are_unambiguous() -> None:
     assert scoring["argmax_tie_break"] == ("first_index_in_portable_model_class_order")
     assert config["windowing"]["window_count"].startswith("max(0,")
     assert "57600000" in config["windowing"]["scored_exposure_hours"]
+
+
+def test_replay_report_and_positive_denominators_are_frozen() -> None:
+    config = json.loads(Path("configs/experiment-001.json").read_text(encoding="utf-8"))
+    positive = config["positive_validation"]
+    report = config["replay_report"]
+
+    assert positive["target_order"] == [
+        "yes",
+        "no",
+        "up",
+        "down",
+        "left",
+        "right",
+        "on",
+        "off",
+        "stop",
+        "go",
+    ]
+    assert sum(positive["target_support"]) == positive["target_example_count"] == 3_703
+    assert (
+        sum(positive["baseline_correct_by_target"])
+        == (positive["baseline_correct_count"])
+        == 2_088
+    )
+    assert positive["feature_cache"] == {
+        "dtype": "float32",
+        "experiment_config_sha256": (
+            "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98"
+        ),
+        "features_npy_sha256": (
+            "3d7981af946263f6d857f5c19b28e4e39ef0594c46b42c5c818b8d47e7b98db0"
+        ),
+        "features_sha256": (
+            "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526"
+        ),
+        "manifest_sha256": (
+            "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b"
+        ),
+        "metadata_json_sha256": (
+            "2c7ed6e406579b38bc4c240dc54851ec5b654d162e66291971e456b8a5309a47"
+        ),
+        "row_selection": (
+            "build_sampling_plan_exact_order_then_rows_where_split_is_validation_"
+            "and_label_is_in_target_order"
+        ),
+        "shape": [46_254, 80],
+    }
+    assert report["schema_version"] == 1
+    assert report["threshold_axis"] == (
+        "exactly_1001_rows_in_ascending_threshold_milli_0_through_1000"
+    )
+    assert report["threshold_row_fields"][:3] == [
+        "threshold_milli",
+        "dev_event_count",
+        "dev_event_count_by_target",
+    ]
+    assert report["selection_fields"] == [
+        "status",
+        "selected_threshold_milli",
+        "negative_frontier_milli",
+        "retention_frontier_milli",
+    ]
+    assert (
+        report["runtime_document"]["keys"]
+        == config["implementation_identity"]["runtime_versions"]
+    )
+    assert "speaker_rows" in report["dev_fields"]
+    assert "1001" in report["speaker_row_contract"]
+    assert report["identity_fields"][-1] == ("positive_feature_matrix_semantic_sha256")
+    assert report["top_false_events_fields"] == ["threshold_milli", "events"]
+    assert (
+        report["top_false_event_fields"]
+        == config["metrics"]["top_false_events_at_decision_thresholds"]["fields"]
+    )

@@ -105,10 +105,146 @@
     "test_clean_access": "forbidden_until_one_configuration_is_selected"
   },
   "positive_validation": {
+    "baseline_correct_by_target": [
+      289,
+      178,
+      193,
+      195,
+      185,
+      172,
+      231,
+      220,
+      222,
+      203
+    ],
+    "baseline_correct_count": 2088,
     "examples_sha256": "36a12b1779ca68fa995789255b603f06339fe216051d520f9ab76642a48f53c2",
+    "feature_cache": {
+      "dtype": "float32",
+      "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
+      "features_npy_sha256": "3d7981af946263f6d857f5c19b28e4e39ef0594c46b42c5c818b8d47e7b98db0",
+      "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "metadata_json_sha256": "2c7ed6e406579b38bc4c240dc54851ec5b654d162e66291971e456b8a5309a47",
+      "row_selection": "build_sampling_plan_exact_order_then_rows_where_split_is_validation_and_label_is_in_target_order",
+      "shape": [
+        46254,
+        80
+      ]
+    },
     "labels": "ten_targets_only",
     "source": "Speech Commands validation",
+    "target_example_count": 3703,
+    "target_order": [
+      "yes",
+      "no",
+      "up",
+      "down",
+      "left",
+      "right",
+      "on",
+      "off",
+      "stop",
+      "go"
+    ],
+    "target_support": [
+      397,
+      406,
+      350,
+      377,
+      352,
+      363,
+      363,
+      373,
+      350,
+      372
+    ],
     "use": "report_correct_accept_recall_without_refitting"
+  },
+  "replay_report": {
+    "dev_fields": [
+      "source_samples",
+      "scored_exposure_samples",
+      "utterance_count",
+      "speaker_count",
+      "speaker_rows"
+    ],
+    "identity_fields": [
+      "experiment_config_sha256",
+      "portable_model_sha256",
+      "scorer_source_sha256",
+      "runtime_identity_sha256",
+      "implementation_git_commit",
+      "dev_archive_sha256",
+      "dev_manifest_sha256",
+      "dev_audit_report_sha256",
+      "positive_examples_sha256",
+      "positive_feature_matrix_semantic_sha256"
+    ],
+    "output_file": "experiment-001-dev-replay.json",
+    "positive_validation_fields": [
+      "target_example_count",
+      "baseline_correct_count",
+      "support_by_target"
+    ],
+    "runtime_document": {
+      "keys": [
+        "python",
+        "numpy",
+        "scipy",
+        "soundfile",
+        "libsndfile",
+        "platform"
+      ],
+      "platform_value": "platform.platform()",
+      "serialization": "UTF8_json_dumps_sort_keys_true_separators_comma_colon_ensure_ascii_true_allow_nan_false_plus_LF"
+    },
+    "schema_version": 1,
+    "selection_fields": [
+      "status",
+      "selected_threshold_milli",
+      "negative_frontier_milli",
+      "retention_frontier_milli"
+    ],
+    "serialization": "UTF8_json_dumps_indent_2_sort_keys_true_ensure_ascii_true_allow_nan_false_plus_LF",
+    "speaker_row_contract": "ascending_integer_speaker_id;exact_fields_speaker_id_utterance_count_scored_exposure_samples_event_count;event_count_is_1001_nonnegative_JSON_integers_indexed_by_threshold_milli",
+    "target_order": "positive_validation.target_order",
+    "threshold_axis": "exactly_1001_rows_in_ascending_threshold_milli_0_through_1000",
+    "threshold_row_fields": [
+      "threshold_milli",
+      "dev_event_count",
+      "dev_event_count_by_target",
+      "false_events_per_hour",
+      "garwood_95_percent",
+      "speaker_bootstrap_95_percent",
+      "validation_correct_accept_count",
+      "validation_correct_accept_count_by_target",
+      "correct_accept_recall",
+      "conditional_correct_retention"
+    ],
+    "top_false_event_fields": [
+      "utterance_id",
+      "window_start_sample",
+      "predicted_target",
+      "target_probability",
+      "transcript"
+    ],
+    "top_false_events_contract": "JSON_array_of_exact_threshold_objects_in_ascending_unique_threshold_milli_from_0_retention_frontier_negative_frontier_and_selected_if_present;events_is_JSON_array_of_at_most_50_exact_event_objects_ranked_as_registered",
+    "top_false_events_fields": [
+      "threshold_milli",
+      "events"
+    ],
+    "top_level_fields": [
+      "schema_version",
+      "identities",
+      "runtime",
+      "target_order",
+      "dev",
+      "positive_validation",
+      "thresholds",
+      "selection",
+      "top_false_events"
+    ]
   },
   "final_evaluation_if_selected": {
     "negative": "LibriSpeech_test-clean_at_the_exact_selected_threshold",

@@ -106,6 +106,22 @@ exists, and the selected threshold if the run passes. This keeps both sides of a
 rejection reviewable without turning the report into tens of megabytes of repeated
 windows.
 
+### Frozen replay artifact
+
+Before any continuous score is computed, the report schema is fixed in
+`configs/experiment-001.json`. It contains 1,001 threshold rows in integer-milli
+order. Every row carries raw development event counts, validation correct-accept
+counts, per-target counts, the two registered uncertainty intervals, and their
+derived rates. Raw speaker rows retain each speaker's exposure and 1,001 event
+counts so the shared-bootstrap calculation can be reproduced independently.
+
+The positive denominator is also frozen from experiment 000: 3,703 target
+validation clips, of which 2,088 have the correct target argmax at threshold zero.
+The exact feature-cache container and semantic matrix digests are registered before
+continuous replay. The report additionally binds the config, model, source files,
+runtime, clean Git commit, development archive, development manifest, and audit
+report. Its JSON serialization excludes NaN and infinity.
+
 ## Test firewall contract
 
 Finishing a development replay does not authorize opening `test-clean`. This commit
