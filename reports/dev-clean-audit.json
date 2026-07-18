@@ -1,0 +1,26 @@
+{
+  "archive_bytes": 337926286,
+  "archive_md5": "42e2234ba48799c1f50f24a7926300a1",
+  "archive_sha256": "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3",
+  "chapter_count": 97,
+  "decoded_pcm16le_inventory_sha256": "b0aab7878bb1e604bc94c28320b9015eb65c392c958cac03d00b9671ef1cbf7e",
+  "decoder_versions": {
+    "libsndfile": "1.2.2",
+    "soundfile": "0.14.0"
+  },
+  "flac_count": 2703,
+  "manifest_sha256": "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7",
+  "metadata_count": 5,
+  "metadata_inventory_sha256": "8e4254783ca5aa39e0c73d735eb5068bdbc35b1b7d773a399d5e07655f7cab18",
+  "raw_flac_inventory_sha256": "5b41992cf66192340f5152ec872a4a249766fdb817f15a4de0de4ee3ea8e5636",
+  "sample_rate": 16000,
+  "schema_version": 1,
+  "source": "LibriSpeech dev-clean",
+  "source_duration_hours": 5.387811319444444,
+  "source_duration_seconds": 19396.12075,
+  "source_samples": 310337932,
+  "speaker_count": 40,
+  "transcript_count": 97,
+  "transcript_inventory_sha256": "d67f1a852d4693932b97775a51367de0262f2b1ad471b4c61c7f2bd59bf42051",
+  "utterance_count": 2703
+}

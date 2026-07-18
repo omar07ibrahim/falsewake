@@ -49,6 +49,12 @@ Dataset roles, licenses, and contamination rules are recorded in
 The confidence-threshold continuous replay protocol is registered separately in
 [docs/experiment-001.md](docs/experiment-001.md).
 
+Before replay, two complete `dev-clean` payload audits independently produced the
+same 2,703-row manifest (`SHA-256 6494fa…cff7`) and the same compact
+[audit report](reports/dev-clean-audit.json). The audit binds every compressed FLAC,
+decoded PCM stream, transcript, and metadata file without extracting the archive.
+No continuous metric has been calculated, and `test-clean` remains untouched.
+
 ## What will count as progress
 
 The project will report more than clip accuracy:

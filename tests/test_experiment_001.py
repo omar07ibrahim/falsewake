@@ -152,6 +152,43 @@ def test_dev_clean_header_report_matches_the_registered_source() -> None:
     assert report["speaker_count"] == 40
 
 
+def test_dev_clean_payload_report_is_bound_to_the_reproduced_manifest() -> None:
+    config = json.loads(
+        Path("configs/experiment-001.json").read_text(encoding="utf-8")
+    )["negative_source"]
+    report_path = Path("reports/dev-clean-audit.json")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    header = json.loads(
+        Path("reports/dev-clean-header-inspection.json").read_text(encoding="utf-8")
+    )
+
+    assert hashlib.sha256(report_path.read_bytes()).hexdigest() == (
+        "810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74"
+    )
+    assert report["archive_bytes"] == config["archive_bytes"]
+    assert report["archive_md5"] == config["archive_md5"]
+    assert report["archive_sha256"] == config["archive_sha256"]
+    assert report["manifest_sha256"] == (
+        "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7"
+    )
+    assert report["utterance_count"] == report["flac_count"] == 2_703
+    assert report["chapter_count"] == report["transcript_count"] == 97
+    assert report["speaker_count"] == header["speaker_count"] == 40
+    assert report["metadata_count"] == header["metadata_count"] == 5
+    assert report["sample_rate"] == 16_000
+    assert report["source_duration_seconds"] == (
+        report["source_samples"] / report["sample_rate"]
+    )
+    assert report["source_duration_hours"] == report["source_samples"] / 57_600_000
+    for field in (
+        "decoded_pcm16le_inventory_sha256",
+        "metadata_inventory_sha256",
+        "raw_flac_inventory_sha256",
+        "transcript_inventory_sha256",
+    ):
+        assert len(bytes.fromhex(report[field])) == 32
+
+
 def test_continuous_source_and_event_evidence_identities_are_bounded() -> None:
     config = json.loads(Path("configs/experiment-001.json").read_text(encoding="utf-8"))
 

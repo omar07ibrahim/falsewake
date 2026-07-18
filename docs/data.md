@@ -46,6 +46,12 @@ untouched until one configuration has been selected and the registered access
 firewall has been implemented and passed. A result that changes the configuration
 after viewing `test-clean` starts a new experiment rather than replacing the old one.
 
+After that registration and a header-only inspection, two full `dev-clean` audits
+decoded all 2,703 FLAC members without filesystem extraction. They produced
+byte-identical manifests and reports. The manifest remains a generated local
+artifact; its digest and the four domain-separated inventory digests are recorded in
+[reports/dev-clean-audit.json](../reports/dev-clean-audit.json).
+
 ## Attribution
 
 Results using Speech Commands will cite Pete Warden, *Speech Commands: A Dataset for

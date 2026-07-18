@@ -155,5 +155,15 @@ synthetic-tested header inspector then accepted exactly 2,703 FLAC files, 97 mat
 chapter transcripts, five metadata files, and 138 canonical directory entries. Its
 deterministic summary is in
 [reports/dev-clean-header-inspection.json](../reports/dev-clean-header-inspection.json).
-No member payload has been opened or extracted, no audio has been decoded, and no
-continuous metric has been calculated.
+
+Only after the payload-audit implementation passed synthetic tests and two
+independent reviews was the archive payload opened. Two complete runs decoded every
+FLAC directly from the tar stream without filesystem extraction and produced
+byte-identical 2,703-row manifests with SHA-256
+`6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7`.
+The byte-identical report has SHA-256
+`810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74`
+and is checked in as
+[reports/dev-clean-audit.json](../reports/dev-clean-audit.json). It records
+310,337,932 decoded samples, or 5.388 hours. No continuous metric has been
+calculated, and `test-clean` remains untouched.
