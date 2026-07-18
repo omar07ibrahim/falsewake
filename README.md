@@ -13,10 +13,10 @@ false accepts per hour, missed commands, detection delay, and CPU cost.
 
 ## Current status
 
-The first experiment is registered and the Speech Commands split has been audited,
-but no model result is published yet. The audit found 105,829 clips from 2,618
-speakers with no speaker crossing train, validation, and test. The small,
-reproducible report is in
+The first experiment is registered, the Speech Commands split has been audited, and
+the fixed log-mel frontend is implemented and tested. No model result is published
+yet. The audit found 105,829 clips from 2,618 speakers with no speaker crossing
+train, validation, and test. The small, reproducible report is in
 [reports/speech-commands-audit.json](reports/speech-commands-audit.json).
 
 This README will lead with a measured model result and a plot only after the data

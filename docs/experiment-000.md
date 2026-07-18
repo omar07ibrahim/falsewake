@@ -11,11 +11,27 @@ A multinomial linear classifier receives fixed log-mel summary features from a
 one-second, 16 kHz mono window. It predicts the ten target commands plus `unknown` and
 `silence`. This is a diagnostic baseline, not the intended streaming model.
 
+The frontend is fixed before fitting the classifier. Source PCM16 samples are decoded
+as signed little-endian integers divided by 32,768, producing `float32` values in
+`[-1, 1)`. The frontend admits finite normalized `float32` samples in the closed
+`[-1, 1]` interval; integer-scale and out-of-range arrays are rejected.
+
+- clips are right-padded to 16,000 samples without centering or end padding; floor
+  framing leaves the final 80 samples outside the last frame;
+- a periodic Hann window uses 400 samples (25 ms), a 160-sample hop (10 ms), and a
+  512-point real FFT;
+- 40 area-normalized HTK-spaced mel bands cover 20–7,600 Hz;
+- squared FFT magnitudes are divided by 512 without one-sided-bin doubling or
+  window-energy normalization;
+- mel-filtered power is clipped at `1e-10` before the natural logarithm; and
+- per-band mean and population standard deviation form an 80-value vector.
+
 ## Split and tuning rule
 
 - Train only on the Speech Commands training partition.
-- Choose feature normalization, regularization, and the acceptance threshold using
-  Speech Commands validation plus LibriSpeech `dev-clean`.
+- Fit any normalization statistics on training features only. Validation may choose
+  the normalization method, regularization, and acceptance threshold, but never
+  contributes scaler statistics.
 - Evaluate clip classification on the Speech Commands test partition.
 - Evaluate continuous false accepts once on LibriSpeech `test-clean` after selecting
   a configuration.
@@ -41,7 +57,7 @@ one-second, 16 kHz mono window. It predicts the ten target commands plus `unknow
 
 ## Results
 
-The source-data audit is complete; the classifier has not been run yet. The audit
-report records 105,829 usable command clips, six partitioned background recordings,
-and a byte-stable payload-bound manifest. No model metric has been calculated, and
-LibriSpeech has not been inspected.
+The source-data audit and the tested log-mel frontend are complete; the classifier
+has not been run yet. The audit report records 105,829 usable command clips, six
+partitioned background recordings, and a byte-stable payload-bound manifest. No
+model metric has been calculated, and LibriSpeech has not been inspected.
