@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 falsewake-features = "falsewake.feature_matrix:main"
 falsewake-linear = "falsewake.linear_baseline:main"
+falsewake-librispeech = "falsewake.librispeech:main"
 falsewake-manifest = "falsewake.speech_commands:main"
 falsewake-plots = "falsewake.result_plots:main"
 
