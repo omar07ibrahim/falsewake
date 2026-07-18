@@ -147,5 +147,10 @@ model limitation from making the continuous negative stream irrelevant.
 
 The protocol and the future firewall contract are registered. The firewall is not
 yet implemented. `dev-clean` was downloaded only after the initial registration;
-its size and official MD5 were verified and its SHA-256 was recorded. No tar member
-or decoded audio has been inspected, and no continuous metric has been calculated.
+its size and official MD5 were verified and its SHA-256 was recorded. A committed,
+synthetic-tested header inspector then accepted exactly 2,703 FLAC files, 97 matching
+chapter transcripts, five metadata files, and 138 canonical directory entries. Its
+deterministic summary is in
+[reports/dev-clean-header-inspection.json](../reports/dev-clean-header-inspection.json).
+No member payload has been opened or extracted, no audio has been decoded, and no
+continuous metric has been calculated.

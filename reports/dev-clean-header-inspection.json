@@ -1,0 +1,16 @@
+{
+  "archive_bytes": 337926286,
+  "archive_md5": "42e2234ba48799c1f50f24a7926300a1",
+  "archive_sha256": "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3",
+  "chapter_count": 97,
+  "directory_count": 138,
+  "flac_count": 2703,
+  "member_count": 2943,
+  "metadata_count": 5,
+  "regular_bytes": 360289905,
+  "regular_count": 2805,
+  "schema_version": 1,
+  "source": "LibriSpeech dev-clean",
+  "speaker_count": 40,
+  "transcript_count": 97
+}

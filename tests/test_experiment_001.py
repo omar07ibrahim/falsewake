@@ -111,6 +111,25 @@ def test_continuous_audit_covers_every_payload_and_transcript() -> None:
     )
 
 
+def test_dev_clean_header_report_matches_the_registered_source() -> None:
+    config = json.loads(
+        Path("configs/experiment-001.json").read_text(encoding="utf-8")
+    )["negative_source"]
+    report = json.loads(
+        Path("reports/dev-clean-header-inspection.json").read_text(encoding="utf-8")
+    )
+
+    assert report["archive_bytes"] == config["archive_bytes"]
+    assert report["archive_md5"] == config["archive_md5"]
+    assert report["archive_sha256"] == config["archive_sha256"]
+    assert report["regular_count"] == (
+        report["flac_count"] + report["transcript_count"] + report["metadata_count"]
+    )
+    assert report["flac_count"] == 2_703
+    assert report["chapter_count"] == report["transcript_count"] == 97
+    assert report["speaker_count"] == 40
+
+
 def test_continuous_source_and_event_evidence_identities_are_bounded() -> None:
     config = json.loads(Path("configs/experiment-001.json").read_text(encoding="utf-8"))
 
