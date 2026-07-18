@@ -8,8 +8,8 @@
     "false_events_per_hour": "event_count_divided_by_scored_exposure_hours",
     "per_target_positive_breakdown": true,
     "source_duration_hours": true,
-    "top_false_events_per_threshold": {
-      "count": 50,
+    "top_false_events_at_decision_thresholds": {
+      "count_per_threshold": 50,
       "fields": [
         "utterance_id",
         "window_start_sample",
@@ -17,7 +17,8 @@
         "target_probability",
         "transcript"
       ],
-      "rank": "target_probability_desc_then_utterance_id_asc_then_window_start_sample_asc"
+      "rank": "target_probability_desc_then_utterance_id_asc_then_window_start_sample_asc",
+      "thresholds": "unique_set_of_0;retention_frontier_maximum_milli_meeting_retention_gate;negative_frontier_minimum_milli_meeting_false_event_gate_if_any;selected_threshold_milli_if_pass"
     },
     "uncertainty": {
       "garwood_95_percent": "lower_is_zero_if_k_is_zero_else_0.5_times_chi2_ppf_0.025_df_2k_divided_by_hours;upper_is_0.5_times_chi2_ppf_0.975_df_2(k_plus_1)_divided_by_hours",
@@ -28,6 +29,28 @@
     "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
     "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
     "portable_json_sha256": "d5ac3579f539288c6ed7769894dd30ad2272480956b2f9b24b7e730baaeb0cd3"
+  },
+  "implementation_identity": {
+    "git_state": "record_lowercase_40_hex_HEAD_and_require_each_scorer_source_path_to_be_a_regular_non_symlink_whose_bytes_equal_the_same_path_blob_at_HEAD",
+    "runtime_versions": [
+      "python",
+      "numpy",
+      "scipy",
+      "soundfile",
+      "libsndfile",
+      "platform"
+    ],
+    "runtime_identity_sha256": "SHA256(canonical_compact_sort_keys_ASCII_JSON_plus_LF_of_the_exact_runtime_versions)",
+    "scorer_source_files": [
+      "src/falsewake/baseline_data.py",
+      "src/falsewake/continuous_replay.py",
+      "src/falsewake/feature_matrix.py",
+      "src/falsewake/features.py",
+      "src/falsewake/holdout.py",
+      "src/falsewake/librispeech.py",
+      "src/falsewake/speech_commands.py"
+    ],
+    "scorer_source_sha256": "SHA256(ASCII_falsewake-exp001-scorer-source-v1\\0_then_for_each_scorer_source_path_in_UTF8_bytewise_ascending_order_UINT32LE(path_UTF8_byte_count)_path_UTF8_UINT64LE(file_byte_count)_raw_file_bytes);require_exact_regular_non_symlink_files"
   },
   "negative_source": {
     "archive_audit": {
@@ -45,6 +68,7 @@
         "decoded_pcm16le_sha256",
         "transcript"
       ],
+      "manifest_serialization": "rows_sorted_by_relative_path;UTF8_json_dumps_sort_keys_true_separators_comma_colon_ensure_ascii_true_allow_nan_false_plus_LF",
       "regular_member_population": {
         "flac": "every_canonical_dev_clean_FLAC_exactly_once",
         "metadata_exact_paths": [
@@ -57,11 +81,14 @@
         "other": "reject",
         "transcripts": "exactly_one_canonical_<speaker>-<chapter>.trans.txt_for_each_and_only_each_represented_chapter"
       },
-      "report": "archive_MD5_and_SHA256;raw_and_decoded_inventory_SHA256;manifest_SHA256;utterance_speaker_chapter_counts;source_samples_and_duration;decoder_versions",
-      "transcripts": "bind_each_<speaker>-<chapter>.trans.txt_bytes;require_unique_utterance_ids_and_exact_FLAC_bijection"
+      "audit_report": "dev-clean.audit.json_with_archive_MD5_and_SHA256;manifest_SHA256;domain_separated_raw_FLAC_decoded_PCM16LE_transcript_and_metadata_inventory_SHA256;utterance_speaker_chapter_counts;source_samples_and_duration;decoder_versions;exclude_timings_timestamps_and_absolute_paths",
+      "inventory_framing": "domain_bytes_then_for_each_relative_path_in_UTF8_bytewise_ascending_order_UINT32LE(path_UTF8_byte_count)_path_UTF8_UINT64LE(payload_byte_count)_payload;raw_FLAC_payload_is_32_digest_bytes;decoded_payload_is_UINT64LE(sample_count)_plus_32_digest_bytes;transcript_and_metadata_payloads_are_exact_raw_bytes",
+      "transcripts": "strict_UTF8_and_LF_lines_only_reject_CR;each_nonempty_line_is_canonical_utterance_id_ASCII_space_nonempty_transcript;preserve_text_after_first_space_without_normalization;require_unique_utterance_ids_and_exact_FLAC_bijection"
     },
+    "archive_bytes": 337926286,
     "archive_filename": "dev-clean.tar.gz",
     "archive_md5": "42e2234ba48799c1f50f24a7926300a1",
+    "archive_sha256": "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3",
     "archive_url": "https://www.openslr.org/resources/12/dev-clean.tar.gz",
     "dataset": "LibriSpeech dev-clean",
     "role": "threshold_diagnostics_only",
@@ -99,6 +126,8 @@
     }
   },
   "selection": {
+    "exact_integer_gates": "false_event_gate_is_events_times_57600000_lte_scored_exposure_samples;retention_gate_is_correct_accept_count_times_5_gte_baseline_correct_count_times_4",
+    "false_event_rate_statistic": "raw_event_count_divided_by_scored_exposure_hours_point_estimate_not_an_interval_bound",
     "if_multiple_pass": "lowest_threshold",
     "if_none_pass": "reject_registered_threshold_grid_and_keep_test_clean_untouched",
     "max_dev_false_events_per_hour": 1.0,
@@ -112,15 +141,22 @@
       "status",
       "experiment_config_sha256",
       "scorer_source_sha256",
+      "runtime_identity_sha256",
       "implementation_git_commit",
       "dev_archive_sha256",
       "dev_manifest_sha256",
-      "dev_report_sha256",
-      "selected_threshold"
+      "dev_audit_report_sha256",
+      "dev_replay_report_sha256",
+      "selected_threshold_milli"
     ],
-    "status_recomputation": "pass_iff_the_hash_bound_dev_report_has_a_registered_grid_point_meeting_both_selection_constraints;selected_threshold_must_equal_the_lowest_such_point;otherwise_reject_with_null_threshold",
+    "selected_threshold_milli": "JSON_integer_0_through_1000_for_pass_and_JSON_null_for_reject;runtime_probability_is_float64(value)_divided_by_float64(1000)",
+    "status_recomputation": "pass_iff_the_hash_bound_dev_replay_report_has_a_registered_grid_point_meeting_both_selection_constraints_using_the_registered_point_estimates;selected_threshold_milli_must_equal_the_lowest_such_point;otherwise_reject_with_null_threshold",
     "status_for_test_access": "pass",
-    "test_loader_contract": "before_accepting_or_opening_any_test_path_recompute_status_and_threshold_from_the_bound_dev_report_then_match_current_config_scorer_clean_git_commit_archive_manifest_report_and_artifact_identities;refuse_absent_reject_tampered_dirty_or_mismatched_state",
+    "status_values": [
+      "pass",
+      "reject"
+    ],
+    "test_loader_contract": "before_accepting_or_opening_any_test_path_recompute_status_and_threshold_milli_from_integer_fields_in_the_bound_dev_replay_report_then_match_current_config_scorer_source_runtime_git_commit_archive_manifest_audit_report_replay_report_and_artifact_identities;refuse_absent_reject_tampered_dirty_or_mismatched_state",
     "schema_version": 1
   },
   "windowing": {

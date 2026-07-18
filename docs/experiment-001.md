@@ -14,9 +14,10 @@ or inspecting LibriSpeech `dev-clean`. It does not refit the scaler or classifie
 LibriSpeech `dev-clean` is read English audiobook speech. It is a development source
 for threshold diagnostics, not a final test set. The official OpenSLR archive is
 `dev-clean.tar.gz` with MD5 `42e2234ba48799c1f50f24a7926300a1` and a published
-download size of 337 MB. The audit will record a stronger SHA-256 after download,
-reject unsafe or unexpected archive members, and require an exact regular-file
-union: every canonical split FLAC exactly once, exactly one canonical chapter
+download size of 337 MB. The downloaded 337,926,286-byte archive has SHA-256
+`76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3`.
+The audit will reject unsafe or unexpected archive members and require an exact
+regular-file union: every canonical split FLAC exactly once, exactly one canonical chapter
 transcript for each and only each represented chapter, and exactly the five named
 top-level LibriSpeech metadata files in the config. Every other regular member is an
 error. For each utterance the audit will bind the raw FLAC, decoded little-endian
@@ -53,7 +54,9 @@ is zero; otherwise it is `16,000 + (count - 1) * 1,600` samples. The corpus rate
 uses the sum of those samples divided by 57,600,000 samples per hour.
 
 Thresholds are exactly `float64(i) / float64(1000)` for every integer `i` from 0
-through 1,000. The experiment can only conclude whether a point on this grid passes;
+through 1,000. Reports and the selection artifact use the integer `threshold_milli`
+as the canonical JSON representation; probabilities are derived at runtime. The
+experiment can only conclude whether a point on this grid passes;
 it does not prove that no real-valued threshold between grid points would pass. The
 complete grid and exact event rule are in
 [configs/experiment-001.json](../configs/experiment-001.json).
@@ -81,14 +84,24 @@ registered grid is rejected, no configuration is selected, and LibriSpeech
 `test-clean` stays untouched. The full curve is kept even when the outcome is
 negative.
 
-Rates aggregate raw event counts and scored exposure across the corpus. Positive
-metrics are micro-aggregated and also broken down by target class. The report gives
+Rates aggregate raw event counts and scored exposure across the corpus. The
+selection gate uses that raw count divided by exposure point estimate, not either
+confidence interval endpoint. Positive metrics are micro-aggregated and also broken
+down by target class. The report gives
 both nominal 95% Garwood Poisson intervals and a deterministic 10,000-resample
 speaker-cluster bootstrap interval. Speakers are ordered by ascending integer ID.
 One `(10,000, speaker_count)` matrix drawn by NumPy `Generator(PCG64(20260718))`
 is shared across every threshold, and linear-method percentiles are used. Refractory
 events and audiobook speech need not follow a Poisson process, so the Garwood
 interval is descriptive, not a guarantee.
+
+The full report keeps aggregate integer sufficient statistics and derived metrics
+for all 1,001 grid points. Event-level examples are limited to the 50
+highest-confidence events at each unique decision point: zero, the maximum threshold
+meeting the retention gate, the minimum threshold meeting the negative gate if one
+exists, and the selected threshold if the run passes. This keeps both sides of a
+rejection reviewable without turning the report into tens of megabytes of repeated
+windows.
 
 ## Test firewall contract
 
@@ -97,13 +110,20 @@ registers the firewall contract; it does not yet claim that the loader exists. I
 implementation and negative tests are mandatory before acquiring, opening a path
 to, or reading any byte from `test-clean`.
 
-A separate selection artifact must bind the experiment config SHA, scorer source
-SHA, clean implementation commit, dev archive, dev manifest, dev report, status,
-and exact selected threshold. The validator must independently recompute whether
-the hash-bound report has a passing grid point and, if so, the lowest such point. A
-hand-written `pass` is not trusted. Before accepting or opening any test path, the
-future loader must reject absent, rejected, tampered, dirty, or identity-mismatched
-state. Tests must cover each of those cases and a wrong selected threshold. A
+A separate selection artifact must bind the experiment config SHA, the exact
+seven-file scorer-source bundle, its clean implementation commit, a canonical
+runtime-identity digest, dev archive, dev manifest, distinct audit and replay
+reports, status, and exact integer `selected_threshold_milli`. Source paths and the
+domain-separated length-prefixed digest are fixed in the config; each file must
+equal its blob at the recorded `HEAD`. This means a later documentation-only commit
+does not invalidate a result. The replay report records exact Python, NumPy, SciPy,
+SoundFile, libsndfile, and platform versions. The validator must independently
+recompute whether the hash-bound replay report has a
+passing grid point from integer counts and samples and, if so, the lowest such
+integer point. A hand-written `pass` is not trusted. Before accepting or opening any
+test path, the future loader must reject absent, rejected, tampered, dirty,
+runtime-mismatched, or identity-mismatched state. Tests must cover each of those
+cases and a wrong selected threshold. A
 protocol or scorer change starts a new experiment.
 
 Only after a valid selection may the same threshold be evaluated once on both
@@ -126,5 +146,6 @@ model limitation from making the continuous negative stream irrelevant.
 ## Status
 
 The protocol and the future firewall contract are registered. The firewall is not
-yet implemented. `dev-clean` has not been downloaded or inspected, and no continuous
-metric has been calculated.
+yet implemented. `dev-clean` was downloaded only after the initial registration;
+its size and official MD5 were verified and its SHA-256 was recorded. No tar member
+or decoded audio has been inspected, and no continuous metric has been calculated.
