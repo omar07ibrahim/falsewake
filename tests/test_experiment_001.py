@@ -105,6 +105,28 @@ def test_continuous_audit_covers_every_payload_and_transcript() -> None:
     assert "decoded_pcm16le_sha256" in audit["manifest_fields"]
     assert "transcript" in audit["manifest_fields"]
     assert "bijection" in audit["transcripts"]
+    assert audit["inventory_domain_hex"] == {
+        "decoded_pcm16le": (
+            "66616c736577616b652d6578703030312d6c696272697370656563682d6465636f"
+            "6465642d70636d31366c652d696e76656e746f72792d763100"
+        ),
+        "metadata": (
+            "66616c736577616b652d6578703030312d6c696272697370656563682d6d657461"
+            "646174612d696e76656e746f72792d763100"
+        ),
+        "raw_flac": (
+            "66616c736577616b652d6578703030312d6c696272697370656563682d7261772d"
+            "666c61632d696e76656e746f72792d763100"
+        ),
+        "transcript": (
+            "66616c736577616b652d6578703030312d6c696272697370656563682d7472616e"
+            "7363726970742d696e76656e746f72792d763100"
+        ),
+    }
+    assert audit["output_files"] == {
+        "audit_report": "dev-clean.audit.json",
+        "manifest": "dev-clean.manifest.jsonl",
+    }
     assert config["final_evaluation_if_selected"]["selection_inputs_forbidden"]
     assert config["negative_source"]["archive_sha256"] == (
         "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3"

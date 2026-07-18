@@ -82,7 +82,17 @@
         "transcripts": "exactly_one_canonical_<speaker>-<chapter>.trans.txt_for_each_and_only_each_represented_chapter"
       },
       "audit_report": "dev-clean.audit.json_with_archive_MD5_and_SHA256;manifest_SHA256;domain_separated_raw_FLAC_decoded_PCM16LE_transcript_and_metadata_inventory_SHA256;utterance_speaker_chapter_counts;source_samples_and_duration;decoder_versions;exclude_timings_timestamps_and_absolute_paths",
+      "inventory_domain_hex": {
+        "decoded_pcm16le": "66616c736577616b652d6578703030312d6c696272697370656563682d6465636f6465642d70636d31366c652d696e76656e746f72792d763100",
+        "metadata": "66616c736577616b652d6578703030312d6c696272697370656563682d6d657461646174612d696e76656e746f72792d763100",
+        "raw_flac": "66616c736577616b652d6578703030312d6c696272697370656563682d7261772d666c61632d696e76656e746f72792d763100",
+        "transcript": "66616c736577616b652d6578703030312d6c696272697370656563682d7472616e7363726970742d696e76656e746f72792d763100"
+      },
       "inventory_framing": "domain_bytes_then_for_each_relative_path_in_UTF8_bytewise_ascending_order_UINT32LE(path_UTF8_byte_count)_path_UTF8_UINT64LE(payload_byte_count)_payload;raw_FLAC_payload_is_32_digest_bytes;decoded_payload_is_UINT64LE(sample_count)_plus_32_digest_bytes;transcript_and_metadata_payloads_are_exact_raw_bytes",
+      "output_files": {
+        "audit_report": "dev-clean.audit.json",
+        "manifest": "dev-clean.manifest.jsonl"
+      },
       "transcripts": "strict_UTF8_and_LF_lines_only_reject_CR;each_nonempty_line_is_canonical_utterance_id_ASCII_space_nonempty_transcript;preserve_text_after_first_space_without_normalization;require_unique_utterance_ids_and_exact_FLAC_bijection"
     },
     "archive_bytes": 337926286,

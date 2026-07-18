@@ -24,7 +24,10 @@ error. For each utterance the audit will bind the raw FLAC, decoded little-endia
 PCM16, sample count, canonical numeric ID, and transcript. Chapter transcript bytes
 must form an exact bijection with FLAC IDs. The manifest uses ascending relative
 POSIX paths and records full-population digests, counts, duration, and decoder
-versions. Audio is decoded directly to `int16`; resampling is forbidden.
+versions. Its four inventory-digest domain byte strings are pinned as hexadecimal in
+the config. The canonical outputs are `dev-clean.manifest.jsonl` and
+`dev-clean.audit.json`. Audio is decoded directly to `int16`; resampling is
+forbidden.
 
 An utterance is replayed independently. One-second windows start every 100 ms; a
 window never crosses an utterance boundary, and a partial tail is dropped. Source
