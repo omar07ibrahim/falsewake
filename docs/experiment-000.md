@@ -94,7 +94,12 @@ the fitted iteration count and exact configuration SHA-256 are stored with it.
 
 ## Results
 
-The source-data audit and the tested log-mel frontend are complete; the classifier
-has not been run yet. The audit report records 105,829 usable command clips, six
-partitioned background recordings, and a byte-stable payload-bound manifest. No
-model metric has been calculated, and LibriSpeech has not been inspected.
+The source-data audit, tested log-mel frontend, and exact feature extraction are
+complete; the classifier has not been run yet. Two independent extractions of all
+46,254 sampled clips produced byte-identical `float32` matrices with shape
+`46,254 x 80`. Their timings, environment, and canonical feature digest are in
+[reports/experiment-000-features.json](../reports/experiment-000-features.json).
+
+The audit report records 105,829 usable command clips, six partitioned background
+recordings, and a byte-stable payload-bound manifest. No model metric has been
+calculated, and LibriSpeech has not been inspected.

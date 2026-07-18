@@ -14,10 +14,11 @@ false accepts per hour, missed commands, detection delay, and CPU cost.
 ## Current status
 
 The first experiment is registered, the Speech Commands split has been audited, and
-the fixed log-mel frontend is implemented and tested. No model result is published
-yet. The audit found 105,829 clips from 2,618 speakers with no speaker crossing
-train, validation, and test. The small, reproducible report is in
-[reports/speech-commands-audit.json](reports/speech-commands-audit.json).
+the fixed log-mel frontend is implemented and tested. Two exact feature extractions
+of all 46,254 selected clips were byte-identical; their provenance is recorded in
+[reports/experiment-000-features.json](reports/experiment-000-features.json). No
+model result is published yet. The audit found 105,829 clips from 2,618 speakers
+with no speaker crossing train, validation, and test.
 
 This README will lead with a measured model result and a plot only after the data
 split, threshold-selection rule, and negative stream have been fixed.

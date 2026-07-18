@@ -1,0 +1,36 @@
+{
+  "byte_identical_repeat_count": 2,
+  "cache_container": {
+    "features_npy_sha256": "3d7981af946263f6d857f5c19b28e4e39ef0594c46b42c5c818b8d47e7b98db0",
+    "metadata_json_sha256": "2c7ed6e406579b38bc4c240dc54851ec5b654d162e66291971e456b8a5309a47"
+  },
+  "dtype": "float32",
+  "environment": {
+    "architecture": "x86_64",
+    "cpu": "AMD EPYC 7R13 Processor",
+    "logical_cpus": 4,
+    "numpy": "2.5.1",
+    "python": "3.12.3"
+  },
+  "examples_sha256": "36a12b1779ca68fa995789255b603f06339fe216051d520f9ab76642a48f53c2",
+  "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
+  "extraction_runs": [
+    {
+      "extractor_seconds": 49.078,
+      "max_rss_kib": 145408,
+      "wall_seconds": 50.32
+    },
+    {
+      "extractor_seconds": 51.957,
+      "max_rss_kib": 145496,
+      "wall_seconds": 53.16
+    }
+  ],
+  "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
+  "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+  "schema_version": 1,
+  "shape": [
+    46254,
+    80
+  ]
+}
