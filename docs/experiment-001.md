@@ -114,9 +114,11 @@ order. Every row carries raw development event counts, validation correct-accept
 counts, per-target counts, the two registered uncertainty intervals, and their
 derived rates. Raw speaker rows retain each speaker's exposure and 1,001 event
 counts so the shared-bootstrap calculation can be reproduced independently.
+Both interval fields are finite two-element `[lower, upper]` arrays.
 
 The positive denominator is also frozen from experiment 000: 3,703 target
 validation clips, of which 2,088 have the correct target argmax at threshold zero.
+Those counts are also frozen separately for each of the ten targets.
 The exact feature-cache container and semantic matrix digests are registered before
 continuous replay. The report additionally binds the config, model, source files,
 runtime, clean Git commit, development archive, development manifest, and audit

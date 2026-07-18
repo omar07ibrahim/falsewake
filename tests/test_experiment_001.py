@@ -312,6 +312,9 @@ def test_replay_report_and_positive_denominators_are_frozen() -> None:
     assert "speaker_rows" in report["dev_fields"]
     assert "1001" in report["speaker_row_contract"]
     assert report["identity_fields"][-1] == ("positive_feature_matrix_semantic_sha256")
+    assert "feature_cache.features_sha256" in report["identity_semantics"]
+    assert "[lower,upper]" in report["interval_contract"]
+    assert "baseline_correct_by_target" in report["positive_validation_fields"]
     assert report["top_false_events_fields"] == ["threshold_milli", "events"]
     assert (
         report["top_false_event_fields"]

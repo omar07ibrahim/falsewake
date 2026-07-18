@@ -181,10 +181,13 @@
       "positive_examples_sha256",
       "positive_feature_matrix_semantic_sha256"
     ],
+    "identity_semantics": "positive_feature_matrix_semantic_sha256_equals_positive_validation.feature_cache.features_sha256_not_the_NPY_container_digest",
+    "interval_contract": "garwood_95_percent_and_speaker_bootstrap_95_percent_are_exact_two_element_JSON_arrays_[lower,upper]_of_finite_nonnegative_numbers_with_lower_lte_upper",
     "output_file": "experiment-001-dev-replay.json",
     "positive_validation_fields": [
       "target_example_count",
       "baseline_correct_count",
+      "baseline_correct_by_target",
       "support_by_target"
     ],
     "runtime_document": {
