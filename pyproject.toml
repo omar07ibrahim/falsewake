@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 falsewake-features = "falsewake.feature_matrix:main"
+falsewake-linear = "falsewake.linear_baseline:main"
 falsewake-manifest = "falsewake.speech_commands:main"
 
 [project.optional-dependencies]
@@ -47,3 +48,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["scipy", "scipy.*", "sklearn", "sklearn.*"]
+ignore_missing_imports = true
