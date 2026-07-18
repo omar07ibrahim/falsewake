@@ -18,6 +18,15 @@ registered threshold grid. No threshold satisfies both gates, so the machine-rea
 selection is `reject` with `selected_threshold_milli: null`; the held-out
 LibriSpeech `test-clean` archive remains absent and unread.
 
+Experiment 002 is now registered as an iterative engineering response to that
+failure; no neural result is claimed yet. The fixed design is a 23,724-parameter
+causal depthwise-separable TCN with explicit ONNX state, a 995 ms receptive field,
+and deterministic CPU-only training. Its replay and deployment gates were frozen
+before the first experiment 002 model score on `dev-clean`. Because experiment 001
+already exposed the complete development curve and top errors, this is deliberately
+described as development—not a blind or independent evaluation. The full contract
+is in [docs/experiment-002.md](docs/experiment-002.md).
+
 At the last threshold that preserves the registered 80% conditional-retention gate
 (`0.395`), the listener emits 1,895.7103 false events per scored hour. At the first
 threshold that meets the 1.0-event/hour negative gate (`0.991`), it retains only
@@ -74,6 +83,8 @@ Dataset roles, licenses, and contamination rules are recorded in
 [docs/experiment-000.md](docs/experiment-000.md).
 The confidence-threshold continuous replay protocol is registered separately in
 [docs/experiment-001.md](docs/experiment-001.md).
+The causal neural training, ONNX, and next replay protocol is preregistered in
+[docs/experiment-002.md](docs/experiment-002.md).
 
 Before replay, two complete `dev-clean` payload audits independently produced the
 same 2,703-row manifest (`SHA-256 6494fa…cff7`) and the same compact
@@ -91,7 +102,8 @@ official archive identity before evaluation. The tracked artifact now records
 The project will report more than clip accuracy:
 
 - false accepts per hour on continuous negative speech;
-- false reject rate at a threshold chosen on validation data only;
+- correct-detection recall at a threshold selected only from registered development
+  sources;
 - detection latency at several audio chunk sizes;
 - results for speakers absent from training;
 - model size, peak memory, and real-time factor on a named CPU; and

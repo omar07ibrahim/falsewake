@@ -64,6 +64,29 @@ hours of full-window exposure. Its complete 1,001-point
 even though the grid was rejected. These development outputs do not contain or
 summarize any `test-clean` observation.
 
+## Experiment 002 data roles
+
+Experiment 002 is an iterative response to the published linear failure, not a new
+blind benchmark. The complete experiment 001 `dev-clean` curve and top-event
+transcripts were already available when its neural architecture was registered.
+Accordingly, `dev-clean` remains a development source, and an improvement there
+will not be presented as an independent generalization estimate.
+
+Only Speech Commands `train` payloads may contribute gradients, normalization
+statistics, augmentation noise, or INT8 calibration examples. Speech Commands
+`validation` selects checkpoints, the deployment representation, and the positive
+side of the future replay threshold. Speech Commands `test` audio is forbidden to
+experiment 002 training, export selection, and development replay code. The exact
+roles and byte identities are frozen in
+[configs/experiment-002-training.json](../configs/experiment-002-training.json).
+
+No LibriSpeech payload is a machine input to neural training or quantization. A
+second replay registration must bind the chosen model and implementation before the
+first experiment 002 score is computed on `dev-clean`. Even a development `pass`
+will not authorize `test-clean`: a new, experiment-specific fail-closed firewall
+must be implemented and reviewed first. The official archive remains absent and
+unread.
+
 ## Attribution
 
 Results using Speech Commands will cite Pete Warden, *Speech Commands: A Dataset for

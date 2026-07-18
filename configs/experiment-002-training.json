@@ -1,0 +1,813 @@
+{
+  "augmentation": {
+    "command": {
+      "base_waveform": "decode_PCM16LE_to_float32_by_dividing_by_32768_then_right_zero_pad_to_exactly_16000_samples_before_shift",
+      "gain_db": {
+        "application": "multiply_waveform_by_float32(10^(float64(gain_dB)/20))",
+        "maximum_exclusive": 6.0,
+        "minimum_inclusive": -6.0
+      },
+      "noise_mix": {
+        "definition": "after_shift_and_gain_compute_float64_RMS_over_all_16000_command_samples_and_selected_noise_samples;scale_noise_by_command_RMS_divided_by_(noise_RMS_times_10^(SNR_dB/20));zero_command_RMS_gives_zero_noise_scale_and_zero_noise_RMS_is_error",
+        "probability": 0.8,
+        "selection_draw": "use_the_current_command_example_identity_epoch_and_training_seed_with_domain_command-noise-window_to_draw_one_unbiased_integer_over_the_registered_window_universe",
+        "snr_db_maximum_exclusive": 20.0,
+        "snr_db_minimum_inclusive": 0.0,
+        "source": "one_statelessly_selected_segment_from_the_four_train_background_recordings",
+        "window_selection": "flatten_all_(UTF8_bytewise_sorted_background_path,start_sample)_pairs_with_integer_start_0_through_sample_count_minus_16000_inclusive_path_then_start;draw_one_unbiased_integer_over_that_full_duration_weighted_universe"
+      },
+      "order": [
+        "zero_fill_integer_shift",
+        "gain",
+        "optional_train_noise_mix_at_requested_SNR",
+        "clamp_to_closed_interval_minus_one_plus_one",
+        "fixed_log_mel",
+        "global_normalization",
+        "time_mask",
+        "mel_mask"
+      ],
+      "shift_samples": {
+        "draw": "unbiased_integer_with_bound_3201_then_subtract_1600",
+        "maximum_inclusive": 1600,
+        "minimum_inclusive": -1600,
+        "padding": "zero_fill_without_wrap",
+        "positive_direction": "positive_s_delays_audio_to_the_right_so_output[i]=input[i-s]_when_0_lte_i-s_lt_16000_else_positive_zero;negative_s_advances_left_by_minus_s"
+      }
+    },
+    "draws": {
+      "bernoulli": "uniform_float64_less_than_probability",
+      "counter": "UINT64LE_starts_at_zero_for_each_scalar_draw;integer_rejection_increments_that_draw_counter;rank_and_ordinary_real_draws_use_zero;registered_benchmark_tensor_generation_uses_the_C_order_scalar_index",
+      "digest_word": "first_8_HMAC_digest_bytes_interpreted_as_UINT64LE",
+      "domains": {
+        "benchmark_feature": "benchmark-feature",
+        "benchmark_pcm": "benchmark-pcm",
+        "calibration_rank_prefix": "calibration-rank-",
+        "command_gain_db": "command-gain-db",
+        "command_mel_start": "command-mel-start",
+        "command_mel_width": "command-mel-width",
+        "command_noise_apply": "command-noise-apply",
+        "command_noise_snr_db": "command-noise-snr-db",
+        "command_noise_window": "command-noise-window",
+        "command_shift": "command-shift",
+        "command_time_start": "command-time-start",
+        "command_time_width": "command-time-width",
+        "silence_gain_db": "silence-gain-db",
+        "silence_mel_start": "silence-mel-start",
+        "silence_mel_width": "silence-mel-width",
+        "silence_time_start": "silence-time-start",
+        "silence_time_width": "silence-time-width",
+        "silence_window_rank": "silence-window-rank",
+        "train_order": "train-order",
+        "unknown_clip_rank": "unknown-clip-rank",
+        "unknown_word_rank": "unknown-word-rank"
+      },
+      "identity_encodings": {
+        "command": "UTF8(command)_NUL_manifest_path_UTF8_exactly_as_manifest_without_Unicode_normalization",
+        "silence_or_noise_window": "UTF8(window)_NUL_background_path_UTF8_exactly_as_audit_NUL_ASCII_canonical_unsigned_decimal_start_sample",
+        "source_word": "UTF8(word)_NUL_source_word_UTF8_exactly_as_manifest_without_Unicode_normalization"
+      },
+      "integer": "for_positive_bound_n_read_digest_word_x;reject_x_greater_than_or_equal_to_2^64_minus_(2^64_mod_n)_and_increment_counter;otherwise_return_x_mod_n",
+      "non_training_epoch_value": 0,
+      "rank": "compare_all_32_HMAC_digest_bytes_as_unsigned_byte_strings_lexicographically_then_identity_UTF8_bytes",
+      "real": "u=float64(digest_word_right_shift_11)_divided_by_2^53;raw=float64(minimum)+float64(maximum_exclusive-minus-minimum)*u;return_min(raw,numpy_nextafter(float64(maximum_exclusive),negative_infinity))_as_float64_so_the_maximum_remains_exclusive",
+      "stateless_key": "HMAC_SHA256_key_UINT64LE(seed)_message_ASCII_falsewake-exp002-v1_NUL_UINT32LE(epoch)_UINT32LE(identity_UTF8_byte_count)_identity_UTF8_UINT32LE(domain_ASCII_byte_count)_domain_ASCII_UINT64LE(counter)",
+      "training_epoch_origin": 0
+    },
+    "feature_masks": {
+      "fill_after_global_normalization": 0.0,
+      "mel_mask_width": "one_integer_uniformly_drawn_from_0_through_4_inclusive_then_one_uniform_valid_start;zero_width_is_no_op",
+      "order": [
+        "time",
+        "mel"
+      ],
+      "time_mask_width": "one_integer_uniformly_drawn_from_0_through_10_inclusive_then_one_uniform_valid_start;zero_width_is_no_op"
+    },
+    "global_data_rng": "forbidden",
+    "silence": {
+      "construction": "selected_train_background_segment_then_the_same_gain_distribution_using_domain_silence-gain-db;no_shift_and_no_additional_noise_mix",
+      "feature_order": [
+        "gain",
+        "clamp_to_closed_interval_minus_one_plus_one",
+        "fixed_log_mel",
+        "global_normalization",
+        "time_mask",
+        "mel_mask"
+      ]
+    }
+  },
+  "benchmark": {
+    "cold_input_frames": 98,
+    "cpu": "AMD_EPYC_7R13",
+    "execution_provider": "onnxruntime_CPUExecutionProvider_only",
+    "feature_tensor": {
+      "construction": "for_shape_[1,40,108]_in_C_order_use_HMAC_seed_20260723_epoch_0_identity_ASCII_benchmark-feature-tensor_domain_ASCII_benchmark-feature_counter_equal_to_scalar_index;unbiased_integer_0_through_65535_minus_32768_then_float32_divide_by_32768",
+      "dtype": "little_endian_float32",
+      "shape": "[1,40,108]"
+    },
+    "frontend_model_stream": {
+      "construction": "generate_8321600_samples_with_HMAC_seed_20260723_epoch_0_identity_ASCII_benchmark-pcm-stream_domain_ASCII_benchmark-pcm_counter_equal_to_sample_index;unbiased_integer_0_through_65535_minus_32768_then_float32_divide_by_32768",
+      "measured_chunks": 5000,
+      "prime_samples": 1600,
+      "sample_count": 8321600,
+      "streaming": "prime_frontend_and_model_once_outside_timing_then_carry_both_states;each_following_1600_sample_chunk_emits_exactly_10_frames;PCM_generation_is_excluded_but_frontend_NCT_copy_ORT_call_and_output_materialization_are_included",
+      "warmup_chunks": 200
+    },
+    "input_parity": "FP32_and_INT8_use_byte_identical_feature_tensor_PCM_stream_initial_states_and_iteration_order",
+    "inter_op_threads": 1,
+    "intra_op_threads": 1,
+    "measured_iterations": 5000,
+    "measures": [
+      "p50_latency_ms",
+      "p95_latency_ms",
+      "p99_latency_ms",
+      "state_cold_98_frame_latency_ms",
+      "model_bytes",
+      "state_bytes",
+      "peak_RSS_bytes"
+    ],
+    "mode": "ORT_SEQUENTIAL",
+    "peak_rss_limit_bytes": 268435456,
+    "percentile_method": "numpy_percentile_method_higher",
+    "process": "one_fresh_process_per_candidate_with_session_construction_before_timing_and_process_peak_RSS_including_Python_ONNX_Runtime_model_and_working_state",
+    "selected_frontend_plus_model_p95_limit_ms": 10.0,
+    "selected_model_steady_p95_limit_ms": 2.0,
+    "session_options": {
+      "enable_cpu_mem_arena": true,
+      "enable_mem_pattern": true,
+      "execution_mode": "ORT_SEQUENTIAL",
+      "graph_optimization_level": "ORT_ENABLE_ALL",
+      "inter_op_num_threads": 1,
+      "intra_op_num_threads": 1,
+      "providers": [
+        "CPUExecutionProvider"
+      ]
+    },
+    "state_cold": "use_feature_tensor_frames_0_through_97_with_positive_zero_float_histories_and_int64_zero_counter_for_every_call;session_is_warm_so_state_cold_does_not_mean_process_cold",
+    "steady_input_frames": 10,
+    "steady_state": "outside_timing_run_feature_tensor_frames_0_through_97_once_from_zero_state_then_reuse_that_nonzero_output_state_with_frames_98_through_107_for_every_10_frame_measured_call;ORT_inputs_are_not_mutated",
+    "timing": "disable_Python_GC_during_loops;perf_counter_ns_immediately_around_each_call;all_inputs_and_microbenchmark_states_precomputed_outside_timing;materialize_every_output;session_creation_and_input_generation_excluded",
+    "warmup_iterations": 200
+  },
+  "class_order": [
+    "yes",
+    "no",
+    "up",
+    "down",
+    "left",
+    "right",
+    "on",
+    "off",
+    "stop",
+    "go",
+    "unknown",
+    "silence"
+  ],
+  "data": {
+    "archive": {
+      "bytes": 2428923189,
+      "filename": "speech_commands_v0.02.tar.gz",
+      "sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58"
+    },
+    "manifest": {
+      "inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "record_count": 105829,
+      "schema_version": 2,
+      "sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "source_lists": {
+        "testing_sha256": "2d17c6b3faf63be43eda93cfeb0c747cfd79b7b236282039dbac65a2cb5f1df5",
+        "validation_sha256": "5747407275538b4056e823982f0db1fc993776ab532048196a19be701bdc87d2"
+      },
+      "split_counts": {
+        "test": 11005,
+        "train": 84843,
+        "validation": 9981
+      }
+    },
+    "test": {
+      "audio_access": "forbidden_for_experiment_002_training_validation_calibration_export_benchmark_and_development_replay_selection",
+      "manifest_metadata_role": "population_count_only_no_audio_payload_read"
+    },
+    "train_epoch": {
+      "example_count": 40027,
+      "order": "ascending_HMAC_SHA256_domain_train-order_digest_then_exact_example_identity_UTF8",
+      "silence": {
+        "background_records": [
+          {
+            "path": "_background_noise_/doing_the_dishes.wav",
+            "sample_count": 1522930,
+            "sha256": "099eafcd7c4c266612012b5622b97157042e5288acaf4cbf3dc475814bfcdaa8"
+          },
+          {
+            "path": "_background_noise_/dude_miaowing.wav",
+            "sample_count": 988891,
+            "sha256": "1acd62f115d4c3f9daca9c5ec0c2e0c3e174a2a08be30200003a51de52b288ff"
+          },
+          {
+            "path": "_background_noise_/exercise_bike.wav",
+            "sample_count": 980062,
+            "sha256": "e453813ed45b2f9f81d5600ec3ac2a5e22d3f2c947fe6f0a3ff1f3d6018c014d"
+          },
+          {
+            "path": "_background_noise_/pink_noise.wav",
+            "sample_count": 960000,
+            "sha256": "b6e038c83fb342e39267d4fe69663f76ef0c1121ff60232e7b79171c00318cd6"
+          }
+        ],
+        "candidate_universe": "all_unique_(background_path,start_sample)_windows_in_UTF8_bytewise_path_order_then_integer_start_0_through_sample_count_minus_16000_inclusive",
+        "count": 3086,
+        "sampling": "rank_all_candidates_by_stateless_HMAC_domain_silence-window-rank_digest_then_window_identity_and_take_first_3086_without_replacement_each_epoch"
+      },
+      "targets": {
+        "count": 30769,
+        "sampling": "all_training_target_clips_exactly_once_each_epoch",
+        "support_by_class": {
+          "down": 3134,
+          "go": 3106,
+          "left": 3037,
+          "no": 3130,
+          "off": 2970,
+          "on": 3086,
+          "right": 3019,
+          "stop": 3111,
+          "up": 2948,
+          "yes": 3228
+        }
+      },
+      "unknown": {
+        "allocation": "rank_25_source_words_by_stateless_HMAC_domain_unknown-word-rank_digest_then_word_identity;first_22_words_receive_247_clips_and_remaining_3_receive_246",
+        "count": 6172,
+        "source_clip_count": 54074,
+        "source_word_count": 25,
+        "source_words": [
+          "backward",
+          "bed",
+          "bird",
+          "cat",
+          "dog",
+          "eight",
+          "five",
+          "follow",
+          "forward",
+          "four",
+          "happy",
+          "house",
+          "learn",
+          "marvin",
+          "nine",
+          "one",
+          "seven",
+          "sheila",
+          "six",
+          "three",
+          "tree",
+          "two",
+          "visual",
+          "wow",
+          "zero"
+        ],
+        "within_word_sampling": "rank_each_words_clips_by_stateless_HMAC_domain_unknown-clip-rank_digest_then_command_identity_and_take_the_allocation_without_replacement_each_epoch"
+      }
+    },
+    "validation": {
+      "example_count": 10583,
+      "silence": {
+        "background_path": "_background_noise_/running_tap.wav",
+        "count": 602,
+        "definition": "every_full_16000_sample_window_at_start_samples_0_1600_3200_through_floor((978488_minus_16000)_divided_by_1600)_times_1600",
+        "hop_samples": 1600,
+        "sha256": "c199c5fd61f5bf9fd57f1c346c8a51c0c035d63d176348dd9f0f7d671d7eb8eb",
+        "source_samples": 978488,
+        "window_samples": 16000
+      },
+      "targets": {
+        "count": 3703,
+        "support_by_class": {
+          "down": 377,
+          "go": 372,
+          "left": 352,
+          "no": 406,
+          "off": 373,
+          "on": 363,
+          "right": 363,
+          "stop": 350,
+          "up": 350,
+          "yes": 397
+        }
+      },
+      "unknown": {
+        "count": 6278,
+        "sampling": "all_validation_unknown_command_clips"
+      }
+    }
+  },
+  "deployment": {
+    "candidate_choice": "choose_INT8_only_if_its_absolute_validation_relative_agreement_size_stateful_parity_and_benchmark_gates_all_pass_and_its_steady_model_p95_is_not_slower_than_FP32_otherwise_choose_FP32_if_FP32_passes_all_its_gates",
+    "development_score_before_freeze": "forbidden",
+    "development_score_before_replay_registration": "forbidden_for_both_FP32_and_INT8",
+    "failure": "if_neither_FP32_nor_INT8_meets_its_registered_validation_export_parity_and_benchmark_gates_stop_experiment_002_without_retuning",
+    "freeze": "commit_selected_model_exact_export_inputs_runtime_identity_benchmark_report_and_all_source_before_registering_the_separate_experiment_002_replay_config",
+    "representation_validation_gate": "every_selected_representation_independently_meets_the_exact_absolute_validation_gates_not_only_relative_drop_limits"
+  },
+  "experiment": "causal_streaming_keyword_spotter",
+  "frontend": {
+    "clip_samples": 16000,
+    "fft_samples": 512,
+    "frame_count": 98,
+    "hop_samples": 160,
+    "implementation_contract": "same_fixed_uncentered_float32_log_mel_frontend_as_experiment_000_without_centering_or_resampling",
+    "log_floor": 1e-10,
+    "max_hz": 7600.0,
+    "mel_bins": 40,
+    "min_hz": 20.0,
+    "pcm16_divisor": 32768,
+    "sample_rate": 16000,
+    "window_samples": 400
+  },
+  "identity": {
+    "development_history": "iterative_development_after_the_complete_experiment_001_dev_clean_result;not_unseen_not_blind_not_holdout_and_not_confirmatory",
+    "frozen_predecessor": {
+      "experiment_000_portable_model_sha256": "d5ac3579f539288c6ed7769894dd30ad2272480956b2f9b24b7e730baaeb0cd3",
+      "experiment_001_config_sha256": "7e27ba554ef357a2de4a929088a99efc20b9ee0285cb0c242a05474cc944b217",
+      "experiment_001_dev_replay_report_sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+      "experiment_001_scorer_source_digest": "SHA256(ASCII_falsewake-exp001-scorer-source-v1_NUL_then_for_each_UTF8_bytewise_sorted_path_UINT32LE(path_byte_count)_path_UINT64LE(file_byte_count)_raw_file_bytes)",
+      "experiment_001_scorer_source_files": [
+        "src/falsewake/baseline_data.py",
+        "src/falsewake/continuous_replay.py",
+        "src/falsewake/feature_matrix.py",
+        "src/falsewake/features.py",
+        "src/falsewake/holdout.py",
+        "src/falsewake/librispeech.py",
+        "src/falsewake/speech_commands.py"
+      ],
+      "experiment_001_scorer_source_sha256": "93bd11f50e11ed481f3f2306ef377a9dd106dd908853f7f9478b86bf5f62aeb9",
+      "experiment_001_selection_sha256": "1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318"
+    },
+    "librispeech": {
+      "dev_clean_role": "future_iterative_development_replay_only_after_a_separate_committed_replay_registration",
+      "payload_for_training_or_calibration": "forbidden",
+      "test_clean_status": "official_archive_absent_and_unread",
+      "test_clean_use_after_future_pass": "still_forbidden_until_a_new_experiment_002_specific_fail_closed_firewall_is_implemented_and_authorizes_access"
+    },
+    "phase": "phase_1_training_and_deployment_preregistration_committed_before_the_experiment_002_model_implementation_commit_training_export_or_any_experiment_002_development_score",
+    "schema_version": 1
+  },
+  "model": {
+    "blocks": {
+      "count": 8,
+      "dilations": [
+        1,
+        2,
+        4,
+        8,
+        1,
+        2,
+        4,
+        8
+      ],
+      "operation": "causal_depthwise_Conv1d_48_to_48_kernel_3_groups_48_no_bias_then_per_frame_LayerNorm_48_eps_1e-5_affine_then_ReLU_then_pointwise_Conv1d_48_to_48_kernel_1_no_bias_then_per_frame_LayerNorm_48_eps_1e-5_affine_then_residual_add_then_ReLU"
+    },
+    "compute": {
+      "dense_98_frame_call_MACs": 2163840,
+      "dense_steady_10_frame_call_MACs": 220800,
+      "dense_steady_MACs_per_second_at_100_frames": 2208000,
+      "formula": "21504_times_F_plus_576_times_S",
+      "scope": "neural_Conv_and_Linear_multiply_accumulates_only;excludes_LayerNorm_ReLU_residual_pool_softmax_and_frontend",
+      "terms": "stem_1920_times_F;8_blocks_each_(144_plus_2304)_times_F;head_576_times_S;dense_export_has_S_equal_F"
+    },
+    "dense_output": "logits_float32_shape_[B,T,12]_for_every_supplied_frame_including_startup_frames",
+    "dropout": {
+      "location": "only_after_temporal_pool_and_before_final_linear",
+      "probability": 0.1,
+      "training_only": true
+    },
+    "initialization": {
+      "convolutions": "kaiming_normal_fan_out_nonlinearity_relu",
+      "layer_norm_bias": 0.0,
+      "layer_norm_weight": 1.0,
+      "linear_bias": 0.0,
+      "linear_weight": "xavier_uniform"
+    },
+    "input": {
+      "dtype": "float32",
+      "layout": "NCT",
+      "shape": "[B,40,T]"
+    },
+    "output": {
+      "bias": true,
+      "in_features": 48,
+      "out_features": 12
+    },
+    "parameter_count": 23724,
+    "pool": {
+      "definition": "arithmetic_mean_of_current_and_previous_37_encoder_frames_with_zero_initialized_history_and_fixed_divisor_38",
+      "history_frames": 37,
+      "state_shape": "[B,48,37]"
+    },
+    "receptive_field": {
+      "encoder_frames": 61,
+      "first_scored_frame_zero_based": 97,
+      "input_frames": 98,
+      "samples": 15920,
+      "seconds": 0.995,
+      "statement": "995_ms_not_one_second"
+    },
+    "state": {
+      "block_history_shapes_in_order": [
+        "[B,48,2]",
+        "[B,48,4]",
+        "[B,48,8]",
+        "[B,48,16]",
+        "[B,48,2]",
+        "[B,48,4]",
+        "[B,48,8]",
+        "[B,48,16]"
+      ],
+      "block_history_update": "for_each_block_concatenate_its_history_with_that_block_input_apply_the_dilated_kernel_to_each_new_frame_and_return_the_final_2_times_dilation_block_input_frames",
+      "bytes_per_batch_element_excluding_counter": 18624,
+      "frames_seen": "int64_[B]_initialized_zero_incremented_per_frame_and_saturated_at_98",
+      "reset": "only_at_utterance_or_independent_clip_boundary",
+      "streaming": "explicit_input_and_output_tensors_separate_from_model_parameters"
+    },
+    "stem": "Conv1d_40_to_48_kernel_1_no_bias_then_per_frame_LayerNorm_48_eps_1e-5_affine_then_ReLU",
+    "streaming_abi": {
+      "dynamic_axes": "only_batch_B_and_supplied_frame_count_T_are_dynamic;all_history_channel_and_time_axes_are_fixed",
+      "inputs_in_order": [
+        "mel_frames:float32[B,40,T]",
+        "dw_state_0:float32[B,48,2]",
+        "dw_state_1:float32[B,48,4]",
+        "dw_state_2:float32[B,48,8]",
+        "dw_state_3:float32[B,48,16]",
+        "dw_state_4:float32[B,48,2]",
+        "dw_state_5:float32[B,48,4]",
+        "dw_state_6:float32[B,48,8]",
+        "dw_state_7:float32[B,48,16]",
+        "pool_state:float32[B,48,37]",
+        "frames_seen:int64[B]"
+      ],
+      "outputs_in_order": [
+        "logits:float32[B,T,12]",
+        "next_dw_state_0:float32[B,48,2]",
+        "next_dw_state_1:float32[B,48,4]",
+        "next_dw_state_2:float32[B,48,8]",
+        "next_dw_state_3:float32[B,48,16]",
+        "next_dw_state_4:float32[B,48,2]",
+        "next_dw_state_5:float32[B,48,4]",
+        "next_dw_state_6:float32[B,48,8]",
+        "next_dw_state_7:float32[B,48,16]",
+        "next_pool_state:float32[B,48,37]",
+        "next_frames_seen:int64[B]"
+      ],
+      "reset": "all_float_histories_are_positive_zero_and_frames_seen_is_int64_zero",
+      "semantics": "histories_are_oldest_to_newest;each_next_dw_state_is_the_final_2_times_dilation_frames_of_that_blocks_concatenated_history_and_input;next_pool_state_is_the_final_37_encoder_frames;next_frames_seen=min(98,frames_seen+T)"
+    }
+  },
+  "normalization": {
+    "accumulation": "in_canonical_manifest_order_then_frame_0_through_97_order_cast_each_float32_log_mel_value_to_float64_and_update_per_mel_float64_sum_and_sumsq_with_one_scalar_addition_each;mean=sum/count;population_variance=max(0,sumsq/count-mean*mean);std=sqrt(variance)",
+    "application": "load_little_endian_float32_mean_and_std;for_each_float32_log_mel_value_compute_float32_subtract_mean_then_float32_divide_by_std_with_no_epsilon_and_store_float32",
+    "clip_count": 84843,
+    "frame_count_per_clip": 98,
+    "output": "40_float32_means_then_40_float32_population_standard_deviations_serialized_as_little_endian_binary32",
+    "source": "every_unaugmented_training_command_clip_across_all_35_recorded_words_exactly_once;no_background_windows",
+    "total_frames": 8314614,
+    "waveform_preprocessing": "decode_PCM16LE_to_float32_by_dividing_by_32768;reject_more_than_16000_samples;right_pad_with_positive_float32_zero_to_exactly_16000_before_fixed_log_mel",
+    "zero_std": "error"
+  },
+  "onnx": {
+    "fp32": {
+      "argmax_agreement": "exact_for_all_10583_validation_examples",
+      "export": "explicit_block_history_pool_history_and_frames_seen_inputs_and_outputs",
+      "forbidden_node_contract": "reject_op_type_Dropout_or_BatchNormalization_or_any_op_type_starting_with_Random",
+      "forbidden_nodes": [
+        "BatchNormalization",
+        "Dropout",
+        "RandomNormal",
+        "RandomNormalLike",
+        "RandomUniform",
+        "RandomUniformLike"
+      ],
+      "frames_seen_agreement": "exact_int64",
+      "max_logit_absolute_delta": 1e-05,
+      "max_state_absolute_delta": 1e-05,
+      "opset": 18,
+      "partition_checks": [
+        "full_sequence",
+        "one_frame_chunks",
+        "irregular_fixed_chunks_7_1_23_4_19_44_repeated_until_consumed",
+        "append_future_prefix_invariance_exact_prefix_logits_and_states_before_the_append"
+      ],
+      "runtime": "onnxruntime_CPUExecutionProvider_only",
+      "size_limit_bytes": 262144
+    },
+    "int8": {
+      "calibration": {
+        "candidate_universes": {
+          "silence": "every_unique_16000_sample_window_from_the_four_registered_training_backgrounds_at_each_integer_start_0_through_sample_count_minus_16000_inclusive",
+          "target": "for_each_target_class_every_training_command_clip_with_that_exact_label",
+          "unknown": "all_54074_training_unknown_command_clips"
+        },
+        "count_per_class": 128,
+        "example_count": 1536,
+        "explicit_state_inputs": "all_float_histories_positive_zero_and_frames_seen_int64_zero_for_each_independent_98_frame_example",
+        "preprocessing": "right_zero_pad_command_clips_to_16000_and_use_raw_16000_sample_silence_windows;no_shift_gain_noise_or_masks;fixed_log_mel_then_frozen_global_normalization",
+        "reader_order": "class_order_then_HMAC_rank_then_exact_identity_bytes",
+        "sampling": "for_each_class_rank_the_exact_candidate_universe_without_replacement_by_HMAC_seed_20260722_epoch_0_domain_ASCII_calibration-rank-<class_order_label>_and_the_registered_command_or_window_identity_then_take_first_128",
+        "source": "train_only"
+      },
+      "comparison": {
+        "argmax_agreement": "fraction_of_the_10583_examples_where_INT8_and_FP32_ONNX_frame_97_argmax_are_identical_with_first_class_order_index_winning_exact_ties",
+        "metric_deltas": "target_accuracy_drop=FP32_minus_INT8;macro_F1_drop=FP32_minus_INT8;unknown_and_silence_target_rate_increase=INT8_minus_FP32",
+        "population": "the_exact_10583_example_validation_population_in_registered_validation_order_with_independent_zero_state_per_example",
+        "probability_delta": "stable_float64_softmax_separately_over_each_candidates_float32_frame_97_logits_then_maximum_absolute_difference_over_all_10583_times_12_example_class_probabilities",
+        "reference": "the_committed_eligible_FP32_ONNX_artifact_executed_with_CPUExecutionProvider_only"
+      },
+      "eligibility": {
+        "all_metrics_logits_and_states_finite": true,
+        "argmax_agreement_minimum": 0.99,
+        "macro_f1_maximum_drop": 0.01,
+        "maximum_probability_absolute_delta": 0.05,
+        "maximum_silence_argmax_target_rate": 0.05,
+        "maximum_unknown_argmax_target_rate": 0.2,
+        "minimum_12_class_macro_f1": 0.8,
+        "minimum_every_target_recall": 0.7,
+        "minimum_target_accuracy": 0.85,
+        "silence_target_rate_maximum_increase": 0.005,
+        "size_limit_bytes": 196608,
+        "target_accuracy_maximum_drop": 0.01,
+        "unknown_target_rate_maximum_increase": 0.01
+      },
+      "quantize_static_arguments": {
+        "activation_type": "QuantType.QInt8",
+        "calibrate_method": "CalibrationMethod.MinMax",
+        "calibration_cache_path": null,
+        "calibration_providers": [
+          "CPUExecutionProvider"
+        ],
+        "extra_options": {
+          "ActivationSymmetric": false,
+          "AddQDQPairToWeight": false,
+          "CalibMovingAverage": false,
+          "CalibStridedMinMax": null,
+          "CalibTensorRangeSymmetric": false,
+          "DedicatedQDQPair": false,
+          "EnableSubgraph": false,
+          "ForceQuantizeNoInputCheck": false,
+          "MatMulConstBOnly": true,
+          "MinimumRealRange": null,
+          "OpTypesToExcludeOutputQuantization": [],
+          "QDQDisableWeightAdjustForInt32Bias": false,
+          "QDQKeepRemovableActivations": false,
+          "QDQOpTypePerChannelSupportToAxis": {},
+          "SmoothQuant": false,
+          "UseQDQContribOps": false,
+          "WeightSymmetric": true
+        },
+        "nodes_to_exclude": [],
+        "nodes_to_quantize": [],
+        "op_types_to_quantize": [
+          "Conv",
+          "Gemm",
+          "MatMul"
+        ],
+        "per_channel": true,
+        "quant_format": "QuantFormat.QDQ",
+        "reduce_range": false,
+        "use_external_data_format": false,
+        "weight_type": "QuantType.QInt8"
+      },
+      "recipe": "one_static_mixed_QDQ_S8S8_recipe_for_Conv_Gemm_and_constant_B_MatMul_only;LayerNorm_residual_state_temporal_pool_and_counter_remain_FP32_or_int64",
+      "recipe_count": 1,
+      "stateful_parity": {
+        "checks": [
+          "full_sequence",
+          "one_frame_chunks",
+          "irregular_fixed_chunks_7_1_23_4_19_44_repeated_until_consumed",
+          "append_future_prefix_invariance",
+          "independent_state_reset"
+        ],
+        "frames_seen": "exact_int64",
+        "maximum_partition_logit_absolute_delta": 1e-05,
+        "maximum_partition_state_absolute_delta": 1e-05
+      }
+    }
+  },
+  "optimizer": {
+    "adamw": {
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "foreach": false,
+      "fused": false,
+      "learning_rate": 0.003,
+      "weight_decay": 0.0001
+    },
+    "gradient_l2_clip": 5.0,
+    "parameter_groups": "one_group_containing_every_trainable_parameter_including_LayerNorm_weights_LayerNorm_biases_and_classifier_bias",
+    "schedule": {
+      "cosine": "for_update_u_313_through_9389_inclusive_lr=0.00003+0.5*(0.003-0.00003)*(1+cos(pi*(u-313)/(9389-313)))",
+      "minimum_learning_rate": 3e-05,
+      "timing": "learning_rate_is_set_immediately_before_the_zero_based_optimizer_update",
+      "warmup": "for_update_u_0_through_312_inclusive_lr=0.0003+(0.003-0.0003)*u/312"
+    }
+  },
+  "phase_2_replay_registration": {
+    "before_any_development_score": "the_canonical_phase_2_config_and_every_bound_artifact_must_be_committed_before_either_FP32_or_INT8_processes_any_LibriSpeech_dev_clean_payload",
+    "known_development_identities": {
+      "dev_archive_sha256": "76f87d090650617fca0cac8f88b9416e0ebf80350acb97b343a85fa903728ab3",
+      "dev_audit_report_sha256": "810bbd4966d3ad5a24cd2bdd3bb1a8afb4b7325fc285e19f180fb7b26a9dbe74",
+      "dev_manifest_sha256": "6494fa36866b0c90eb12e8e1325339981fcd3cb5c61abd2d06dedd5d3ce6cff7"
+    },
+    "required_bindings": [
+      "phase_1_training_config_sha256",
+      "training_report_sha256",
+      "selected_safetensors_sha256",
+      "selected_canonical_tensor_digest",
+      "normalization_stats_sha256",
+      "fp32_onnx_sha256",
+      "int8_attempt_report_sha256",
+      "int8_onnx_sha256_or_JSON_null_if_no_artifact",
+      "selected_deployment_representation_FP32_or_INT8",
+      "selected_deployment_onnx_sha256",
+      "export_inputs_and_config_sha256",
+      "implementation_git_commit",
+      "scorer_source_files",
+      "scorer_source_digest_algorithm",
+      "scorer_source_sha256",
+      "runtime_identity_sha256",
+      "benchmark_report_sha256",
+      "speech_commands_manifest_sha256",
+      "dev_archive_sha256",
+      "dev_manifest_sha256",
+      "dev_audit_report_sha256"
+    ],
+    "source_bundle_contract": "phase_2_lists_every_scoring_frontend_model_export_and_replay_source_path_in_UTF8_bytewise_order_and_hashes_domain_ASCII_falsewake-exp002-scorer-source-v1_NUL_then_UINT32LE_path_length_path_UINT64LE_file_length_raw_bytes",
+    "speech_commands_manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b"
+  },
+  "phase_order": [
+    "commit_this_phase_1_training_and_deployment_preregistration",
+    "implement_then_train_validate_export_quantize_and_benchmark_without_any_LibriSpeech_payload",
+    "freeze_and_commit_the_selected_deployment_and_its_complete_evidence",
+    "commit_a_separate_experiment_002_continuous_replay_config_before_the_first_experiment_002_dev_clean_score",
+    "run_two_byte_identical_development_replays",
+    "keep_test_clean_untouched_even_after_a_pass_until_a_new_firewall_authorizes_it"
+  ],
+  "reproducibility": {
+    "canonical_digest_serialization": "UTF8_JSON_sort_keys_true_separators_comma_colon_ensure_ascii_true_allow_nan_false_plus_LF;raw_tensors_are_C_order_little_endian_with_dtype_and_shape_framing",
+    "selected_seed_rerun": "rerun_the_selected_seed_from_scratch_and_require_identical_canonical_training_history_model_tensor_and_all_10583_validation_prediction_digests",
+    "selection_failure": "any_digest_mismatch_stops_experiment_002_without_retuning_under_this_ID"
+  },
+  "resource_budgets": {
+    "cache_build": {
+      "logical_CPU_threads_maximum": 2,
+      "output_bytes_maximum": 4294967296,
+      "peak_RSS_bytes_maximum": 4294967296,
+      "scratch_disk_bytes_maximum": 8589934592,
+      "wall_seconds_maximum": 7200
+    },
+    "export_and_quantization": {
+      "logical_CPU_threads_maximum": 2,
+      "output_and_scratch_disk_bytes_maximum": 2147483648,
+      "peak_RSS_bytes_maximum": 4294967296,
+      "wall_seconds_per_candidate_maximum": 1800
+    },
+    "scope": "working_artifacts_and_scratch_only_excluding_the_immutable_source_archives",
+    "training": {
+      "logical_CPU_threads_maximum": 2,
+      "output_and_scratch_disk_bytes_maximum": 4294967296,
+      "peak_RSS_bytes_maximum": 8589934592,
+      "wall_seconds_per_30_epoch_seed_maximum": 21600
+    }
+  },
+  "runtime_lock": {
+    "numpy": "2.5.1",
+    "onnx": "1.22.0",
+    "onnxruntime": "1.27.0",
+    "onnxscript": "0.7.1",
+    "python": "3.12.3",
+    "safetensors": "0.8.0",
+    "torch": "2.13.0+cpu"
+  },
+  "schema_version": 1,
+  "seeds": {
+    "benchmark": 20260723,
+    "bootstrap": 20260724,
+    "protocol": 20260718,
+    "quantization": 20260722,
+    "training": [
+      20260719,
+      20260720,
+      20260721
+    ]
+  },
+  "streaming_evaluation": {
+    "argmax": "numpy_argmax_over_the_registered_class_order_with_first_index_winning_exact_ties",
+    "development_gates": {
+      "maximum_false_events_per_hour": 1.0,
+      "maximum_positive_p95_latency_samples": 12800,
+      "maximum_silence_qualifying_target_rate": 0.05,
+      "maximum_unknown_qualifying_target_rate": 0.05,
+      "minimum_absolute_correct_detection_recall": 0.75,
+      "minimum_conditional_correct_retention": 0.8,
+      "minimum_every_target_recall": 0.6,
+      "threshold_selection": "lowest_threshold_milli_meeting_every_gate"
+    },
+    "development_replay": {
+      "development_source": "LibriSpeech_dev_clean_already_observed_in_experiment_001_and_used_iteratively_not_as_holdout",
+      "negative_population": "stream_each_utterance_once_without_crossing_boundaries;for_N_samples_frontend_frame_count=max(0,1+floor((N-400)/160))_and_scoring_tick_count=max(0,1+floor((frame_count-98)/10))",
+      "registration": "a_separate_replay_config_must_be_committed_after_deployment_freeze_and_before_first_experiment_002_dev_clean_score",
+      "reproducibility": "two_complete_replays_must_produce_byte_identical_reports_and_selection_artifacts",
+      "scored_exposure": "zero_if_no_scoring_ticks_else_15920_plus_(scoring_tick_count_minus_1)_times_1600_samples;summed_rate_divisor_is_scored_samples_divided_by_57600000_hours",
+      "test_clean": "no_access_after_pass_without_new_experiment_002_specific_firewall"
+    },
+    "event_rule": {
+      "current_tick": "must_have_target_argmax_and_its_float64_softmax_probability_greater_than_or_equal_to_threshold",
+      "global_refractory": "10_scoring_ticks_shared_by_all_targets;event_at_tick_k_allows_next_event_at_tick_k_plus_10",
+      "history": "last_5_scoring_ticks_including_current_with_nonqualifying_sentinel",
+      "reset": "history_and_refractory_reset_at_every_utterance_or_independent_validation_stream_boundary",
+      "same_target_vote": "current_predicted_target_must_appear_as_a_qualifying_target_on_at_least_3_of_last_5_ticks",
+      "threshold_state": "independent_vote_history_and_refractory_state_for_each_threshold_milli"
+    },
+    "finite_gate": "before_aggregation_require_every_frontend_value_ONNX_logit_float_state_and_float64_softmax_probability_for_every_dev_target_unknown_and_silence_stream_to_be_finite_and_require_every_int64_counter_in_range;any_violation_rejects_the_entire_replay_and_no_threshold_can_pass_or_be_published",
+    "positive_validation": {
+      "conditional_retention": "correct_detection_count_at_threshold_divided_by_correct_detection_count_at_threshold_zero;zero_or_nonfinite_denominator_makes_the_threshold_fail",
+      "correct_detection": "at_least_one_emitted_event_for_the_ground_truth_target_with_decision_sample_strictly_greater_than_onset_sample_and_less_than_or_equal_to_onset_sample_plus_source_samples_plus_8000",
+      "decision_sample": "exclusive_right_edge_of_the_current_analysis_frame_equal_to_zero_based_frame_index_times_160_plus_400",
+      "event_processing": "process_all_ticks_from_stream_start_so_pre_onset_events_can_consume_the_global_refractory_but_cannot_be_correct",
+      "failure_semantics": "zero_correct_detections_or_any_nonfinite_recall_retention_or_latency_statistic_makes_the_threshold_fail",
+      "latency": "decision_sample_minus_onset_sample_for_the_first_correct_event;numpy_percentile_method_higher_over_correctly_detected_targets",
+      "per_target_recall": "correctly_detected_streams_for_each_target_divided_by_that_targets_registered_support",
+      "stream": "for_each_of_3703_targets_reset_all_states_then_16000_float32_positive_zero_samples_then_the_actual_decoded_raw_clip_samples_then_16000_float32_positive_zero_samples;onset_sample_is_16000_and_source_samples_is_the_actual_clip_length"
+    },
+    "probability": "stable_float64_softmax_over_12_logits_after_casting_logits_to_float64",
+    "scoring_ticks": "after_state_reset_score_zero_based_encoder_frame_97_then_every_10_frames",
+    "threshold_grid": {
+      "count": 1001,
+      "definition": "float64(integer_milli)_divided_by_float64(1000)",
+      "start_milli": 0,
+      "step_milli": 1,
+      "stop_milli_inclusive": 1000
+    },
+    "unsmoothed_diagnostic": "publish_the_same_current_tick_qualifier_with_the_same_global_10_tick_refractory_but_without_vote_history;never_use_it_for_threshold_or_deployment_selection",
+    "validation_open_set": {
+      "denominators": {
+        "silence": 602,
+        "unknown": 6278
+      },
+      "event_processing": "reset_neural_vote_and_refractory_state_per_stream;process_all_ticks_from_stream_start_so_pre_onset_events_may_consume_refractory_but_are_not_counted",
+      "event_region": "count_a_stream_if_any_target_event_has_decision_sample_strictly_greater_than_16000_and_less_than_or_equal_to_16000_plus_source_samples_plus_8000",
+      "rates": "counted_streams_divided_by_the_exact_registered_denominator;zero_or_nonfinite_denominator_or_rate_fails_the_threshold",
+      "silence_stream": "16000_positive_zero_samples_then_the_exact_registered_16000_sample_running_tap_window_then_16000_positive_zero_samples;source_samples_is_16000",
+      "unknown_stream": "16000_positive_zero_samples_then_the_actual_decoded_raw_unknown_clip_samples_then_16000_positive_zero_samples;source_samples_is_the_actual_clip_length"
+    }
+  },
+  "training": {
+    "amp": false,
+    "batch_size": 128,
+    "checkpoint_selection": "within_each_seed_maximize_12_class_validation_macro_F1_then_minimize_validation_cross_entropy_then_choose_earlier_epoch;across_seed_winners_apply_the_same_metric_order_then_earlier_epoch_then_lower_seed",
+    "cpu_only": true,
+    "determinism": {
+      "blas_threads": 1,
+      "dataloader_workers": 0,
+      "dtype": "float32",
+      "inter_op_threads": 1,
+      "intra_op_threads": 2,
+      "mkldnn_enabled": false,
+      "torch_deterministic_algorithms": true
+    },
+    "drop_last": false,
+    "early_stopping": false,
+    "epochs": 30,
+    "forward": "one_[B,40,98]_dense_forward_from_all_zero_block_pool_states_and_frames_seen_zero_per_independent_clip;all_98_logits_are_computed_so_Torch_dropout_consumption_is_fixed",
+    "last_batch_size": 91,
+    "loss": {
+      "class_weights": "none",
+      "label_smoothing": 0.05,
+      "name": "cross_entropy",
+      "reduction": "mean_over_current_batch"
+    },
+    "model_rng": "torch_manual_seed(training_seed)_once_before_parameter_initialization;the_same_seeded_Torch_stream_drives_training_dropout_only_and_never_data_sampling_order_or_augmentation",
+    "supervised_logit": "logits[:,97,:]_only;startup_frames_0_through_96_are_excluded_from_the_loss",
+    "total_updates": 9390,
+    "updates_per_epoch": 313
+  },
+  "validation": {
+    "checkpoint_metrics": {
+      "macro_f1": "unweighted_mean_of_12_one_vs_rest_class_F1_values_with_zero_division_zero",
+      "validation_cross_entropy": "float64_sum_of_per_example_unsmoothed_cross_entropy_in_canonical_example_order_divided_by_10583"
+    },
+    "evaluation": "after_each_completed_epoch_1_through_30_switch_to_eval_disable_dropout_and_gradients_score_the_complete_fixed_population_once_then_restore_train_mode_if_another_epoch_remains",
+    "gates_before_any_development_replay": {
+      "finite_all_metrics_logits_parameters_and_states": true,
+      "maximum_silence_argmax_target_rate": 0.05,
+      "maximum_unknown_argmax_target_rate": 0.2,
+      "minimum_12_class_macro_f1": 0.8,
+      "minimum_every_target_recall": 0.7,
+      "minimum_target_accuracy": 0.85
+    },
+    "isolation": "validation_audio_and_labels_are_for_checkpoint_and_seed_selection_and_registered_metrics_only;forbidden_for_gradients_global_normalization_quantization_calibration_augmentation_noise_or_LayerNorm_fitting",
+    "order": "all_9981_validation_command_rows_in_canonical_manifest_path_UTF8_byte_order_then_602_running_tap_silence_windows_in_ascending_start_sample_order",
+    "prediction": "argmax_over_12_logits_at_frame_97_after_one_independent_16000_sample_clip_with_state_reset;first_class_order_index_wins_exact_ties",
+    "retuning_policy": "if_the_selected_exact_rerun_fails_any_gate_stop_experiment_002_and_do_not_retune_under_the_same_ID"
+  }
+}
