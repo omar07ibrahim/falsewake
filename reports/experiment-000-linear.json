@@ -1,0 +1,905 @@
+{
+  "class_order": [
+    "yes",
+    "no",
+    "up",
+    "down",
+    "left",
+    "right",
+    "on",
+    "off",
+    "stop",
+    "go",
+    "unknown",
+    "silence"
+  ],
+  "evaluation_seconds": 0.10758003799128346,
+  "examples_sha256": "36a12b1779ca68fa995789255b603f06339fe216051d520f9ab76642a48f53c2",
+  "experiment_config_sha256": "023fdb4a61ae434b519bf5f20bc3be123d1ab2208202c7b9997e509edb461b98",
+  "features_sha256": "b46cdd047b52e7d7291b4551c905d4ce7bb058dbec0d519237549bdceddc3526",
+  "fit": {
+    "fit_seconds": 21.55967731398414,
+    "n_iter": [
+      371
+    ],
+    "scaler_fit_examples": 36941,
+    "training_examples": 36941
+  },
+  "headline_split": "test",
+  "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+  "portable_model_sha256": "d5ac3579f539288c6ed7769894dd30ad2272480956b2f9b24b7e730baaeb0cd3",
+  "runtime": {
+    "numpy": "2.5.1",
+    "python": "3.12.3",
+    "scikit_learn": "1.9.0",
+    "scipy": "1.18.0"
+  },
+  "schema_version": 1,
+  "scikit_learn_version": "1.9.0",
+  "splits": {
+    "test": {
+      "accuracy": 0.564086814086814,
+      "confusion_matrix": [
+        [
+          346,
+          1,
+          0,
+          3,
+          27,
+          14,
+          0,
+          1,
+          2,
+          1,
+          24,
+          0
+        ],
+        [
+          11,
+          179,
+          6,
+          51,
+          18,
+          14,
+          37,
+          4,
+          2,
+          62,
+          21,
+          0
+        ],
+        [
+          2,
+          19,
+          236,
+          15,
+          32,
+          7,
+          10,
+          29,
+          57,
+          14,
+          4,
+          0
+        ],
+        [
+          6,
+          59,
+          11,
+          176,
+          28,
+          41,
+          39,
+          1,
+          9,
+          14,
+          22,
+          0
+        ],
+        [
+          39,
+          16,
+          14,
+          21,
+          209,
+          55,
+          2,
+          3,
+          18,
+          7,
+          28,
+          0
+        ],
+        [
+          14,
+          15,
+          4,
+          30,
+          21,
+          204,
+          2,
+          5,
+          10,
+          33,
+          57,
+          1
+        ],
+        [
+          1,
+          42,
+          19,
+          32,
+          1,
+          7,
+          220,
+          31,
+          10,
+          22,
+          9,
+          2
+        ],
+        [
+          13,
+          10,
+          39,
+          9,
+          9,
+          5,
+          22,
+          210,
+          71,
+          14,
+          0,
+          0
+        ],
+        [
+          8,
+          3,
+          36,
+          10,
+          16,
+          7,
+          3,
+          17,
+          291,
+          12,
+          8,
+          0
+        ],
+        [
+          2,
+          49,
+          7,
+          25,
+          16,
+          36,
+          13,
+          13,
+          8,
+          203,
+          30,
+          0
+        ],
+        [
+          71,
+          44,
+          8,
+          30,
+          30,
+          55,
+          14,
+          15,
+          15,
+          47,
+          76,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          405
+        ]
+      ],
+      "correct": 2755,
+      "example_count": 4884,
+      "macro_f1": 0.5575914550927743,
+      "open_set_target_prediction": {
+        "silence": {
+          "predicted_target_count": 0,
+          "predicted_target_rate": 0.0,
+          "support": 405
+        },
+        "unknown": {
+          "predicted_target_count": 329,
+          "predicted_target_rate": 0.8123456790123457,
+          "support": 405
+        }
+      },
+      "per_class": [
+        {
+          "f1": 0.7424892703862661,
+          "label": "yes",
+          "precision": 0.6744639376218323,
+          "recall": 0.8257756563245824,
+          "support": 419
+        },
+        {
+          "f1": 0.4251781472684085,
+          "label": "no",
+          "precision": 0.4096109839816934,
+          "recall": 0.4419753086419753,
+          "support": 405
+        },
+        {
+          "f1": 0.5863354037267081,
+          "label": "up",
+          "precision": 0.6210526315789474,
+          "recall": 0.5552941176470588,
+          "support": 425
+        },
+        {
+          "f1": 0.43564356435643564,
+          "label": "down",
+          "precision": 0.43781094527363185,
+          "recall": 0.43349753694581283,
+          "support": 406
+        },
+        {
+          "f1": 0.5103785103785103,
+          "label": "left",
+          "precision": 0.5135135135135135,
+          "recall": 0.5072815533980582,
+          "support": 412
+        },
+        {
+          "f1": 0.48513674197384066,
+          "label": "right",
+          "precision": 0.4584269662921348,
+          "recall": 0.5151515151515151,
+          "support": 396
+        },
+        {
+          "f1": 0.5804749340369393,
+          "label": "on",
+          "precision": 0.6077348066298343,
+          "recall": 0.5555555555555556,
+          "support": 396
+        },
+        {
+          "f1": 0.5745554035567716,
+          "label": "off",
+          "precision": 0.6382978723404256,
+          "recall": 0.5223880597014925,
+          "support": 402
+        },
+        {
+          "f1": 0.6438053097345132,
+          "label": "stop",
+          "precision": 0.59026369168357,
+          "recall": 0.708029197080292,
+          "support": 411
+        },
+        {
+          "f1": 0.48856799037304455,
+          "label": "go",
+          "precision": 0.4731934731934732,
+          "recall": 0.5049751243781094,
+          "support": 402
+        },
+        {
+          "f1": 0.2222222222222222,
+          "label": "unknown",
+          "precision": 0.2724014336917563,
+          "recall": 0.18765432098765433,
+          "support": 405
+        },
+        {
+          "f1": 0.996309963099631,
+          "label": "silence",
+          "precision": 0.9926470588235294,
+          "recall": 1.0,
+          "support": 405
+        }
+      ],
+      "target_argmax_error": {
+        "error_count": 1800,
+        "error_rate": 0.4418262150220913,
+        "support": 4074
+      },
+      "unknown_by_source_word": [
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "backward",
+          "support": 10
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.1,
+          "source_word": "bed",
+          "support": 20
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.09090909090909091,
+          "source_word": "bird",
+          "support": 11
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "cat",
+          "support": 7
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "dog",
+          "support": 10
+        },
+        {
+          "predicted_unknown_count": 7,
+          "predicted_unknown_recall": 0.30434782608695654,
+          "source_word": "eight",
+          "support": 23
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.1111111111111111,
+          "source_word": "five",
+          "support": 18
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "follow",
+          "support": 7
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.07142857142857142,
+          "source_word": "forward",
+          "support": 14
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.07692307692307693,
+          "source_word": "four",
+          "support": 26
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.1111111111111111,
+          "source_word": "happy",
+          "support": 9
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.09090909090909091,
+          "source_word": "house",
+          "support": 11
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.13333333333333333,
+          "source_word": "learn",
+          "support": 15
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "marvin",
+          "support": 12
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.058823529411764705,
+          "source_word": "nine",
+          "support": 17
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.047619047619047616,
+          "source_word": "one",
+          "support": 21
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.0625,
+          "source_word": "seven",
+          "support": 16
+        },
+        {
+          "predicted_unknown_count": 5,
+          "predicted_unknown_recall": 0.2777777777777778,
+          "source_word": "sheila",
+          "support": 18
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "six",
+          "support": 27
+        },
+        {
+          "predicted_unknown_count": 11,
+          "predicted_unknown_recall": 0.4074074074074074,
+          "source_word": "three",
+          "support": 27
+        },
+        {
+          "predicted_unknown_count": 6,
+          "predicted_unknown_recall": 0.375,
+          "source_word": "tree",
+          "support": 16
+        },
+        {
+          "predicted_unknown_count": 18,
+          "predicted_unknown_recall": 0.72,
+          "source_word": "two",
+          "support": 25
+        },
+        {
+          "predicted_unknown_count": 5,
+          "predicted_unknown_recall": 0.7142857142857143,
+          "source_word": "visual",
+          "support": 7
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "wow",
+          "support": 20
+        },
+        {
+          "predicted_unknown_count": 9,
+          "predicted_unknown_recall": 0.5,
+          "source_word": "zero",
+          "support": 18
+        }
+      ]
+    },
+    "validation": {
+      "accuracy": 0.5687514111537593,
+      "confusion_matrix": [
+        [
+          289,
+          1,
+          2,
+          4,
+          35,
+          19,
+          0,
+          6,
+          9,
+          3,
+          25,
+          4
+        ],
+        [
+          3,
+          178,
+          11,
+          60,
+          20,
+          14,
+          42,
+          2,
+          4,
+          51,
+          21,
+          0
+        ],
+        [
+          1,
+          12,
+          193,
+          16,
+          40,
+          4,
+          15,
+          20,
+          37,
+          7,
+          2,
+          3
+        ],
+        [
+          4,
+          36,
+          10,
+          195,
+          32,
+          26,
+          41,
+          5,
+          2,
+          11,
+          15,
+          0
+        ],
+        [
+          39,
+          13,
+          20,
+          19,
+          185,
+          18,
+          3,
+          6,
+          16,
+          11,
+          20,
+          2
+        ],
+        [
+          18,
+          18,
+          3,
+          43,
+          31,
+          172,
+          2,
+          2,
+          5,
+          20,
+          49,
+          0
+        ],
+        [
+          2,
+          18,
+          18,
+          27,
+          4,
+          3,
+          231,
+          37,
+          5,
+          14,
+          3,
+          1
+        ],
+        [
+          8,
+          0,
+          33,
+          9,
+          7,
+          4,
+          33,
+          220,
+          48,
+          6,
+          1,
+          4
+        ],
+        [
+          6,
+          1,
+          46,
+          8,
+          19,
+          6,
+          5,
+          29,
+          222,
+          2,
+          2,
+          4
+        ],
+        [
+          2,
+          46,
+          10,
+          16,
+          22,
+          32,
+          14,
+          4,
+          7,
+          203,
+          15,
+          1
+        ],
+        [
+          59,
+          25,
+          13,
+          41,
+          24,
+          39,
+          17,
+          18,
+          13,
+          44,
+          68,
+          2
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          363
+        ]
+      ],
+      "correct": 2519,
+      "example_count": 4429,
+      "macro_f1": 0.5621580328764922,
+      "open_set_target_prediction": {
+        "silence": {
+          "predicted_target_count": 0,
+          "predicted_target_rate": 0.0,
+          "support": 363
+        },
+        "unknown": {
+          "predicted_target_count": 293,
+          "predicted_target_rate": 0.8071625344352618,
+          "support": 363
+        }
+      },
+      "per_class": [
+        {
+          "f1": 0.6980676328502415,
+          "label": "yes",
+          "precision": 0.6705336426914154,
+          "recall": 0.7279596977329975,
+          "support": 397
+        },
+        {
+          "f1": 0.47214854111405835,
+          "label": "no",
+          "precision": 0.5114942528735632,
+          "recall": 0.43842364532019706,
+          "support": 406
+        },
+        {
+          "f1": 0.5444287729196051,
+          "label": "up",
+          "precision": 0.5376044568245125,
+          "recall": 0.5514285714285714,
+          "support": 350
+        },
+        {
+          "f1": 0.4785276073619632,
+          "label": "down",
+          "precision": 0.4452054794520548,
+          "recall": 0.5172413793103449,
+          "support": 377
+        },
+        {
+          "f1": 0.4798962386511025,
+          "label": "left",
+          "precision": 0.441527446300716,
+          "recall": 0.5255681818181818,
+          "support": 352
+        },
+        {
+          "f1": 0.49142857142857144,
+          "label": "right",
+          "precision": 0.5103857566765578,
+          "recall": 0.4738292011019284,
+          "support": 363
+        },
+        {
+          "f1": 0.6031331592689295,
+          "label": "on",
+          "precision": 0.5732009925558312,
+          "recall": 0.6363636363636364,
+          "support": 363
+        },
+        {
+          "f1": 0.6094182825484764,
+          "label": "off",
+          "precision": 0.6303724928366762,
+          "recall": 0.5898123324396782,
+          "support": 373
+        },
+        {
+          "f1": 0.6183844011142061,
+          "label": "stop",
+          "precision": 0.6032608695652174,
+          "recall": 0.6342857142857142,
+          "support": 350
+        },
+        {
+          "f1": 0.5456989247311828,
+          "label": "go",
+          "precision": 0.5456989247311828,
+          "recall": 0.5456989247311828,
+          "support": 372
+        },
+        {
+          "f1": 0.2328767123287671,
+          "label": "unknown",
+          "precision": 0.3076923076923077,
+          "recall": 0.18732782369146006,
+          "support": 363
+        },
+        {
+          "f1": 0.9718875502008032,
+          "label": "silence",
+          "precision": 0.9453125,
+          "recall": 1.0,
+          "support": 363
+        }
+      ],
+      "target_argmax_error": {
+        "error_count": 1615,
+        "error_rate": 0.43613286524439643,
+        "support": 3703
+      },
+      "unknown_by_source_word": [
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "backward",
+          "support": 7
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "bed",
+          "support": 9
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.25,
+          "source_word": "bird",
+          "support": 4
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "cat",
+          "support": 11
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.08333333333333333,
+          "source_word": "dog",
+          "support": 12
+        },
+        {
+          "predicted_unknown_count": 7,
+          "predicted_unknown_recall": 0.35,
+          "source_word": "eight",
+          "support": 20
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.10526315789473684,
+          "source_word": "five",
+          "support": 19
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "follow",
+          "support": 11
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "forward",
+          "support": 1
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.06451612903225806,
+          "source_word": "four",
+          "support": 31
+        },
+        {
+          "predicted_unknown_count": 4,
+          "predicted_unknown_recall": 0.3076923076923077,
+          "source_word": "happy",
+          "support": 13
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "house",
+          "support": 12
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "learn",
+          "support": 4
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.07692307692307693,
+          "source_word": "marvin",
+          "support": 13
+        },
+        {
+          "predicted_unknown_count": 4,
+          "predicted_unknown_recall": 0.125,
+          "source_word": "nine",
+          "support": 32
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "one",
+          "support": 12
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.09090909090909091,
+          "source_word": "seven",
+          "support": 22
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.2222222222222222,
+          "source_word": "sheila",
+          "support": 9
+        },
+        {
+          "predicted_unknown_count": 1,
+          "predicted_unknown_recall": 0.043478260869565216,
+          "source_word": "six",
+          "support": 23
+        },
+        {
+          "predicted_unknown_count": 9,
+          "predicted_unknown_recall": 0.5294117647058824,
+          "source_word": "three",
+          "support": 17
+        },
+        {
+          "predicted_unknown_count": 2,
+          "predicted_unknown_recall": 0.25,
+          "source_word": "tree",
+          "support": 8
+        },
+        {
+          "predicted_unknown_count": 15,
+          "predicted_unknown_recall": 0.5172413793103449,
+          "source_word": "two",
+          "support": 29
+        },
+        {
+          "predicted_unknown_count": 5,
+          "predicted_unknown_recall": 0.5555555555555556,
+          "source_word": "visual",
+          "support": 9
+        },
+        {
+          "predicted_unknown_count": 0,
+          "predicted_unknown_recall": 0.0,
+          "source_word": "wow",
+          "support": 13
+        },
+        {
+          "predicted_unknown_count": 10,
+          "predicted_unknown_recall": 0.45454545454545453,
+          "source_word": "zero",
+          "support": 22
+        }
+      ]
+    }
+  },
+  "threshold_metrics": "not_evaluated",
+  "validation_role": "diagnostic_only_no_selection"
+}

@@ -13,15 +13,19 @@ false accepts per hour, missed commands, detection delay, and CPU cost.
 
 ## Current status
 
-The first experiment is registered, the Speech Commands split has been audited, and
-the fixed log-mel frontend is implemented and tested. Two exact feature extractions
-of all 46,254 selected clips were byte-identical; their provenance is recorded in
-[reports/experiment-000-features.json](reports/experiment-000-features.json). No
-model result is published yet. The audit found 105,829 clips from 2,618 speakers
-with no speaker crossing train, validation, and test.
+The frozen linear floor reaches 56.4% accuracy and 0.558 macro F1 on 4,884 held-out
+Speech Commands clips. Its more important failure is open-set: 329 of 405 sampled
+`unknown` words are misclassified as one of the ten target commands. The perfect
+`silence` recall is much narrower evidence—it comes from overlapping windows in one
+held-out noise file, not an independent or continuous-noise benchmark.
 
-This README will lead with a measured model result and a plot only after the data
-split, threshold-selection rule, and negative stream have been fixed.
+The full metrics are in
+[reports/experiment-000-linear.json](reports/experiment-000-linear.json), and the
+33 KiB portable model is in
+[models/experiment-000-linear.json](models/experiment-000-linear.json). Two exact
+feature extractions were byte-identical, and an independent refit reproduced every
+coefficient and prediction. These are threshold-free clip diagnostics: false
+accepts per hour and false reject rate have not been measured.
 
 The initial study uses:
 

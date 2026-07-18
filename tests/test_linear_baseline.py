@@ -151,3 +151,64 @@ def test_run_artifacts_are_published_together_and_fail_if_present(
     assert json.loads((output / "metrics.json").read_text()) == run.metrics
     with pytest.raises(LinearBaselineError, match="already exists"):
         write_baseline_run(output, run)
+
+
+def test_registered_result_reconciles_with_its_provenance() -> None:
+    model_path = Path("models/experiment-000-linear.json")
+    model = json.loads(model_path.read_text(encoding="utf-8"))
+    metrics = json.loads(
+        Path("reports/experiment-000-linear.json").read_text(encoding="utf-8")
+    )
+    features = json.loads(
+        Path("reports/experiment-000-features.json").read_text(encoding="utf-8")
+    )
+    sampling = json.loads(
+        Path("reports/experiment-000-sampling.json").read_text(encoding="utf-8")
+    )
+
+    assert (
+        metrics["portable_model_sha256"]
+        == hashlib.sha256(model_path.read_bytes()).hexdigest()
+    )
+    assert (
+        metrics["experiment_config_sha256"]
+        == hashlib.sha256(Path("configs/experiment-000.json").read_bytes()).hexdigest()
+    )
+    assert metrics["examples_sha256"] == sampling["examples_sha256"]
+    assert metrics["features_sha256"] == features["features_sha256"]
+    assert metrics["manifest_sha256"] == MANIFEST_SHA256
+    assert metrics["threshold_metrics"] == "not_evaluated"
+
+    classifier = model["classifier"]
+    assert isinstance(classifier, dict)
+    assert classifier["classes"] == sorted(CLASS_ORDER)
+    assert np.asarray(classifier["coef"]).shape == (12, 80)
+    assert np.asarray(classifier["intercept"]).shape == (12,)
+    assert np.all(np.isfinite(np.asarray(classifier["coef"])))
+
+    for split in ("validation", "test"):
+        result = metrics["splits"][split]
+        matrix = np.asarray(result["confusion_matrix"], dtype=np.int64)
+        assert matrix.shape == (12, 12)
+        assert int(matrix.sum()) == result["example_count"]
+        assert int(np.trace(matrix)) == result["correct"]
+        assert result["accuracy"] == pytest.approx(
+            result["correct"] / result["example_count"], abs=1e-15
+        )
+        assert result["macro_f1"] == pytest.approx(
+            np.mean([row["f1"] for row in result["per_class"]]), abs=1e-15
+        )
+        unknown_index = CLASS_ORDER.index("unknown")
+        silence_index = CLASS_ORDER.index("silence")
+        assert sum(
+            row["predicted_unknown_count"] for row in result["unknown_by_source_word"]
+        ) == int(matrix[unknown_index, unknown_index])
+        assert sum(row["support"] for row in result["unknown_by_source_word"]) == int(
+            matrix[unknown_index].sum()
+        )
+        assert result["open_set_target_prediction"]["unknown"][
+            "predicted_target_count"
+        ] == int(matrix[unknown_index, :10].sum())
+        assert result["open_set_target_prediction"]["silence"][
+            "predicted_target_count"
+        ] == int(matrix[silence_index, :10].sum())

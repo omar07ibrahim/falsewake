@@ -94,12 +94,34 @@ the fitted iteration count and exact configuration SHA-256 are stored with it.
 
 ## Results
 
-The source-data audit, tested log-mel frontend, and exact feature extraction are
-complete; the classifier has not been run yet. Two independent extractions of all
-46,254 sampled clips produced byte-identical `float32` matrices with shape
-`46,254 x 80`. Their timings, environment, and canonical feature digest are in
-[reports/experiment-000-features.json](../reports/experiment-000-features.json).
+The frozen classifier converged in 371 iterations without a convergence warning.
+It used 36,941 training rows; validation was reported without selecting or changing
+anything. The headline test result is deliberately modest:
 
-The audit report records 105,829 usable command clips, six partitioned background
-recordings, and a byte-stable payload-bound manifest. No model metric has been
-calculated, and LibriSpeech has not been inspected.
+| Split | Clips | Accuracy | Macro F1 | Target argmax error | `unknown` -> target | `silence` -> target |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Validation | 4,429 | 56.88% | 0.562 | 43.61% | 293 / 363 (80.72%) | 0 / 363 (0.00%) |
+| Test | 4,884 | 56.41% | 0.558 | 44.18% | 329 / 405 (81.23%) | 0 / 405 (0.00%) |
+
+Only 76 of 405 test `unknown` clips are predicted as `unknown` (18.77% recall),
+and seven of the 25 source words have zero recall in that sampled slice. The model
+therefore recognizes some isolated commands but is a poor open-set detector. This
+is a useful negative floor for the streaming model, not a result to optimize away.
+
+The zero target predictions for test `silence` must stay in context: all 405 clips
+are overlapping windows with unique starts from one `white_noise.wav` recording.
+They are correlated, cover little acoustic diversity, and say nothing about false
+accepts per hour. No acceptance threshold, debounce rule, LibriSpeech audio, false
+reject rate, or continuous-stream metric has been evaluated.
+
+The complete confusion matrices, per-class metrics, and all 25 lexical slices are
+in [reports/experiment-000-linear.json](../reports/experiment-000-linear.json).
+The scaler and linear weights are portable JSON in
+[models/experiment-000-linear.json](../models/experiment-000-linear.json). An
+independent refit reproduced the scaler, coefficients, iteration count, and every
+prediction bit for bit; a separate NumPy calculation reproduced both metric sets.
+
+Two full feature extractions of all 46,254 clips were also byte-identical. Their
+timings, environment, and canonical digest are in
+[reports/experiment-000-features.json](../reports/experiment-000-features.json).
+The source audit covers 105,829 command clips and six partitioned background files.
