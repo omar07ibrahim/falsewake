@@ -1,0 +1,48 @@
+{
+  "class_order": [
+    "yes",
+    "no",
+    "up",
+    "down",
+    "left",
+    "right",
+    "on",
+    "off",
+    "stop",
+    "go",
+    "unknown",
+    "silence"
+  ],
+  "classifier": {
+    "C": 1.0,
+    "max_iter": 1000,
+    "solver": "lbfgs",
+    "standard_scaler": true,
+    "tol": 0.0001
+  },
+  "frontend": {
+    "clip_samples": 16000,
+    "fft_samples": 512,
+    "hop_samples": 160,
+    "log_floor": 1e-10,
+    "max_hz": 7600.0,
+    "mel_bins": 40,
+    "min_hz": 20.0,
+    "pcm16_divisor": 32768,
+    "sample_rate": 16000,
+    "window_samples": 400
+  },
+  "manifest": {
+    "jsonl_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+    "schema_version": 2
+  },
+  "sampling": {
+    "silence_count": "same_as_unknown",
+    "silence_file": "sha256_modulo_equal_split_files",
+    "silence_start": "sha256_modulo_valid_offsets",
+    "target_clips": "all",
+    "unknown_count": "median_low_target_count_per_split"
+  },
+  "schema_version": 1,
+  "seed": 20260718
+}

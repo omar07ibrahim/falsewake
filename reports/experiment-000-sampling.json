@@ -1,0 +1,56 @@
+{
+  "example_count": 46254,
+  "examples_sha256": "36a12b1779ca68fa995789255b603f06339fe216051d520f9ab76642a48f53c2",
+  "label_counts_by_split": {
+    "test": {
+      "down": 406,
+      "go": 402,
+      "left": 412,
+      "no": 405,
+      "off": 402,
+      "on": 396,
+      "right": 396,
+      "silence": 405,
+      "stop": 411,
+      "unknown": 405,
+      "up": 425,
+      "yes": 419
+    },
+    "train": {
+      "down": 3134,
+      "go": 3106,
+      "left": 3037,
+      "no": 3130,
+      "off": 2970,
+      "on": 3086,
+      "right": 3019,
+      "silence": 3086,
+      "stop": 3111,
+      "unknown": 3086,
+      "up": 2948,
+      "yes": 3228
+    },
+    "validation": {
+      "down": 377,
+      "go": 372,
+      "left": 352,
+      "no": 406,
+      "off": 373,
+      "on": 363,
+      "right": 363,
+      "silence": 363,
+      "stop": 350,
+      "unknown": 363,
+      "up": 350,
+      "yes": 397
+    }
+  },
+  "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+  "schema_version": 1,
+  "seed": 20260718,
+  "unique_silence_by_split": {
+    "test": 405,
+    "train": 3086,
+    "validation": 363
+  }
+}

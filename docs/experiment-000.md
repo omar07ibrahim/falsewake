@@ -37,6 +37,26 @@ as signed little-endian integers divided by 32,768, producing `float32` values i
   a configuration.
 - Keep all utterances from a speaker in one partition.
 
+## Clip sampling
+
+Every target-command clip is retained. Within each split, the `unknown` count is the
+lower median of the ten target-class counts; paths are selected by a seeded SHA-256
+rank. The `silence` count matches `unknown`. Silence source files must belong to the
+same split, and seeded SHA-256 bytes select the file and sample offset. Duplicate
+offsets are retried, although one-second windows may still overlap.
+
+Validation and test each have only one background source, so their overlapping
+silence windows are correlated examples rather than independent trials. Clip metrics
+will not attach confidence intervals to those rows. Unknown clips are sampled across
+all 25 non-target words without lexical stratification; the report will therefore
+include per-word support and recall instead of hiding sparse words inside one score.
+
+This produces 36,941 training, 4,429 validation, and 4,884 test examples. The exact
+class counts and selected-example digest are in
+[reports/experiment-000-sampling.json](../reports/experiment-000-sampling.json). The
+classifier settings are registered in
+[configs/experiment-000.json](../configs/experiment-000.json) before fitting.
+
 ## Reported numbers
 
 - macro F1 and per-class recall for target commands;
