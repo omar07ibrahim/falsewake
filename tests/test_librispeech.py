@@ -319,6 +319,27 @@ def test_header_inspector_never_opens_a_member_payload(
     inspect_librispeech_archive(archive, source_identity=None)
 
 
+def test_registered_wrong_size_is_rejected_before_any_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "wrong-size.tar.gz"
+    archive.write_bytes(b"one byte too short")
+    identity = SourceIdentity(
+        name="synthetic registered source",
+        archive_bytes=archive.stat().st_size + 1,
+        archive_md5="0" * 32,
+        archive_sha256="0" * 64,
+    )
+
+    def forbidden_digest(stream: object) -> tuple[int, str, str]:
+        raise AssertionError("wrong-size registered archive must not be read")
+
+    monkeypatch.setattr(librispeech, "_archive_digests", forbidden_digest)
+
+    with pytest.raises(LibriSpeechError, match="archive size differs"):
+        inspect_librispeech_archive(archive, source_identity=identity)
+
+
 def test_duplicate_directory_alias_is_rejected(tmp_path: Path) -> None:
     members = [
         _special("LibriSpeech", tarfile.DIRTYPE),

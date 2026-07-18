@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import hmac
 import json
 import os
+import shutil
 import stat
-from collections.abc import Sequence
-from dataclasses import dataclass
+import struct
+import subprocess
+import sys
+import tempfile
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal, cast
 
@@ -16,6 +23,20 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.stats import chi2
 
+from falsewake import holdout, librispeech
+from falsewake.baseline_data import (
+    MAX_MANIFEST_BYTES,
+    BaselineDataError,
+    build_sampling_plan,
+    load_audited_corpus,
+    sampling_summary,
+)
+from falsewake.feature_matrix import (
+    MAX_METADATA_BYTES,
+    FeatureMatrixError,
+    feature_matrix_sha256,
+    load_feature_cache,
+)
 from falsewake.features import FloatArray, extract_clip_features
 from falsewake.speech_commands import TARGET_WORDS
 
@@ -56,6 +77,20 @@ _THRESHOLDS.flags.writeable = False
 _TARGET_POSITION = {word: index for index, word in enumerate(TARGET_WORDS)}
 _INT64_MAX = int(np.iinfo(np.int64).max)
 _MAX_BOOTSTRAP_MATRIX_ELEMENTS = 10_000_000
+_SCORER_SOURCE_DOMAIN = b"falsewake-exp001-scorer-source-v1\0"
+_REPORT_FILENAME = "experiment-001-dev-replay.json"
+_SELECTION_FILENAME = "experiment-001-selection.json"
+_TOP_FALSE_EVENT_LIMIT = 50
+_MAX_FEATURE_CONTAINER_BYTES = 64 * 1024 * 1024
+_SCORER_MODULE_NAMES = {
+    "src/falsewake/baseline_data.py": "falsewake.baseline_data",
+    "src/falsewake/continuous_replay.py": "falsewake.continuous_replay",
+    "src/falsewake/feature_matrix.py": "falsewake.feature_matrix",
+    "src/falsewake/features.py": "falsewake.features",
+    "src/falsewake/holdout.py": "falsewake.holdout",
+    "src/falsewake/librispeech.py": "falsewake.librispeech",
+    "src/falsewake/speech_commands.py": "falsewake.speech_commands",
+}
 
 
 class ContinuousReplayError(ValueError):
@@ -181,6 +216,131 @@ class EventRateIntervals:
 
     def __post_init__(self) -> None:
         _validate_event_rate_intervals(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayTrace:
+    """Compact target-window trace retained for decision-point examples."""
+
+    utterance_id: str
+    speaker_id: int
+    transcript: str
+    window_starts: Int64Array
+    target_positions: Int64Array
+    target_probabilities: Float64Array
+
+    def __post_init__(self) -> None:
+        if not self.utterance_id or type(self.utterance_id) is not str:
+            raise ContinuousReplayError("replay trace utterance_id must be text")
+        speaker_id = _require_integer(
+            self.speaker_id, name="replay trace speaker_id", minimum=0
+        )
+        if type(self.transcript) is not str:
+            raise ContinuousReplayError("replay trace transcript must be text")
+        if type(self.window_starts) is not np.ndarray:
+            raise ContinuousReplayError("replay trace starts must be an int64 array")
+        row_count = int(self.window_starts.size)
+        starts = _frozen_int64_array(
+            self.window_starts,
+            name="replay trace starts",
+            shape=(row_count,),
+        )
+        positions = _frozen_int64_array(
+            self.target_positions,
+            name="replay trace target positions",
+            shape=(row_count,),
+        )
+        probabilities = _frozen_float64_array(
+            self.target_probabilities,
+            name="replay trace probabilities",
+            shape=(row_count,),
+        )
+        if np.any(positions >= len(TARGET_WORDS)):
+            raise ContinuousReplayError("replay trace target position is out of range")
+        if np.any(probabilities > 1):
+            raise ContinuousReplayError("replay trace probability exceeds one")
+        if np.any(starts % WINDOW_HOP_SAMPLES) or np.any(starts[1:] <= starts[:-1]):
+            raise ContinuousReplayError(
+                "replay trace starts must be increasing registered windows"
+            )
+        object.__setattr__(self, "speaker_id", speaker_id)
+        object.__setattr__(self, "window_starts", starts)
+        object.__setattr__(self, "target_positions", positions)
+        object.__setattr__(self, "target_probabilities", probabilities)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayArtifacts:
+    """Canonical development report and hash-bound selection artifact."""
+
+    report: bytes
+    selection_artifact: bytes
+    report_sha256: str
+    selection_artifact_sha256: str
+    status: Literal["pass", "reject"]
+    selected_threshold_milli: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayInputs:
+    """All development-only inputs for one production replay."""
+
+    repository_root: Path
+    speech_commands_manifest: Path
+    feature_cache: Path
+    dev_archive: Path
+    dev_manifest: Path
+    dev_audit_report: Path
+
+
+@dataclass(frozen=True, slots=True)
+class _StableBytes:
+    contents: bytes
+    sha256: str
+    identity: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _ImplementationSnapshot:
+    commit: str
+    config: dict[str, object]
+    config_bytes: bytes
+    config_sha256: str
+    model_bytes: bytes
+    model_sha256: str
+    scorer_source_sha256: str
+    runtime: dict[str, str]
+    runtime_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _StagedUtterance:
+    relative_path: str
+    utterance_id: str
+    speaker_id: int
+    sample_count: int
+    window_starts: Int64Array
+    target_positions: Int64Array
+    target_probabilities: Float64Array
+
+
+@dataclass(frozen=True, slots=True)
+class _DevReplayState:
+    source_samples: int
+    aggregate: AggregatedEventGrid
+    traces: tuple[ReplayTrace, ...]
+    archive_sha256: str
+    manifest_sha256: str
+    audit_report_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplayInputSnapshot:
+    speech_manifest: _StableBytes
+    feature_metadata: _StableBytes
+    feature_matrix: _StableBytes
+    dev_manifest: _StableBytes
+    dev_audit_report: _StableBytes
 
 
 def _reject_json_constant(value: str) -> object:
@@ -957,39 +1117,37 @@ def _validate_event_rate_intervals(intervals: EventRateIntervals) -> None:
     object.__setattr__(intervals, "speaker_bootstrap_upper", bootstrap_upper)
 
 
-def aggregate_event_grids(
-    utterances: Sequence[UtteranceEventGrid],
-) -> AggregatedEventGrid:
-    """Aggregate immutable utterance grids in ascending integer speaker order."""
+class ReplayEventAccumulator:
+    """Bounded per-speaker aggregation without retaining utterance grids."""
 
-    if not isinstance(utterances, Sequence):
-        raise ContinuousReplayError("utterances must be a finite sequence")
-    if len(utterances) == 0:
-        raise ContinuousReplayError("cannot aggregate an empty utterance sequence")
-    total_exposure = 0
-    by_speaker: dict[int, tuple[int, int, Int64Array, Int64Array]] = {}
-    for record in utterances:
+    def __init__(self) -> None:
+        self._total_exposure = 0
+        self._by_speaker: dict[
+            int, tuple[int, int, Int64Array, Int64Array]
+        ] = {}
+
+    def add(self, record: UtteranceEventGrid) -> None:
+        """Validate and add one utterance to the in-memory sufficient statistics."""
+
         if type(record) is not UtteranceEventGrid:
-            raise ContinuousReplayError(
-                "utterances must contain only UtteranceEventGrid records"
-            )
+            raise ContinuousReplayError("accumulator requires UtteranceEventGrid")
         snapshot = UtteranceEventGrid(
             speaker_id=record.speaker_id,
             scored_exposure_samples=record.scored_exposure_samples,
             events=record.events,
         )
-        total_exposure += snapshot.scored_exposure_samples
-        if total_exposure > _INT64_MAX:
+        self._total_exposure += snapshot.scored_exposure_samples
+        if self._total_exposure > _INT64_MAX:
             raise ContinuousReplayError("corpus exposure overflows int64")
-        previous = by_speaker.get(snapshot.speaker_id)
+        previous = self._by_speaker.get(snapshot.speaker_id)
         if previous is None:
-            by_speaker[snapshot.speaker_id] = (
+            self._by_speaker[snapshot.speaker_id] = (
                 1,
                 snapshot.scored_exposure_samples,
                 snapshot.events.counts.copy(),
                 snapshot.events.counts_by_target.copy(),
             )
-            continue
+            return
         utterance_count, speaker_exposure, counts, target_counts = previous
         if utterance_count == _INT64_MAX:
             raise ContinuousReplayError("speaker utterance count overflows int64")
@@ -1002,44 +1160,64 @@ def aggregate_event_grids(
             raise ContinuousReplayError("speaker target counts overflow int64")
         counts += snapshot.events.counts
         target_counts += snapshot.events.counts_by_target
-        by_speaker[snapshot.speaker_id] = (
+        self._by_speaker[snapshot.speaker_id] = (
             utterance_count + 1,
             speaker_exposure,
             counts,
             target_counts,
         )
 
-    speaker_ids_list = sorted(by_speaker)
-    speaker_count = len(speaker_ids_list)
-    utterance_counts = np.zeros(speaker_count, dtype=np.int64)
-    exposures = np.zeros(speaker_count, dtype=np.int64)
-    speaker_counts = np.zeros((speaker_count, THRESHOLD_COUNT), dtype=np.int64)
-    speaker_target_counts = np.zeros(
-        (speaker_count, THRESHOLD_COUNT, len(TARGET_WORDS)), dtype=np.int64
-    )
-    for position, speaker_id in enumerate(speaker_ids_list):
-        utterance_count, speaker_exposure, counts, target_counts = by_speaker[
-            speaker_id
-        ]
-        utterance_counts[position] = utterance_count
-        exposures[position] = speaker_exposure
-        speaker_counts[position] = counts
-        speaker_target_counts[position] = target_counts
+    def aggregate(self) -> AggregatedEventGrid:
+        """Freeze the current sufficient statistics in canonical speaker order."""
 
-    counts = _checked_axis_zero_sum(speaker_counts, name="speaker event counts")
-    target_counts = _checked_axis_zero_sum(
-        speaker_target_counts, name="speaker event counts by target"
-    )
-    return AggregatedEventGrid(
-        speaker_ids=np.asarray(speaker_ids_list, dtype=np.int64),
-        utterance_counts_by_speaker=utterance_counts,
-        scored_exposure_samples_by_speaker=exposures,
-        counts_by_speaker=speaker_counts,
-        counts_by_speaker_and_target=speaker_target_counts,
-        scored_exposure_samples=total_exposure,
-        counts=counts,
-        counts_by_target=target_counts,
-    )
+        if not self._by_speaker:
+            raise ContinuousReplayError("cannot aggregate an empty event stream")
+        speaker_ids_list = sorted(self._by_speaker)
+        speaker_count = len(speaker_ids_list)
+        utterance_counts = np.zeros(speaker_count, dtype=np.int64)
+        exposures = np.zeros(speaker_count, dtype=np.int64)
+        speaker_counts = np.zeros((speaker_count, THRESHOLD_COUNT), dtype=np.int64)
+        speaker_target_counts = np.zeros(
+            (speaker_count, THRESHOLD_COUNT, len(TARGET_WORDS)), dtype=np.int64
+        )
+        for position, speaker_id in enumerate(speaker_ids_list):
+            utterance_count, speaker_exposure, counts, target_counts = (
+                self._by_speaker[speaker_id]
+            )
+            utterance_counts[position] = utterance_count
+            exposures[position] = speaker_exposure
+            speaker_counts[position] = counts
+            speaker_target_counts[position] = target_counts
+
+        counts = _checked_axis_zero_sum(
+            speaker_counts, name="speaker event counts"
+        )
+        target_counts = _checked_axis_zero_sum(
+            speaker_target_counts, name="speaker event counts by target"
+        )
+        return AggregatedEventGrid(
+            speaker_ids=np.asarray(speaker_ids_list, dtype=np.int64),
+            utterance_counts_by_speaker=utterance_counts,
+            scored_exposure_samples_by_speaker=exposures,
+            counts_by_speaker=speaker_counts,
+            counts_by_speaker_and_target=speaker_target_counts,
+            scored_exposure_samples=self._total_exposure,
+            counts=counts,
+            counts_by_target=target_counts,
+        )
+
+
+def aggregate_event_grids(
+    utterances: Sequence[UtteranceEventGrid],
+) -> AggregatedEventGrid:
+    """Aggregate immutable utterance grids in ascending integer speaker order."""
+
+    if not isinstance(utterances, Sequence):
+        raise ContinuousReplayError("utterances must be a finite sequence")
+    accumulator = ReplayEventAccumulator()
+    for record in utterances:
+        accumulator.add(record)
+    return accumulator.aggregate()
 
 
 def correct_accept_threshold_grid(
@@ -1247,3 +1425,1289 @@ def event_rate_intervals(aggregate: AggregatedEventGrid) -> EventRateIntervals:
         speaker_bootstrap_lower=bootstrap_lower,
         speaker_bootstrap_upper=bootstrap_upper,
     )
+
+
+def _canonical_json(document: object) -> bytes:
+    try:
+        return (
+            json.dumps(
+                document,
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            + b"\n"
+        )
+    except (TypeError, ValueError, UnicodeEncodeError) as error:
+        raise ContinuousReplayError("cannot serialize canonical replay JSON") from error
+
+
+def _validated_report_identities(
+    identities: Mapping[str, str],
+) -> dict[str, str]:
+    if set(identities) != set(holdout.REPLAY_IDENTITY_FIELDS):
+        raise ContinuousReplayError("replay identities have unexpected fields")
+    result = dict(identities)
+    for field, value in result.items():
+        if field == "implementation_git_commit":
+            if (
+                type(value) is not str
+                or len(value) != 40
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ContinuousReplayError(
+                    "implementation_git_commit is not lowercase 40-hex"
+                )
+        else:
+            _require_sha256(value, name=field)
+    return result
+
+
+def _validated_runtime(runtime: Mapping[str, str]) -> dict[str, str]:
+    if set(runtime) != set(holdout.RUNTIME_FIELDS) or any(
+        type(runtime[field]) is not str or not runtime[field]
+        for field in holdout.RUNTIME_FIELDS
+    ):
+        raise ContinuousReplayError("runtime identity has missing or invalid fields")
+    return {field: runtime[field] for field in holdout.RUNTIME_FIELDS}
+
+
+def _trace_events(
+    trace: ReplayTrace, threshold_milli: int
+) -> tuple[dict[str, object], ...]:
+    if type(threshold_milli) is not int or not 0 <= threshold_milli < THRESHOLD_COUNT:
+        raise ContinuousReplayError("decision threshold is outside the registered grid")
+    threshold = np.float64(threshold_milli) / np.float64(1_000)
+    next_allowed = 0
+    events: list[dict[str, object]] = []
+    rows = zip(
+        trace.window_starts.tolist(),
+        trace.target_positions.tolist(),
+        trace.target_probabilities.tolist(),
+        strict=True,
+    )
+    for start, target_position, probability in rows:
+        if probability >= threshold and start >= next_allowed:
+            events.append(
+                {
+                    "utterance_id": trace.utterance_id,
+                    "window_start_sample": start,
+                    "predicted_target": TARGET_WORDS[target_position],
+                    "target_probability": probability,
+                    "transcript": trace.transcript,
+                }
+            )
+            next_allowed = start + REFRACTORY_SAMPLES
+    return tuple(events)
+
+
+def _top_false_events(
+    traces: Sequence[ReplayTrace],
+    negative: AggregatedEventGrid,
+    selection: ThresholdSelection,
+) -> list[dict[str, object]]:
+    expected_speakers = Counter(
+        {
+            int(speaker_id): int(utterance_count)
+            for speaker_id, utterance_count in zip(
+                negative.speaker_ids,
+                negative.utterance_counts_by_speaker,
+                strict=True,
+            )
+        }
+    )
+    observed_speakers = Counter(trace.speaker_id for trace in traces)
+    if observed_speakers != expected_speakers:
+        raise ContinuousReplayError(
+            "replay traces do not reproduce speaker utterance counts"
+        )
+    if len({trace.utterance_id for trace in traces}) != len(traces):
+        raise ContinuousReplayError("replay traces repeat an utterance_id")
+    thresholds = {
+        0,
+        selection.retention_frontier_milli,
+        *(
+            ()
+            if selection.negative_frontier_milli is None
+            else (selection.negative_frontier_milli,)
+        ),
+        *(
+            ()
+            if selection.selected_threshold_milli is None
+            else (selection.selected_threshold_milli,)
+        ),
+    }
+    groups: list[dict[str, object]] = []
+    for threshold in sorted(thresholds):
+        events = [
+            event
+            for trace in traces
+            for event in _trace_events(trace, threshold)
+        ]
+        by_target = Counter(cast(str, event["predicted_target"]) for event in events)
+        expected_by_target = negative.counts_by_target[threshold]
+        if len(events) != int(negative.counts[threshold]) or any(
+            by_target[target] != int(expected_by_target[position])
+            for position, target in enumerate(TARGET_WORDS)
+        ):
+            raise ContinuousReplayError(
+                "decision-point traces differ from aggregated event counts"
+            )
+        events.sort(
+            key=lambda event: (
+                -cast(float, event["target_probability"]),
+                cast(str, event["utterance_id"]),
+                cast(int, event["window_start_sample"]),
+            )
+        )
+        groups.append(
+            {
+                "threshold_milli": threshold,
+                "events": events[:_TOP_FALSE_EVENT_LIMIT],
+            }
+        )
+    return groups
+
+
+def build_replay_artifacts(
+    *,
+    source_samples: int,
+    negative: AggregatedEventGrid,
+    positive: CorrectAcceptGrid,
+    traces: Sequence[ReplayTrace],
+    identities: Mapping[str, str],
+    runtime: Mapping[str, str],
+) -> ReplayArtifacts:
+    """Build and independently validate canonical experiment-001 artifacts."""
+
+    _validate_aggregated_event_grid(negative)
+    _validate_correct_accept_grid(positive)
+    registered_identities = _validated_report_identities(identities)
+    registered_runtime = _validated_runtime(runtime)
+    source_count = _require_integer(
+        source_samples, name="development source_samples", minimum=1
+    )
+    if source_count < negative.scored_exposure_samples:
+        raise ContinuousReplayError("development exposure exceeds source samples")
+    if tuple(int(value) for value in positive.clip_counts_by_target) != tuple(
+        holdout.TARGET_SUPPORT
+    ):
+        raise ContinuousReplayError(
+            "positive target support differs from experiment 001"
+        )
+    if positive.baseline_correct_count != holdout.BASELINE_CORRECT_COUNT or tuple(
+        int(value) for value in positive.counts_by_target[0]
+    ) != tuple(holdout.BASELINE_CORRECT_BY_TARGET):
+        raise ContinuousReplayError(
+            "positive threshold-zero baseline differs from experiment 001"
+        )
+    runtime_sha256 = hashlib.sha256(
+        holdout.canonical_runtime_identity(registered_runtime)
+    ).hexdigest()
+    if not hmac.compare_digest(
+        runtime_sha256, registered_identities["runtime_identity_sha256"]
+    ):
+        raise ContinuousReplayError("runtime document differs from its identity")
+
+    selection = select_threshold(negative, positive)
+    intervals = event_rate_intervals(negative)
+    target_count = positive.clip_count
+    baseline_count = positive.baseline_correct_count
+    thresholds: list[dict[str, object]] = []
+    for threshold in range(THRESHOLD_COUNT):
+        event_count = int(negative.counts[threshold])
+        correct_count = int(positive.counts[threshold])
+        thresholds.append(
+            {
+                "threshold_milli": threshold,
+                "dev_event_count": event_count,
+                "dev_event_count_by_target": [
+                    int(value) for value in negative.counts_by_target[threshold]
+                ],
+                "false_events_per_hour": (
+                    event_count * SAMPLES_PER_HOUR
+                    / negative.scored_exposure_samples
+                ),
+                "garwood_95_percent": [
+                    float(intervals.garwood_lower[threshold]),
+                    float(intervals.garwood_upper[threshold]),
+                ],
+                "speaker_bootstrap_95_percent": [
+                    float(intervals.speaker_bootstrap_lower[threshold]),
+                    float(intervals.speaker_bootstrap_upper[threshold]),
+                ],
+                "validation_correct_accept_count": correct_count,
+                "validation_correct_accept_count_by_target": [
+                    int(value) for value in positive.counts_by_target[threshold]
+                ],
+                "correct_accept_recall": correct_count / target_count,
+                "conditional_correct_retention": correct_count / baseline_count,
+            }
+        )
+
+    speaker_rows = [
+        {
+            "speaker_id": int(speaker_id),
+            "utterance_count": int(negative.utterance_counts_by_speaker[position]),
+            "scored_exposure_samples": int(
+                negative.scored_exposure_samples_by_speaker[position]
+            ),
+            "event_count": [
+                int(value) for value in negative.counts_by_speaker[position]
+            ],
+        }
+        for position, speaker_id in enumerate(negative.speaker_ids)
+    ]
+    report_document: dict[str, object] = {
+        "schema_version": 1,
+        "identities": registered_identities,
+        "runtime": registered_runtime,
+        "target_order": list(TARGET_WORDS),
+        "dev": {
+            "source_samples": source_count,
+            "scored_exposure_samples": negative.scored_exposure_samples,
+            "utterance_count": sum(
+                int(value) for value in negative.utterance_counts_by_speaker
+            ),
+            "speaker_count": int(negative.speaker_ids.size),
+            "speaker_rows": speaker_rows,
+        },
+        "positive_validation": {
+            "target_example_count": target_count,
+            "baseline_correct_count": baseline_count,
+            "baseline_correct_by_target": [
+                int(value) for value in positive.counts_by_target[0]
+            ],
+            "support_by_target": [
+                int(value) for value in positive.clip_counts_by_target
+            ],
+        },
+        "thresholds": thresholds,
+        "selection": {
+            "status": selection.status,
+            "selected_threshold_milli": selection.selected_threshold_milli,
+            "negative_frontier_milli": selection.negative_frontier_milli,
+            "retention_frontier_milli": selection.retention_frontier_milli,
+        },
+        "top_false_events": _top_false_events(traces, negative, selection),
+    }
+    report = _canonical_json(report_document)
+    if len(report) > holdout.MAX_REPLAY_REPORT_BYTES:
+        raise ContinuousReplayError("development replay report exceeds its size limit")
+    try:
+        recomputed_status, recomputed_threshold = holdout.recompute_selection(report)
+    except holdout.HoldoutAccessError as error:
+        raise ContinuousReplayError(
+            f"independent replay validation failed: {error}"
+        ) from error
+    if (
+        recomputed_status != selection.status
+        or recomputed_threshold != selection.selected_threshold_milli
+    ):
+        raise ContinuousReplayError("independent selection recomputation differs")
+    report_sha256 = hashlib.sha256(report).hexdigest()
+    selection_document = {
+        "schema_version": 1,
+        "status": selection.status,
+        "experiment_config_sha256": registered_identities[
+            "experiment_config_sha256"
+        ],
+        "scorer_source_sha256": registered_identities["scorer_source_sha256"],
+        "runtime_identity_sha256": registered_identities[
+            "runtime_identity_sha256"
+        ],
+        "implementation_git_commit": registered_identities[
+            "implementation_git_commit"
+        ],
+        "dev_archive_sha256": registered_identities["dev_archive_sha256"],
+        "dev_manifest_sha256": registered_identities["dev_manifest_sha256"],
+        "dev_audit_report_sha256": registered_identities[
+            "dev_audit_report_sha256"
+        ],
+        "dev_replay_report_sha256": report_sha256,
+        "selected_threshold_milli": selection.selected_threshold_milli,
+    }
+    selection_artifact = _canonical_json(selection_document)
+    if len(selection_artifact) > holdout.MAX_ARTIFACT_BYTES:
+        raise ContinuousReplayError("selection artifact exceeds its size limit")
+    return ReplayArtifacts(
+        report=report,
+        selection_artifact=selection_artifact,
+        report_sha256=report_sha256,
+        selection_artifact_sha256=hashlib.sha256(selection_artifact).hexdigest(),
+        status=selection.status,
+        selected_threshold_milli=selection.selected_threshold_milli,
+    )
+
+
+def _file_snapshot(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _read_stable_bytes(path: Path, *, name: str, maximum_bytes: int) -> _StableBytes:
+    if maximum_bytes < 1:
+        raise ContinuousReplayError(f"{name} has an invalid size limit")
+    absolute = Path(os.path.abspath(path))
+    try:
+        if path.resolve(strict=True) != absolute:
+            raise ContinuousReplayError(f"{name} path must be fully physical")
+    except OSError as error:
+        raise ContinuousReplayError(f"cannot resolve {name}: {error}") from error
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(absolute, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            before = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_size < 1
+                or before.st_size > maximum_bytes
+            ):
+                raise ContinuousReplayError(
+                    f"{name} must be a nonempty bounded regular file"
+                )
+            snapshot = _file_snapshot(before)
+            contents = stream.read(maximum_bytes + 1)
+            stream.seek(0)
+            repeated = stream.read(maximum_bytes + 1)
+            after = os.fstat(stream.fileno())
+    except OSError as error:
+        raise ContinuousReplayError(f"cannot read {name}: {error}") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        len(contents) != before.st_size
+        or contents != repeated
+        or snapshot != _file_snapshot(after)
+    ):
+        raise ContinuousReplayError(f"{name} changed while reading")
+    return _StableBytes(
+        contents=contents,
+        sha256=hashlib.sha256(contents).hexdigest(),
+        identity=(before.st_dev, before.st_ino),
+    )
+
+
+def _run_git(repository_root: Path, arguments: Sequence[str], *, name: str) -> bytes:
+    executable = shutil.which("git", path=os.defpath)
+    if executable is None:
+        raise ContinuousReplayError("cannot find Git in the system executable path")
+    environment = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.defpath,
+    }
+    try:
+        completed = subprocess.run(
+            [
+                executable,
+                "--no-replace-objects",
+                "-C",
+                os.fspath(repository_root),
+                *arguments,
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        raise ContinuousReplayError(f"cannot run Git for {name}: {error}") from error
+    if completed.returncode != 0:
+        detail = completed.stderr[:512].decode("utf-8", errors="replace").strip()
+        raise ContinuousReplayError(f"Git rejected {name}: {detail}")
+    return completed.stdout
+
+
+def _run_git_bounded(
+    repository_root: Path,
+    arguments: Sequence[str],
+    *,
+    name: str,
+    maximum_bytes: int,
+) -> bytes:
+    if maximum_bytes < 0:
+        raise ContinuousReplayError(f"Git output limit is invalid for {name}")
+    executable = shutil.which("git", path=os.defpath)
+    if executable is None:
+        raise ContinuousReplayError("cannot find Git in the system executable path")
+    environment = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": os.defpath,
+    }
+    try:
+        with tempfile.TemporaryFile() as errors:
+            process = subprocess.Popen(
+                [
+                    executable,
+                    "--no-replace-objects",
+                    "-C",
+                    os.fspath(repository_root),
+                    *arguments,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=errors,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+            )
+            if process.stdout is None:
+                process.kill()
+                process.wait()
+                raise ContinuousReplayError(f"Git did not provide output for {name}")
+            output = process.stdout.read(maximum_bytes + 1)
+            if len(output) > maximum_bytes:
+                process.kill()
+                process.wait()
+                raise ContinuousReplayError(f"Git output exceeds the limit for {name}")
+            return_code = process.wait()
+            errors.seek(0)
+            detail = errors.read(512).decode("utf-8", errors="replace").strip()
+    except OSError as error:
+        raise ContinuousReplayError(f"cannot run Git for {name}: {error}") from error
+    if return_code != 0:
+        raise ContinuousReplayError(f"Git rejected {name}: {detail}")
+    return cast(bytes, output)
+
+
+def _git_blob(
+    repository_root: Path,
+    *,
+    commit: str,
+    relative_path: str,
+    maximum_bytes: int,
+) -> bytes:
+    entry = _run_git(
+        repository_root,
+        ["ls-tree", "-z", commit, "--", relative_path],
+        name=f"tree entry for {relative_path}",
+    )
+    if not entry.endswith(b"\0") or b"\t" not in entry:
+        raise ContinuousReplayError(f"{relative_path} is not one Git tree entry")
+    metadata, observed_path = entry[:-1].split(b"\t", maxsplit=1)
+    fields = metadata.split(b" ")
+    if (
+        len(fields) != 3
+        or fields[0] not in {b"100644", b"100755"}
+        or fields[1] != b"blob"
+        or len(fields[2]) != 40
+        or any(byte not in b"0123456789abcdef" for byte in fields[2])
+        or observed_path != relative_path.encode("utf-8")
+    ):
+        raise ContinuousReplayError(f"{relative_path} is not one regular Git blob")
+    size_bytes = _run_git_bounded(
+        repository_root,
+        ["cat-file", "-s", fields[2].decode("ascii")],
+        name=f"blob size for {relative_path}",
+        maximum_bytes=64,
+    )
+    try:
+        size = int(size_bytes.strip())
+    except ValueError as error:
+        raise ContinuousReplayError(
+            f"Git returned an invalid blob size for {relative_path}"
+        ) from error
+    if size < 0 or size > maximum_bytes:
+        raise ContinuousReplayError(f"Git blob exceeds the limit for {relative_path}")
+    blob = _run_git_bounded(
+        repository_root,
+        ["cat-file", "blob", fields[2].decode("ascii")],
+        name=f"blob for {relative_path}",
+        maximum_bytes=size,
+    )
+    if len(blob) != size:
+        raise ContinuousReplayError(f"Git blob size differs for {relative_path}")
+    return blob
+
+
+def _validate_executing_scorer_paths(repository_root: Path) -> None:
+    if set(_SCORER_MODULE_NAMES) != set(holdout.SCORER_SOURCE_FILES):
+        raise ContinuousReplayError("executing scorer module registry differs")
+    for relative_path in holdout.SCORER_SOURCE_FILES:
+        module_name = _SCORER_MODULE_NAMES[relative_path]
+        if relative_path == "src/falsewake/continuous_replay.py":
+            module_file: object = __file__
+        else:
+            module = sys.modules.get(module_name)
+            module_file = None if module is None else getattr(module, "__file__", None)
+        if type(module_file) is not str or not module_file:
+            raise ContinuousReplayError(
+                f"executing scorer module is unavailable: {module_name}"
+            )
+        expected = repository_root / relative_path
+        actual = Path(os.path.abspath(module_file))
+        try:
+            resolved = actual.resolve(strict=True)
+        except OSError as error:
+            raise ContinuousReplayError(
+                f"cannot resolve executing scorer module {module_name}: {error}"
+            ) from error
+        if actual != expected or resolved != expected:
+            raise ContinuousReplayError(
+                f"executing scorer module path differs: {module_name}"
+            )
+
+
+def _capture_implementation(repository_root: Path) -> _ImplementationSnapshot:
+    absolute_root = Path(os.path.abspath(repository_root))
+    try:
+        resolved_root = repository_root.resolve(strict=True)
+    except OSError as error:
+        raise ContinuousReplayError(
+            f"cannot resolve repository root: {error}"
+        ) from error
+    if resolved_root != absolute_root or not resolved_root.is_dir():
+        raise ContinuousReplayError("repository root must be one physical directory")
+    _validate_executing_scorer_paths(resolved_root)
+    top_level = _run_git(
+        resolved_root,
+        ["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        name="repository top level",
+    )
+    if (
+        not top_level.endswith(b"\n")
+        or Path(os.fsdecode(top_level[:-1])) != resolved_root
+    ):
+        raise ContinuousReplayError("repository root differs from Git top level")
+    head_bytes = _run_git(
+        resolved_root,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        name="implementation commit",
+    )
+    try:
+        commit = head_bytes.strip().decode("ascii")
+    except UnicodeDecodeError as error:
+        raise ContinuousReplayError("Git returned a non-ASCII commit") from error
+    if (
+        len(commit) != 40
+        or head_bytes != commit.encode("ascii") + b"\n"
+        or any(character not in "0123456789abcdef" for character in commit)
+    ):
+        raise ContinuousReplayError("Git returned an invalid implementation commit")
+
+    config_path = resolved_root / holdout.EXPERIMENT_CONFIG_RELATIVE_PATH
+    config_file = _read_stable_bytes(
+        config_path,
+        name="experiment config",
+        maximum_bytes=holdout.MAX_CONFIG_BYTES,
+    )
+    if not hmac.compare_digest(
+        config_file.sha256, holdout.EXPERIMENT_CONFIG_SHA256
+    ):
+        raise ContinuousReplayError("experiment config identity differs")
+    try:
+        config = holdout._validate_registered_config(config_file.contents)
+    except holdout.HoldoutAccessError as error:
+        raise ContinuousReplayError(f"experiment config is invalid: {error}") from error
+    if _git_blob(
+        resolved_root,
+        commit=commit,
+        relative_path=holdout.EXPERIMENT_CONFIG_RELATIVE_PATH,
+        maximum_bytes=holdout.MAX_CONFIG_BYTES,
+    ) != config_file.contents:
+        raise ContinuousReplayError("experiment config differs from HEAD")
+    selection_entry = _run_git(
+        resolved_root,
+        ["ls-tree", "-z", commit, "--", holdout.SELECTION_ARTIFACT_RELATIVE_PATH],
+        name="selection artifact absence",
+    )
+    if selection_entry:
+        raise ContinuousReplayError(
+            "implementation commit already contains the selection artifact"
+        )
+    selection_path = resolved_root / holdout.SELECTION_ARTIFACT_RELATIVE_PATH
+    if selection_path.exists() or selection_path.is_symlink():
+        raise ContinuousReplayError(
+            "working tree already contains the selection artifact"
+        )
+
+    digest = hashlib.sha256(_SCORER_SOURCE_DOMAIN)
+    for relative_path in holdout.SCORER_SOURCE_FILES:
+        working = _read_stable_bytes(
+            resolved_root / relative_path,
+            name=f"scorer source {relative_path}",
+            maximum_bytes=holdout.MAX_SOURCE_BYTES,
+        )
+        committed = _git_blob(
+            resolved_root,
+            commit=commit,
+            relative_path=relative_path,
+            maximum_bytes=holdout.MAX_SOURCE_BYTES,
+        )
+        if working.contents != committed:
+            raise ContinuousReplayError(
+                f"scorer source {relative_path} differs from HEAD"
+            )
+        encoded_path = relative_path.encode("utf-8")
+        digest.update(struct.pack("<I", len(encoded_path)))
+        digest.update(encoded_path)
+        digest.update(struct.pack("<Q", len(working.contents)))
+        digest.update(working.contents)
+
+    model_contract = config.get("model")
+    if type(model_contract) is not dict:
+        raise ContinuousReplayError("experiment config has no model contract")
+    model_mapping = cast(dict[str, object], model_contract)
+    if model_mapping.get("portable_json_path") != holdout.PORTABLE_MODEL_RELATIVE_PATH:
+        raise ContinuousReplayError("portable model path differs from experiment 001")
+    model_file = _read_stable_bytes(
+        resolved_root / holdout.PORTABLE_MODEL_RELATIVE_PATH,
+        name="portable model",
+        maximum_bytes=MAX_MODEL_BYTES,
+    )
+    expected_model_sha256 = _require_sha256(
+        model_mapping.get("portable_json_sha256"),
+        name="registered portable model SHA-256",
+    )
+    if not hmac.compare_digest(model_file.sha256, expected_model_sha256):
+        raise ContinuousReplayError("portable model identity differs")
+    if _git_blob(
+        resolved_root,
+        commit=commit,
+        relative_path=holdout.PORTABLE_MODEL_RELATIVE_PATH,
+        maximum_bytes=MAX_MODEL_BYTES,
+    ) != model_file.contents:
+        raise ContinuousReplayError("portable model differs from HEAD")
+    runtime = holdout.current_runtime_identity()
+    runtime_sha256 = hashlib.sha256(
+        holdout.canonical_runtime_identity(runtime)
+    ).hexdigest()
+    final_head = _run_git(
+        resolved_root,
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        name="final implementation commit",
+    )
+    if final_head != head_bytes:
+        raise ContinuousReplayError("Git HEAD changed while capturing implementation")
+    return _ImplementationSnapshot(
+        commit=commit,
+        config=config,
+        config_bytes=config_file.contents,
+        config_sha256=config_file.sha256,
+        model_bytes=model_file.contents,
+        model_sha256=model_file.sha256,
+        scorer_source_sha256=digest.hexdigest(),
+        runtime=runtime,
+        runtime_sha256=runtime_sha256,
+    )
+
+
+def _config_mapping(
+    document: Mapping[str, object], key: str, *, name: str
+) -> dict[str, object]:
+    value = document.get(key)
+    if type(value) is not dict:
+        raise ContinuousReplayError(f"experiment config has no {name}")
+    return cast(dict[str, object], value)
+
+
+def _require_unchanged(
+    expected: _StableBytes,
+    path: Path,
+    *,
+    name: str,
+    maximum_bytes: int,
+) -> None:
+    observed = _read_stable_bytes(path, name=name, maximum_bytes=maximum_bytes)
+    if (
+        observed.identity != expected.identity
+        or observed.contents != expected.contents
+        or not hmac.compare_digest(observed.sha256, expected.sha256)
+    ):
+        raise ContinuousReplayError(f"{name} changed during replay")
+
+
+def _capture_replay_inputs(inputs: ReplayInputs) -> _ReplayInputSnapshot:
+    return _ReplayInputSnapshot(
+        speech_manifest=_read_stable_bytes(
+            inputs.speech_commands_manifest,
+            name="Speech Commands manifest",
+            maximum_bytes=MAX_MANIFEST_BYTES,
+        ),
+        feature_metadata=_read_stable_bytes(
+            inputs.feature_cache / "metadata.json",
+            name="feature-cache metadata",
+            maximum_bytes=MAX_METADATA_BYTES,
+        ),
+        feature_matrix=_read_stable_bytes(
+            inputs.feature_cache / "features.npy",
+            name="feature-cache matrix",
+            maximum_bytes=_MAX_FEATURE_CONTAINER_BYTES,
+        ),
+        dev_manifest=_read_stable_bytes(
+            inputs.dev_manifest,
+            name="development manifest",
+            maximum_bytes=holdout.MAX_DEV_MANIFEST_BYTES,
+        ),
+        dev_audit_report=_read_stable_bytes(
+            inputs.dev_audit_report,
+            name="development audit report",
+            maximum_bytes=holdout.MAX_AUDIT_REPORT_BYTES,
+        ),
+    )
+
+
+def _revalidate_replay_inputs(
+    inputs: ReplayInputs,
+    expected: _ReplayInputSnapshot,
+    *,
+    expected_archive_sha256: str,
+) -> None:
+    checks = (
+        (
+            expected.speech_manifest,
+            inputs.speech_commands_manifest,
+            "Speech Commands manifest",
+            MAX_MANIFEST_BYTES,
+        ),
+        (
+            expected.feature_metadata,
+            inputs.feature_cache / "metadata.json",
+            "feature-cache metadata",
+            MAX_METADATA_BYTES,
+        ),
+        (
+            expected.feature_matrix,
+            inputs.feature_cache / "features.npy",
+            "feature-cache matrix",
+            _MAX_FEATURE_CONTAINER_BYTES,
+        ),
+        (
+            expected.dev_manifest,
+            inputs.dev_manifest,
+            "development manifest",
+            holdout.MAX_DEV_MANIFEST_BYTES,
+        ),
+        (
+            expected.dev_audit_report,
+            inputs.dev_audit_report,
+            "development audit report",
+            holdout.MAX_AUDIT_REPORT_BYTES,
+        ),
+    )
+    for snapshot, path, name, maximum_bytes in checks:
+        _require_unchanged(
+            snapshot,
+            path,
+            name=name,
+            maximum_bytes=maximum_bytes,
+        )
+    try:
+        final_archive = librispeech.inspect_librispeech_archive(
+            inputs.dev_archive,
+            source_identity=librispeech.DEV_CLEAN,
+        )
+    except librispeech.LibriSpeechError as error:
+        raise ContinuousReplayError(
+            f"cannot revalidate development archive: {error}"
+        ) from error
+    if not hmac.compare_digest(
+        final_archive.archive_sha256, expected_archive_sha256
+    ):
+        raise ContinuousReplayError("development archive changed during replay")
+
+
+def _load_positive_grid(
+    inputs: ReplayInputs,
+    config: Mapping[str, object],
+    model: PortableLinearModel,
+) -> CorrectAcceptGrid:
+    positive_contract = _config_mapping(
+        config, "positive_validation", name="positive-validation contract"
+    )
+    feature_contract = _config_mapping(
+        positive_contract, "feature_cache", name="feature-cache contract"
+    )
+    expected_manifest_sha256 = _require_sha256(
+        feature_contract.get("manifest_sha256"),
+        name="registered Speech Commands manifest SHA-256",
+    )
+    manifest_file = _read_stable_bytes(
+        inputs.speech_commands_manifest,
+        name="Speech Commands manifest",
+        maximum_bytes=MAX_MANIFEST_BYTES,
+    )
+    if not hmac.compare_digest(manifest_file.sha256, expected_manifest_sha256):
+        raise ContinuousReplayError("Speech Commands manifest identity differs")
+    metadata_path = inputs.feature_cache / "metadata.json"
+    feature_path = inputs.feature_cache / "features.npy"
+    metadata_file = _read_stable_bytes(
+        metadata_path,
+        name="feature-cache metadata",
+        maximum_bytes=MAX_METADATA_BYTES,
+    )
+    feature_file = _read_stable_bytes(
+        feature_path,
+        name="feature-cache matrix",
+        maximum_bytes=_MAX_FEATURE_CONTAINER_BYTES,
+    )
+    expected_metadata_sha256 = _require_sha256(
+        feature_contract.get("metadata_json_sha256"),
+        name="registered feature metadata SHA-256",
+    )
+    expected_feature_file_sha256 = _require_sha256(
+        feature_contract.get("features_npy_sha256"),
+        name="registered feature container SHA-256",
+    )
+    if not hmac.compare_digest(
+        metadata_file.sha256, expected_metadata_sha256
+    ) or not hmac.compare_digest(
+        feature_file.sha256, expected_feature_file_sha256
+    ):
+        raise ContinuousReplayError("feature-cache container identity differs")
+    try:
+        corpus = load_audited_corpus(
+            inputs.speech_commands_manifest,
+            expected_sha256=expected_manifest_sha256,
+        )
+        examples = build_sampling_plan(corpus)
+        summary = sampling_summary(examples)
+        expected_experiment_sha256 = _require_sha256(
+            feature_contract.get("experiment_config_sha256"),
+            name="registered feature experiment SHA-256",
+        )
+        features = load_feature_cache(
+            inputs.feature_cache,
+            examples,
+            manifest_sha256=expected_manifest_sha256,
+            experiment_config_sha256=expected_experiment_sha256,
+        )
+    except (BaselineDataError, FeatureMatrixError, ValueError) as error:
+        raise ContinuousReplayError(
+            f"cannot load positive-validation features: {error}"
+        ) from error
+    expected_examples_sha256 = _require_sha256(
+        positive_contract.get("examples_sha256"),
+        name="registered positive examples SHA-256",
+    )
+    if summary.get("examples_sha256") != expected_examples_sha256:
+        raise ContinuousReplayError("positive sampling-plan identity differs")
+    expected_semantic_sha256 = _require_sha256(
+        feature_contract.get("features_sha256"),
+        name="registered feature semantic SHA-256",
+    )
+    if not hmac.compare_digest(
+        feature_matrix_sha256(features), expected_semantic_sha256
+    ):
+        raise ContinuousReplayError("feature-cache semantic identity differs")
+    _require_unchanged(
+        manifest_file,
+        inputs.speech_commands_manifest,
+        name="Speech Commands manifest",
+        maximum_bytes=MAX_MANIFEST_BYTES,
+    )
+    _require_unchanged(
+        metadata_file,
+        metadata_path,
+        name="feature-cache metadata",
+        maximum_bytes=MAX_METADATA_BYTES,
+    )
+    _require_unchanged(
+        feature_file,
+        feature_path,
+        name="feature-cache matrix",
+        maximum_bytes=_MAX_FEATURE_CONTAINER_BYTES,
+    )
+
+    selected_indices = [
+        index
+        for index, example in enumerate(examples)
+        if example.split == "validation" and example.label in _TARGET_POSITION
+    ]
+    if len(selected_indices) != holdout.TARGET_EXAMPLE_COUNT:
+        raise ContinuousReplayError("positive target-validation row count differs")
+    selected_features = np.ascontiguousarray(
+        features[np.asarray(selected_indices, dtype=np.int64)], dtype=np.float32
+    )
+    target_positions = np.asarray(
+        [_TARGET_POSITION[examples[index].label] for index in selected_indices],
+        dtype=np.int64,
+    )
+    grid = correct_accept_threshold_grid(
+        model,
+        target_positions,
+        score_feature_rows(model, selected_features),
+    )
+    if tuple(int(value) for value in grid.clip_counts_by_target) != tuple(
+        holdout.TARGET_SUPPORT
+    ) or tuple(int(value) for value in grid.counts_by_target[0]) != tuple(
+        holdout.BASELINE_CORRECT_BY_TARGET
+    ):
+        raise ContinuousReplayError(
+            "positive-validation sufficient statistics differ"
+        )
+    return grid
+
+
+def _compact_target_trace(
+    model: PortableLinearModel,
+    starts: Int64Array,
+    scores: ScoreBatch,
+) -> tuple[Int64Array, Int64Array, Float64Array]:
+    _validate_window_starts(starts, scores.predicted_indices.size)
+    predicted, probabilities = _score_vectors(model, scores)
+    positions = np.full(predicted.shape, -1, dtype=np.int64)
+    for model_position, label in enumerate(model.classes):
+        target_position = _TARGET_POSITION.get(label)
+        if target_position is not None:
+            positions[predicted == model_position] = target_position
+    selected = positions >= 0
+    selected_starts = np.ascontiguousarray(starts[selected], dtype=np.int64)
+    selected_positions = np.ascontiguousarray(positions[selected], dtype=np.int64)
+    selected_probabilities = np.ascontiguousarray(
+        probabilities[selected], dtype=np.float64
+    )
+    for values in (selected_starts, selected_positions, selected_probabilities):
+        values.flags.writeable = False
+    return selected_starts, selected_positions, selected_probabilities
+
+
+def _canonical_manifest(audit: librispeech.LibriSpeechAudit) -> bytes:
+    return b"".join(
+        (
+            json.dumps(
+                asdict(utterance),
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        for utterance in audit.utterances
+    )
+
+
+def _canonical_audit_report(audit: librispeech.LibriSpeechAudit) -> bytes:
+    return _canonical_json(audit.report())
+
+
+def _stage_dev_replay(
+    inputs: ReplayInputs,
+    config: Mapping[str, object],
+    model: PortableLinearModel,
+) -> _DevReplayState:
+    negative_contract = _config_mapping(
+        config, "negative_source", name="negative-source contract"
+    )
+    audit_contract = _config_mapping(
+        negative_contract, "archive_audit", name="archive-audit contract"
+    )
+    verified_contract = _config_mapping(
+        audit_contract,
+        "verified_dev_clean_output",
+        name="verified development output",
+    )
+    manifest_file = _read_stable_bytes(
+        inputs.dev_manifest,
+        name="development manifest",
+        maximum_bytes=holdout.MAX_DEV_MANIFEST_BYTES,
+    )
+    audit_file = _read_stable_bytes(
+        inputs.dev_audit_report,
+        name="development audit report",
+        maximum_bytes=holdout.MAX_AUDIT_REPORT_BYTES,
+    )
+    expected_manifest_sha256 = _require_sha256(
+        verified_contract.get("manifest_sha256"),
+        name="registered development manifest SHA-256",
+    )
+    expected_audit_sha256 = _require_sha256(
+        verified_contract.get("audit_report_sha256"),
+        name="registered development audit report SHA-256",
+    )
+    if not hmac.compare_digest(
+        manifest_file.sha256, expected_manifest_sha256
+    ) or not hmac.compare_digest(audit_file.sha256, expected_audit_sha256):
+        raise ContinuousReplayError("development evidence identity differs")
+
+    staged: dict[str, _StagedUtterance] = {}
+    accumulator = ReplayEventAccumulator()
+
+    def consume(member: librispeech.ArchiveMember, waveform: FloatArray) -> None:
+        if (
+            member.utterance_id is None
+            or member.speaker_id is None
+            or member.chapter_id is None
+            or member.path in staged
+        ):
+            raise ContinuousReplayError("development callback member is not canonical")
+        try:
+            speaker_id = int(member.speaker_id)
+        except ValueError as error:
+            raise ContinuousReplayError(
+                "development callback speaker ID is not decimal"
+            ) from error
+        starts, scores = score_utterance(model, waveform)
+        event_grid = replay_threshold_grid(model, starts, scores)
+        trace_starts, trace_positions, trace_probabilities = _compact_target_trace(
+            model, starts, scores
+        )
+        accumulator.add(
+            UtteranceEventGrid(
+                speaker_id=speaker_id,
+                scored_exposure_samples=scored_exposure_samples(int(waveform.size)),
+                events=event_grid,
+            )
+        )
+        staged[member.path] = _StagedUtterance(
+            relative_path=member.path,
+            utterance_id=member.utterance_id,
+            speaker_id=speaker_id,
+            sample_count=int(waveform.size),
+            window_starts=trace_starts,
+            target_positions=trace_positions,
+            target_probabilities=trace_probabilities,
+        )
+
+    try:
+        audit = librispeech.audit_librispeech_archive(
+            inputs.dev_archive,
+            source_identity=librispeech.DEV_CLEAN,
+            provisional_flac_consumer=consume,
+        )
+    except (librispeech.LibriSpeechError, ContinuousReplayError) as error:
+        raise ContinuousReplayError(
+            f"development replay audit failed: {error}"
+        ) from error
+    canonical_manifest = _canonical_manifest(audit)
+    canonical_audit = _canonical_audit_report(audit)
+    if canonical_manifest != manifest_file.contents:
+        raise ContinuousReplayError("live development manifest differs from evidence")
+    if canonical_audit != audit_file.contents:
+        raise ContinuousReplayError("live development audit differs from evidence")
+    _require_unchanged(
+        manifest_file,
+        inputs.dev_manifest,
+        name="development manifest",
+        maximum_bytes=holdout.MAX_DEV_MANIFEST_BYTES,
+    )
+    _require_unchanged(
+        audit_file,
+        inputs.dev_audit_report,
+        name="development audit report",
+        maximum_bytes=holdout.MAX_AUDIT_REPORT_BYTES,
+    )
+
+    traces: list[ReplayTrace] = []
+    for utterance in audit.utterances:
+        record = staged.pop(utterance.relative_path, None)
+        if record is None or (
+            record.relative_path != utterance.relative_path
+            or record.utterance_id != utterance.utterance_id
+            or record.speaker_id != int(utterance.speaker_id)
+            or record.sample_count != utterance.sample_count
+        ):
+            raise ContinuousReplayError(
+                "development callback output differs from the audited manifest"
+            )
+        traces.append(
+            ReplayTrace(
+                utterance_id=utterance.utterance_id,
+                speaker_id=record.speaker_id,
+                transcript=utterance.transcript,
+                window_starts=record.window_starts,
+                target_positions=record.target_positions,
+                target_probabilities=record.target_probabilities,
+            )
+        )
+    if staged:
+        raise ContinuousReplayError("development callback produced extra utterances")
+    aggregate = accumulator.aggregate()
+    expected_archive_sha256 = _require_sha256(
+        negative_contract.get("archive_sha256"),
+        name="registered development archive SHA-256",
+    )
+    if not hmac.compare_digest(
+        audit.inspection.archive_sha256, expected_archive_sha256
+    ):
+        raise ContinuousReplayError("development archive identity differs")
+    expected_population = (
+        verified_contract.get("source_samples"),
+        verified_contract.get("scored_exposure_samples"),
+        verified_contract.get("utterance_count"),
+        verified_contract.get("speaker_count"),
+    )
+    observed_population = (
+        audit.source_samples,
+        aggregate.scored_exposure_samples,
+        len(audit.utterances),
+        int(aggregate.speaker_ids.size),
+    )
+    if observed_population != expected_population:
+        raise ContinuousReplayError("development replay population differs")
+    return _DevReplayState(
+        source_samples=audit.source_samples,
+        aggregate=aggregate,
+        traces=tuple(traces),
+        archive_sha256=audit.inspection.archive_sha256,
+        manifest_sha256=manifest_file.sha256,
+        audit_report_sha256=audit_file.sha256,
+    )
+
+
+def _publish_artifacts(output: Path, artifacts: ReplayArtifacts) -> None:
+    try:
+        destination = librispeech._prepare_new_output_path(output)
+        staging = Path(
+            tempfile.mkdtemp(
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+            )
+        )
+    except (OSError, librispeech.LibriSpeechError) as error:
+        raise ContinuousReplayError(f"cannot prepare replay output: {error}") from error
+    published = False
+    try:
+        librispeech._write_new_file(staging / _REPORT_FILENAME, artifacts.report)
+        librispeech._write_new_file(
+            staging / _SELECTION_FILENAME, artifacts.selection_artifact
+        )
+        librispeech._fsync_directory(staging)
+        librispeech._rename_directory_noreplace(staging, destination)
+        published = True
+        librispeech._fsync_directory(destination.parent)
+    except (OSError, librispeech.LibriSpeechError) as error:
+        raise ContinuousReplayError(f"cannot publish replay output: {error}") from error
+    finally:
+        if not published and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def run_dev_replay(inputs: ReplayInputs, output: Path) -> ReplayArtifacts:
+    """Run the registered development replay and atomically publish its evidence."""
+
+    initial = _capture_implementation(inputs.repository_root)
+    input_snapshot = _capture_replay_inputs(inputs)
+    model = parse_portable_model(initial.model_bytes)
+    positive = _load_positive_grid(inputs, initial.config, model)
+    development = _stage_dev_replay(inputs, initial.config, model)
+    positive_contract = _config_mapping(
+        initial.config,
+        "positive_validation",
+        name="positive-validation contract",
+    )
+    feature_contract = _config_mapping(
+        positive_contract,
+        "feature_cache",
+        name="feature-cache contract",
+    )
+    identities = {
+        "experiment_config_sha256": initial.config_sha256,
+        "portable_model_sha256": initial.model_sha256,
+        "scorer_source_sha256": initial.scorer_source_sha256,
+        "runtime_identity_sha256": initial.runtime_sha256,
+        "implementation_git_commit": initial.commit,
+        "dev_archive_sha256": development.archive_sha256,
+        "dev_manifest_sha256": development.manifest_sha256,
+        "dev_audit_report_sha256": development.audit_report_sha256,
+        "positive_examples_sha256": _require_sha256(
+            positive_contract.get("examples_sha256"),
+            name="registered positive examples SHA-256",
+        ),
+        "positive_feature_matrix_semantic_sha256": _require_sha256(
+            feature_contract.get("features_sha256"),
+            name="registered positive feature semantic SHA-256",
+        ),
+    }
+    artifacts = build_replay_artifacts(
+        source_samples=development.source_samples,
+        negative=development.aggregate,
+        positive=positive,
+        traces=development.traces,
+        identities=identities,
+        runtime=initial.runtime,
+    )
+    _revalidate_replay_inputs(
+        inputs,
+        input_snapshot,
+        expected_archive_sha256=development.archive_sha256,
+    )
+    final = _capture_implementation(inputs.repository_root)
+    if final != initial:
+        raise ContinuousReplayError(
+            "implementation identity changed during development replay"
+        )
+    _publish_artifacts(output, artifacts)
+    return artifacts
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the frozen FalseWake experiment-001 development replay."
+    )
+    parser.add_argument("output", type=Path, help="new output directory")
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        default=Path.cwd(),
+        help="physical FalseWake Git checkout (default: current directory)",
+    )
+    parser.add_argument(
+        "--speech-commands-manifest",
+        type=Path,
+        required=True,
+    )
+    parser.add_argument("--feature-cache", type=Path, required=True)
+    parser.add_argument("--dev-archive", type=Path, required=True)
+    parser.add_argument("--dev-manifest", type=Path, required=True)
+    parser.add_argument("--dev-audit-report", type=Path, required=True)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point for a fail-if-present development replay."""
+
+    arguments = _parser().parse_args(argv)
+    inputs = ReplayInputs(
+        repository_root=arguments.repository_root,
+        speech_commands_manifest=arguments.speech_commands_manifest,
+        feature_cache=arguments.feature_cache,
+        dev_archive=arguments.dev_archive,
+        dev_manifest=arguments.dev_manifest,
+        dev_audit_report=arguments.dev_audit_report,
+    )
+    try:
+        artifacts = run_dev_replay(inputs, arguments.output)
+    except (ContinuousReplayError, ValueError) as error:
+        print(f"development replay failed: {error}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {
+                "report_sha256": artifacts.report_sha256,
+                "selected_threshold_milli": artifacts.selected_threshold_milli,
+                "selection_artifact_sha256": (
+                    artifacts.selection_artifact_sha256
+                ),
+                "status": artifacts.status,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through the console script
+    raise SystemExit(main())

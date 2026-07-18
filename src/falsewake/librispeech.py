@@ -408,6 +408,11 @@ def _inspect_open_stream(
 ) -> tuple[ArchiveInspection, tuple[int, int, int, int, int, int]]:
     if not stat.S_ISREG(status.st_mode):
         raise LibriSpeechError("archive must be a regular non-symlink file")
+    if source_identity is not None and status.st_size != source_identity.archive_bytes:
+        raise LibriSpeechError(
+            "archive size differs from the registered source: "
+            f"expected={source_identity.archive_bytes}, observed={status.st_size}"
+        )
     initial_snapshot = _file_snapshot(status)
     archive_bytes, archive_md5, archive_sha256 = _archive_digests(stream)
     if status.st_size != archive_bytes:
