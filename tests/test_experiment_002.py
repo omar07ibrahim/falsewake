@@ -47,6 +47,31 @@ def test_neural_toolchain_extras_are_separated_and_bounded() -> None:
         "torch": "2.13.0+cpu",
     }
 
+    neural_packages = (
+        "onnx",
+        "onnxruntime",
+        "onnxscript",
+        "safetensors",
+        "torch",
+    )
+    base_dependencies = pyproject["project"]["dependencies"]
+    assert not any(
+        dependency.startswith(neural_packages) for dependency in base_dependencies
+    )
+
+
+def test_neural_toolchain_instructions_are_fail_closed() -> None:
+    documentation = DOC_PATH.read_text(encoding="utf-8")
+
+    assert "https://download.pytorch.org/whl/cpu" in documentation
+    assert '"torch==2.13.0+cpu"' in documentation
+    assert '["runtime_lock"]' in documentation
+    assert '"python": platform.python_version()' in documentation
+    assert "importlib.metadata.version(package)" in documentation
+    assert "torch.version.cuda is not None" in documentation
+    assert "torch.cuda.is_available()" in documentation
+    assert 'raise SystemExit("runtime lock mismatch:' in documentation
+
 
 def test_training_preregistration_is_canonical_and_has_exact_sections() -> None:
     raw = CONFIG_PATH.read_text(encoding="utf-8")

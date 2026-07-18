@@ -62,6 +62,49 @@ python -m pip install "numpy==2.5.1" "onnx==1.22.0" "onnxscript==0.7.1" \
 python -m pip install -e ".[dev,train,export,runtime]"
 ```
 
+Verify the resulting environment against the committed runtime lock. This command
+exits nonzero for any version mismatch, a CUDA PyTorch build, or an unexpectedly
+available CUDA runtime:
+
+```console
+python - <<'PY'
+import importlib.metadata
+import json
+import platform
+from pathlib import Path
+
+import torch
+
+expected = json.loads(
+    Path("configs/experiment-002-training.json").read_text(encoding="utf-8")
+)["runtime_lock"]
+observed = {
+    "python": platform.python_version(),
+    **{
+        package: importlib.metadata.version(package)
+        for package in (
+            "numpy",
+            "onnx",
+            "onnxruntime",
+            "onnxscript",
+            "safetensors",
+            "torch",
+        )
+    },
+}
+errors = [
+    f"{name}: expected {expected[name]}, observed {observed.get(name, 'missing')}"
+    for name in sorted(expected)
+    if observed.get(name) != expected[name]
+]
+if torch.version.cuda is not None or torch.cuda.is_available():
+    errors.append("torch: expected a CPU-only build with no available CUDA runtime")
+if errors:
+    raise SystemExit("runtime lock mismatch:\n- " + "\n- ".join(errors))
+print("Experiment 002 runtime lock verified")
+PY
+```
+
 The `+cpu` build tag is deliberately recorded in the experiment contract and the
 reproduction command rather than imposed as a portable project requirement. The
 bounded extras describe compatible environments; the exact registered versions
