@@ -57,11 +57,21 @@ class counts and selected-example digest are in
 classifier settings are registered in
 [configs/experiment-000.json](../configs/experiment-000.json) before fitting.
 
+The registered clip evaluation uses the fixed 12-class order and an argmax
+prediction. Macro F1 includes all 12 classes with zero division mapped to zero.
+The target argmax error rate counts a target clip as wrong whenever its predicted
+class differs from its label; it is not called a false reject rate because no
+acceptance threshold exists in this phase. The report will also expose support and
+predicted-`unknown` recall for each of the 25 source words inside the sampled
+`unknown` class.
+
 ## Reported numbers
 
-- macro F1 and per-class recall for target commands;
-- false reject rate at the selected threshold;
-- false accepts per hour on validation and held-out continuous speech;
+- clip accuracy, 12-class macro F1, and per-class precision, recall, F1, and
+  support;
+- target-command argmax error rate and per-source-word `unknown` recall;
+- false reject rate and false accepts per hour only after the continuous replay
+  threshold is registered;
 - the number of evaluated negative hours and 95% Poisson confidence intervals;
 - feature extraction and classifier latency on the project host; and
 - a confusion matrix plus the highest-scoring false accepts.

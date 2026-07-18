@@ -14,11 +14,48 @@
     "silence"
   ],
   "classifier": {
-    "C": 1.0,
-    "max_iter": 1000,
-    "solver": "lbfgs",
-    "standard_scaler": true,
-    "tol": 0.0001
+    "implementation": "sklearn.linear_model.LogisticRegression",
+    "parameters": {
+      "C": 1.0,
+      "class_weight": null,
+      "dual": false,
+      "fit_intercept": true,
+      "intercept_scaling": 1,
+      "l1_ratio": 0.0,
+      "max_iter": 1000,
+      "n_jobs": null,
+      "random_state": 20260718,
+      "solver": "lbfgs",
+      "tol": 0.0001,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "scikit_learn_version": "1.9.0",
+    "standard_scaler": {
+      "copy": true,
+      "fit_split": "train",
+      "with_mean": true,
+      "with_std": true
+    }
+  },
+  "evaluation": {
+    "clip_prediction": "argmax",
+    "confusion_matrix_labels": "class_order",
+    "macro_f1": {
+      "labels": "class_order",
+      "zero_division": 0
+    },
+    "per_class": "precision_recall_f1_support",
+    "target_argmax_error_rate": {
+      "denominator": "clips_with_one_of_the_ten_target_labels",
+      "numerator": "argmax_prediction_differs_from_label"
+    },
+    "threshold_metrics": "deferred_to_continuous_experiment",
+    "unknown_word_slice": {
+      "metric": "predicted_unknown_recall",
+      "source_word": "first_manifest_path_component",
+      "support": true
+    }
   },
   "frontend": {
     "clip_samples": 16000,
