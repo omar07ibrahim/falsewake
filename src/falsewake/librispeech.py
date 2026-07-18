@@ -17,7 +17,7 @@ import struct
 import sys
 import tarfile
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import IO, BinaryIO, Literal, cast
@@ -26,10 +26,13 @@ import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 from numpy.typing import NDArray
 
+from falsewake.features import FloatArray, pcm16le_to_float32
+
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_MEMBER_COUNT = 100_000
 MAX_REGULAR_BYTES = 8 * 1024 * 1024 * 1024
 MAX_FLAC_BYTES = 64 * 1024 * 1024
+MAX_DECODED_SAMPLES = 16_000 * 60 * 10
 MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024
 MAX_METADATA_BYTES = 64 * 1024 * 1024
 
@@ -110,6 +113,9 @@ class ArchiveMember:
     speaker_id: str | None = None
     chapter_id: str | None = None
     utterance_id: str | None = None
+
+
+ProvisionalFlacConsumer = Callable[[ArchiveMember, FloatArray], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,8 +513,11 @@ def _read_member_payload(stream: IO[bytes], member: ArchiveMember) -> bytes:
     return bytes(payload)
 
 
-def _decode_flac(payload: bytes, path: str) -> tuple[int, str]:
+def _decode_flac_payload(
+    payload: bytes, path: str, *, keep_waveform: bool
+) -> tuple[int, str, FloatArray | None]:
     decoded_sha256 = hashlib.sha256()
+    waveform: FloatArray | None = None
     sample_count = 0
     try:
         with sf.SoundFile(io.BytesIO(payload), mode="r") as decoder:
@@ -526,6 +535,14 @@ def _decode_flac(payload: bytes, path: str) -> tuple[int, str]:
             declared_frames = int(decoder.frames)
             if declared_frames < 1:
                 raise LibriSpeechError(f"FLAC has no decoded samples: {path!r}")
+            if declared_frames > MAX_DECODED_SAMPLES:
+                raise LibriSpeechError(
+                    "FLAC decoded sample count exceeds the audit limit: "
+                    f"{path!r}, samples={declared_frames}, "
+                    f"limit={MAX_DECODED_SAMPLES}"
+                )
+            if keep_waveform:
+                waveform = np.empty(declared_frames, dtype=np.float32)
             while True:
                 samples = cast(
                     NDArray[np.int16],
@@ -538,8 +555,18 @@ def _decode_flac(payload: bytes, path: str) -> tuple[int, str]:
                         f"FLAC decoder returned non-mono PCM16 samples: {path!r}"
                     )
                 canonical = np.asarray(samples, dtype=np.dtype("<i2"))
-                decoded_sha256.update(canonical.tobytes(order="C"))
-                sample_count += int(samples.size)
+                canonical_bytes = canonical.tobytes(order="C")
+                decoded_sha256.update(canonical_bytes)
+                next_sample_count = sample_count + int(samples.size)
+                if next_sample_count > declared_frames:
+                    raise LibriSpeechError(
+                        f"decoded FLAC exceeds its declared sample count: {path!r}"
+                    )
+                if waveform is not None:
+                    waveform[sample_count:next_sample_count] = pcm16le_to_float32(
+                        canonical_bytes
+                    )
+                sample_count = next_sample_count
             if sample_count != declared_frames:
                 raise LibriSpeechError(
                     "decoded FLAC sample count differs from its stream metadata: "
@@ -551,7 +578,16 @@ def _decode_flac(payload: bytes, path: str) -> tuple[int, str]:
         raise LibriSpeechError(
             f"cannot decode FLAC payload {path!r}: {error}"
         ) from error
-    return sample_count, decoded_sha256.hexdigest()
+    if waveform is not None:
+        waveform.flags.writeable = False
+    return sample_count, decoded_sha256.hexdigest(), waveform
+
+
+def _decode_flac(payload: bytes, path: str) -> tuple[int, str]:
+    sample_count, decoded_sha256, _ = _decode_flac_payload(
+        payload, path, keep_waveform=False
+    )
+    return sample_count, decoded_sha256
 
 
 def _parse_transcript(payload: bytes, member: ArchiveMember) -> dict[str, str]:
@@ -624,7 +660,9 @@ def _manifest_bytes(utterances: Sequence[LibriSpeechUtterance]) -> bytes:
 
 
 def _payload_inventory(
-    archive: tarfile.TarFile, inspection: ArchiveInspection
+    archive: tarfile.TarFile,
+    inspection: ArchiveInspection,
+    provisional_flac_consumer: ProvisionalFlacConsumer | None = None,
 ) -> LibriSpeechAudit:
     expected = {member.path: member for member in inspection.members}
     expected_directories = set(inspection.directory_paths)
@@ -691,8 +729,21 @@ def _payload_inventory(
                 raise LibriSpeechError(
                     f"FLAC utterance ID is repeated: {utterance_id!r}"
                 )
-            sample_count, decoded_sha256 = _decode_flac(payload, path)
+            sample_count, decoded_sha256, waveform = _decode_flac_payload(
+                payload, path, keep_waveform=provisional_flac_consumer is not None
+            )
             raw_sha256 = hashlib.sha256(payload).hexdigest()
+            if provisional_flac_consumer is not None:
+                if waveform is None:
+                    raise LibriSpeechError(
+                        f"decoded FLAC waveform is unexpectedly absent: {path!r}"
+                    )
+                try:
+                    provisional_flac_consumer(member, waveform)
+                except Exception as error:
+                    raise LibriSpeechError(
+                        f"provisional FLAC consumer failed: {path!r}"
+                    ) from error
             flacs[utterance_id] = (
                 member,
                 sample_count,
@@ -777,8 +828,14 @@ def audit_librispeech_archive(
     path: Path,
     *,
     source_identity: SourceIdentity | None = DEV_CLEAN,
+    provisional_flac_consumer: ProvisionalFlacConsumer | None = None,
 ) -> LibriSpeechAudit:
-    """Audit every allowed payload through one descriptor without extraction."""
+    """Audit every payload and optionally stage read-only waveform computations.
+
+    The optional callback is provisional: it must retain results in reversible memory
+    and publish nothing. A successful return is the commit signal after the complete
+    payload union, transcript bijection, and final archive identity have all passed.
+    """
 
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -796,7 +853,12 @@ def audit_librispeech_archive(
             stream.seek(0)
             try:
                 with tarfile.open(fileobj=stream, mode="r:gz") as archive:
-                    audit = _payload_inventory(archive, inspection)
+                    if provisional_flac_consumer is None:
+                        audit = _payload_inventory(archive, inspection)
+                    else:
+                        audit = _payload_inventory(
+                            archive, inspection, provisional_flac_consumer
+                        )
             except (tarfile.TarError, OSError, EOFError) as error:
                 raise LibriSpeechError(
                     f"cannot open tar archive for payload audit: {error}"

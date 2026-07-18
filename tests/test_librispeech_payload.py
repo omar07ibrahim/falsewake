@@ -16,6 +16,7 @@ import pytest
 import soundfile as sf  # type: ignore[import-untyped]
 
 import falsewake.librispeech as librispeech
+from falsewake.features import FloatArray
 from falsewake.librispeech import (
     METADATA_PATHS,
     LibriSpeechError,
@@ -205,6 +206,112 @@ def test_payload_audit_is_byte_stable_and_matches_registered_framing(
     assert str(tmp_path) not in report_text
     assert "timestamp" not in report_text
     assert "elapsed" not in report_text
+
+
+def test_payload_audit_streams_exact_read_only_float32_waveforms(
+    tmp_path: Path,
+) -> None:
+    archive = _write_archive(tmp_path / "stream.tar.gz", _valid_members())
+    observed: list[tuple[str, np.ndarray[tuple[int], np.dtype[np.float32]]]] = []
+
+    def consume(
+        member: librispeech.ArchiveMember,
+        waveform: np.ndarray[tuple[int], np.dtype[np.float32]],
+    ) -> None:
+        assert member.kind == "flac"
+        assert waveform.dtype == np.dtype(np.float32)
+        assert waveform.ndim == 1
+        assert not waveform.flags.writeable
+        observed.append((member.path, waveform))
+
+    audit = audit_librispeech_archive(
+        archive,
+        source_identity=_identity(archive),
+        provisional_flac_consumer=consume,
+    )
+
+    assert [path for path, _ in observed] == [_FIRST_FLAC_PATH, _SECOND_FLAC_PATH]
+    assert [waveform.size for _, waveform in observed] == [320, 480]
+    expected = ((np.arange(320, dtype=np.int32) * 257) % 65_536 - 32_768).astype(
+        np.float32
+    ) / np.float32(32_768)
+    assert np.array_equal(observed[0][1], expected)
+    assert audit.source_samples == sum(waveform.size for _, waveform in observed)
+
+
+def test_decoded_sample_limit_is_checked_before_waveform_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OversizedDecoder:
+        format = "FLAC"
+        subtype = "PCM_16"
+        channels = 1
+        samplerate = 16_000
+        frames = librispeech.MAX_DECODED_SAMPLES + 1
+
+        def __enter__(self) -> OversizedDecoder:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        sf,
+        "SoundFile",
+        lambda *args, **kwargs: OversizedDecoder(),
+    )
+
+    with pytest.raises(LibriSpeechError, match="decoded sample count exceeds"):
+        librispeech._decode_flac_payload(
+            b"bounded", "synthetic.flac", keep_waveform=True
+        )
+
+
+def test_provisional_consumer_exception_isolated_from_archive_errors(
+    tmp_path: Path,
+) -> None:
+    archive = _write_archive(tmp_path / "consumer-error.tar.gz", _valid_members())
+
+    def fail(member: librispeech.ArchiveMember, waveform: FloatArray) -> None:
+        raise OSError(f"cannot stage {member.path}: {waveform.size}")
+
+    with pytest.raises(
+        LibriSpeechError, match="provisional FLAC consumer failed"
+    ) as caught:
+        audit_librispeech_archive(
+            archive,
+            source_identity=_identity(archive),
+            provisional_flac_consumer=fail,
+        )
+
+    assert isinstance(caught.value.__cause__, OSError)
+
+
+def test_provisional_results_are_not_committed_before_final_snapshot_gate(
+    tmp_path: Path,
+) -> None:
+    archive = _write_archive(tmp_path / "consumer-mutation.tar.gz", _valid_members())
+    staged_paths: list[str] = []
+
+    def stage_then_mutate(
+        member: librispeech.ArchiveMember, waveform: FloatArray
+    ) -> None:
+        staged_paths.append(member.path)
+        if len(staged_paths) == 1:
+            status = archive.stat()
+            os.utime(
+                archive,
+                ns=(status.st_atime_ns, status.st_mtime_ns + 1_000_000_000),
+            )
+
+    with pytest.raises(LibriSpeechError, match="changed during payload audit"):
+        audit_librispeech_archive(
+            archive,
+            source_identity=_identity(archive),
+            provisional_flac_consumer=stage_then_mutate,
+        )
+
+    assert staged_paths == [_FIRST_FLAC_PATH, _SECOND_FLAC_PATH]
 
 
 def test_manifest_row_schema_matches_the_registered_contract(tmp_path: Path) -> None:
