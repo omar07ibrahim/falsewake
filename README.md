@@ -19,13 +19,15 @@ selection is `reject` with `selected_threshold_milli: null`; the held-out
 LibriSpeech `test-clean` archive remains absent and unread.
 
 Experiment 002 is now registered as an iterative engineering response to that
-failure; no neural result is claimed yet. The fixed design is a 23,724-parameter
-causal depthwise-separable TCN with explicit ONNX state, a 995 ms receptive field,
-and deterministic CPU-only training. Its replay and deployment gates were frozen
-before the first experiment 002 model score on `dev-clean`. Because experiment 001
-already exposed the complete development curve and top errors, this is deliberately
-described as development—not a blind or independent evaluation. The full contract
-is in [docs/experiment-002.md](docs/experiment-002.md).
+failure. Its chunk-invariant streaming frontend and untrained PyTorch model are now
+implemented, but no trained checkpoint, neural score, ONNX artifact, or benchmark
+is claimed yet. The fixed design is a 23,724-parameter causal depthwise-separable
+TCN with explicit ONNX state, a 995 ms receptive field, and deterministic CPU-only
+training. Its replay and deployment gates were frozen before the first experiment
+002 model score on `dev-clean`. Because experiment 001 already exposed the complete
+development curve and top errors, this is deliberately described as
+development—not a blind or independent evaluation. The full contract is in
+[docs/experiment-002.md](docs/experiment-002.md).
 
 At the last threshold that preserves the registered 80% conditional-retention gate
 (`0.395`), the listener emits 1,895.7103 false events per scored hour. At the first
