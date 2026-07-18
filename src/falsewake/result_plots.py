@@ -1,4 +1,4 @@
-"""Render the reviewed experiment 000 clip metrics as static figures."""
+"""Render the reviewed experiment 000 and 001 results as static figures."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from matplotlib.axes import Axes  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 from matplotlib.ticker import PercentFormatter  # noqa: E402
 
+from falsewake import holdout
 from falsewake.linear_baseline import CLASS_ORDER
 
 BLUE = "#3A6EA5"
@@ -28,6 +29,24 @@ INK = "#1F2937"
 MUTED = "#5F6B7A"
 GRID = "#D9DEE7"
 BACKGROUND = "#FFFFFF"
+FEASIBILITY_BACKGROUND = "#FAFBFD"
+
+SAMPLES_PER_HOUR = 57_600_000
+FEASIBILITY_UTTERANCE_COUNT = 2_703
+FEASIBILITY_EXPOSURE_SAMPLES = 308_310_400
+FEASIBILITY_TARGET_CLIP_COUNT = 3_703
+FEASIBILITY_RETENTION_FRONTIER_MILLI = 395
+FEASIBILITY_NEGATIVE_FRONTIER_MILLI = 991
+FEASIBILITY_QUESTION = "Does any registered threshold meet both gates?"
+FEASIBILITY_SUBTITLE = (
+    "dev-clean 2,703 utterances / 5.35 scored hours; "
+    "Speech Commands validation 3,703 target clips"
+)
+FEASIBILITY_TAKEAWAY = (
+    "No\N{EM DASH}the \N{GREATER-THAN OR EQUAL TO}80% retention gate ends at "
+    "0.395 while the \N{LESS-THAN OR EQUAL TO}1 false-event/hour gate begins "
+    "at 0.991."
+)
 
 
 class ResultPlotError(ValueError):
@@ -51,6 +70,26 @@ class OpenSetRate:
     support: int
     color: str
     validation: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FeasibilityData:
+    """The exact registered gate states used by the experiment-001 figure."""
+
+    thresholds: tuple[float, ...]
+    retention_gate: tuple[bool, ...]
+    false_event_gate: tuple[bool, ...]
+    retention_frontier_milli: int
+    negative_frontier_milli: int
+    utterance_count: int
+    scored_exposure_samples: int
+    target_clip_count: int
+
+    @property
+    def scored_exposure_hours(self) -> float:
+        """Return the registered development exposure in scored hours."""
+
+        return self.scored_exposure_samples / SAMPLES_PER_HOUR
 
 
 def _mapping(value: object, *, name: str) -> dict[str, object]:
@@ -93,6 +132,114 @@ def load_metrics(path: Path) -> dict[str, object]:
     if metrics.get("threshold_metrics") != "not_evaluated":
         raise ResultPlotError("clip figures require unevaluated threshold metrics")
     return metrics
+
+
+def _load_bounded_replay_report(path: Path) -> bytes:
+    try:
+        with path.open("rb") as stream:
+            contents = stream.read(holdout.MAX_REPLAY_REPORT_BYTES + 1)
+    except OSError as error:
+        raise ResultPlotError(f"cannot load replay report: {error}") from error
+    if len(contents) > holdout.MAX_REPLAY_REPORT_BYTES:
+        raise ResultPlotError("replay report exceeds the registered size limit")
+    return contents
+
+
+def load_replay_feasibility(path: Path) -> FeasibilityData:
+    """Load and verify the canonical registered experiment-001 replay result."""
+
+    contents = _load_bounded_replay_report(path)
+    try:
+        recomputed_status, recomputed_threshold = holdout.recompute_selection(contents)
+    except holdout.HoldoutAccessError as error:
+        raise ResultPlotError(f"cannot validate replay report: {error}") from error
+    try:
+        document = _mapping(json.loads(contents), name="replay report")
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ResultPlotError(
+            f"cannot decode validated replay report: {error}"
+        ) from error
+
+    dev = _mapping(document.get("dev"), name="replay report dev")
+    positive = _mapping(
+        document.get("positive_validation"), name="replay report positive validation"
+    )
+    utterance_count = _integer(
+        dev.get("utterance_count"), name="dev.utterance_count"
+    )
+    exposure = _integer(
+        dev.get("scored_exposure_samples"), name="dev.scored_exposure_samples"
+    )
+    target_clip_count = _integer(
+        positive.get("target_example_count"),
+        name="positive_validation.target_example_count",
+    )
+    if (
+        utterance_count != FEASIBILITY_UTTERANCE_COUNT
+        or exposure != FEASIBILITY_EXPOSURE_SAMPLES
+        or target_clip_count != FEASIBILITY_TARGET_CLIP_COUNT
+    ):
+        raise ResultPlotError("replay report uses an unexpected experiment-001 cohort")
+
+    baseline = _integer(
+        positive.get("baseline_correct_count"),
+        name="positive_validation.baseline_correct_count",
+    )
+    raw_thresholds = _list(document.get("thresholds"), name="thresholds")
+    retention_gate: list[bool] = []
+    false_event_gate: list[bool] = []
+    for threshold, raw_row in enumerate(raw_thresholds):
+        row = _mapping(raw_row, name=f"threshold row {threshold}")
+        observed_threshold = _integer(
+            row.get("threshold_milli"),
+            name=f"threshold row {threshold}.threshold_milli",
+        )
+        if observed_threshold != threshold:
+            raise ResultPlotError("replay threshold axis is not the registered grid")
+        correct = _integer(
+            row.get("validation_correct_accept_count"),
+            name=f"threshold row {threshold}.validation_correct_accept_count",
+        )
+        events = _integer(
+            row.get("dev_event_count"),
+            name=f"threshold row {threshold}.dev_event_count",
+        )
+        retention_gate.append(correct * 5 >= baseline * 4)
+        false_event_gate.append(events * SAMPLES_PER_HOUR <= exposure)
+
+    retained = [index for index, passed in enumerate(retention_gate) if passed]
+    negative = [index for index, passed in enumerate(false_event_gate) if passed]
+    if not retained or not negative:
+        raise ResultPlotError("replay report does not contain both gate frontiers")
+    retention_frontier = retained[-1]
+    negative_frontier = negative[0]
+    if (
+        recomputed_status != "reject"
+        or recomputed_threshold is not None
+        or retention_frontier != FEASIBILITY_RETENTION_FRONTIER_MILLI
+        or negative_frontier != FEASIBILITY_NEGATIVE_FRONTIER_MILLI
+        or any(
+            retention and false_event
+            for retention, false_event in zip(
+                retention_gate, false_event_gate, strict=True
+            )
+        )
+    ):
+        raise ResultPlotError(
+            "replay report differs from the registered experiment-001 "
+            "feasibility result"
+        )
+
+    return FeasibilityData(
+        thresholds=tuple(index / 1_000 for index in range(len(raw_thresholds))),
+        retention_gate=tuple(retention_gate),
+        false_event_gate=tuple(false_event_gate),
+        retention_frontier_milli=retention_frontier,
+        negative_frontier_milli=negative_frontier,
+        utterance_count=utterance_count,
+        scored_exposure_samples=exposure,
+        target_clip_count=target_clip_count,
+    )
 
 
 def class_recall_data(metrics: dict[str, object]) -> tuple[ClassRecall, ...]:
@@ -185,18 +332,24 @@ def _style_axis(axis: Axes) -> None:
     axis.set_axisbelow(True)
 
 
-def _save(figure: Figure, output_stem: Path) -> None:
+def _save(
+    figure: Figure,
+    output_stem: Path,
+    *,
+    software: str = "FalseWake experiment 000",
+    background: str = BACKGROUND,
+) -> None:
     svg_path = output_stem.with_suffix(".svg")
     figure.savefig(
         output_stem.with_suffix(".png"),
         dpi=180,
-        facecolor=BACKGROUND,
-        metadata={"Software": "FalseWake experiment 000"},
+        facecolor=background,
+        metadata={"Software": software},
     )
     figure.savefig(
         svg_path,
-        facecolor=BACKGROUND,
-        metadata={"Creator": "FalseWake experiment 000", "Date": None},
+        facecolor=background,
+        metadata={"Creator": software, "Date": None},
     )
     plt.close(figure)
     try:
@@ -329,6 +482,132 @@ def plot_open_set(rows: Sequence[OpenSetRate], output_stem: Path) -> None:
     _save(figure, output_stem)
 
 
+def plot_replay_feasibility(data: FeasibilityData, output_stem: Path) -> None:
+    """Render the registered experiment-001 gate feasibility result."""
+
+    if (
+        len(data.thresholds) != 1_001
+        or len(data.retention_gate) != 1_001
+        or len(data.false_event_gate) != 1_001
+        or data.thresholds[0] != 0
+        or data.thresholds[-1] != 1
+    ):
+        raise ResultPlotError("feasibility figure requires the full threshold grid")
+    figure, axis = plt.subplots(figsize=(10.4, 6.0), layout="constrained")
+    figure.set_facecolor(FEASIBILITY_BACKGROUND)
+    axis.set_facecolor(FEASIBILITY_BACKGROUND)
+    retention = np.asarray(data.retention_gate, dtype=np.int8)
+    false_event = np.asarray(data.false_event_gate, dtype=np.int8)
+    axis.step(
+        data.thresholds,
+        retention,
+        where="post",
+        color=BLUE,
+        linestyle="-",
+        linewidth=2.7,
+        label="Retention gate \N{GREATER-THAN OR EQUAL TO}80%",
+    )
+    axis.step(
+        data.thresholds,
+        false_event,
+        where="post",
+        color=ORANGE,
+        linestyle="--",
+        linewidth=2.7,
+        label="False-event gate \N{LESS-THAN OR EQUAL TO}1/hour",
+    )
+    retention_frontier = data.retention_frontier_milli / 1_000
+    negative_frontier = data.negative_frontier_milli / 1_000
+    axis.axvline(
+        retention_frontier, color=BLUE, linestyle=":", linewidth=1.4, alpha=0.9
+    )
+    axis.axvline(
+        negative_frontier, color=ORANGE, linestyle=":", linewidth=1.4, alpha=0.9
+    )
+    axis.text(
+        retention_frontier - 0.012,
+        0.50,
+        "Retention frontier 0.395",
+        rotation=90,
+        ha="right",
+        va="center",
+        color=BLUE_DARK,
+        fontsize=8.5,
+        fontweight="bold",
+    )
+    axis.text(
+        negative_frontier - 0.012,
+        0.50,
+        "False-event frontier 0.991",
+        rotation=90,
+        ha="right",
+        va="center",
+        color=ORANGE,
+        fontsize=8.5,
+        fontweight="bold",
+    )
+    axis.text(
+        0.035,
+        0.92,
+        "Retention gate passes",
+        color=BLUE_DARK,
+        fontsize=9,
+        fontweight="bold",
+        bbox={"facecolor": FEASIBILITY_BACKGROUND, "edgecolor": "none", "pad": 2},
+    )
+    axis.text(
+        0.64,
+        0.08,
+        "False-event gate fails",
+        color=ORANGE,
+        fontsize=9,
+        fontweight="bold",
+        bbox={"facecolor": FEASIBILITY_BACKGROUND, "edgecolor": "none", "pad": 2},
+    )
+    axis.set_xlim(0, 1)
+    axis.set_ylim(-0.08, 1.08)
+    axis.set_xticks(np.linspace(0, 1, 11))
+    axis.set_xticklabels([f"{value:.1f}" for value in np.linspace(0, 1, 11)])
+    axis.set_yticks([0, 1], ["Fail", "Pass"])
+    axis.set_xlabel("Registered target-probability threshold", color=INK, fontsize=10)
+    axis.set_title(
+        f"{FEASIBILITY_QUESTION}\n{FEASIBILITY_SUBTITLE}",
+        loc="left",
+        color=INK,
+        fontsize=14,
+        pad=17,
+    )
+    axis.legend(frameon=False, loc="upper center", fontsize=9, ncols=2)
+    axis.text(
+        0,
+        -0.19,
+        FEASIBILITY_TAKEAWAY,
+        transform=axis.transAxes,
+        color=INK,
+        fontsize=9,
+        fontweight="bold",
+    )
+    axis.text(
+        0,
+        -0.25,
+        "No registered threshold overlaps both pass regions.",
+        transform=axis.transAxes,
+        color=MUTED,
+        fontsize=8.5,
+    )
+    axis.spines[["top", "right"]].set_visible(False)
+    axis.spines[["left", "bottom"]].set_color(MUTED)
+    axis.tick_params(colors=INK, labelsize=9)
+    axis.grid(True, color=GRID, linewidth=0.8, alpha=0.8)
+    axis.set_axisbelow(True)
+    _save(
+        figure,
+        output_stem,
+        software="FalseWake experiment 001",
+        background=FEASIBILITY_BACKGROUND,
+    )
+
+
 def render_result_plots(metrics_path: Path, output_directory: Path) -> None:
     """Render both registered result figures into an existing directory."""
 
@@ -348,9 +627,32 @@ def render_result_plots(metrics_path: Path, output_directory: Path) -> None:
     plot_open_set(open_set_data(metrics), output_directory / "experiment-000-open-set")
 
 
+def render_replay_feasibility(report_path: Path, output_directory: Path) -> None:
+    """Render the registered experiment-001 figure into an existing directory."""
+
+    if not output_directory.is_dir():
+        raise ResultPlotError(f"output directory does not exist: {output_directory}")
+    data = load_replay_feasibility(report_path)
+    with matplotlib.rc_context(
+        {
+            "font.family": "DejaVu Sans",
+            "svg.fonttype": "none",
+            "svg.hashsalt": "falsewake-experiment-001",
+        }
+    ):
+        plot_replay_feasibility(
+            data, output_directory / "experiment-001-gate-feasibility"
+        )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Render the reviewed experiment 000 clip figures."
+        description="Render the reviewed FalseWake result figures."
+    )
+    parser.add_argument(
+        "--replay-report",
+        type=Path,
+        help="also render the registered experiment 001 gate-feasibility figure",
     )
     parser.add_argument(
         "metrics",
@@ -365,11 +667,15 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Render both result figures from the exact checked-in metrics."""
+    """Render reviewed result figures from exact checked-in evidence."""
 
     arguments = _parser().parse_args(argv)
     try:
         render_result_plots(arguments.metrics, arguments.output_directory)
+        if arguments.replay_report is not None:
+            render_replay_feasibility(
+                arguments.replay_report, arguments.output_directory
+            )
     except ResultPlotError as error:
         print(f"result plotting failed: {error}")
         return 2
