@@ -1,0 +1,198 @@
+{
+  "authority": {
+    "frontend": {
+      "implementation": "src/falsewake/experiment_002_frontend.py",
+      "input": "one_exact_16000_sample_normalized_float32_waveform",
+      "output": "98_by_40_time_major_float32_complete_frames",
+      "scope": [
+        "normalization_statistics",
+        "training",
+        "validation",
+        "quantization_calibration",
+        "streaming_replay",
+        "frontend_plus_model_benchmark"
+      ],
+      "sha256": "fdfa2534080cfbea2143c5b87905e1ce43be0d1e4aad4503063506d15e6c65ca"
+    },
+    "legacy_batch_frontend": {
+      "implementation": "src/falsewake/features.py",
+      "role": "geometry_and_single_frame_equation_reference_only_not_an_experiment_002_feature_authority",
+      "runtime_probe": {
+        "different_float32_values": 72,
+        "maximum_absolute_difference": "0x1.0000000000000p-19",
+        "probe": "16000_samples_of_float32(0.31*sin(2*pi*731*i/16000)+0.17*cos(2*pi*1913*i/16000))",
+        "value_count": 3920
+      }
+    }
+  },
+  "feature_pipeline": {
+    "command_waveform": {
+      "clamp": {
+        "finite_gate": "require_every_waveform_gain_RMS_ratio_scale_product_and_sum_value_finite_before_clamp",
+        "operation": "numpy.clip(mixed_float32,numpy.float32(-1.0),numpy.float32(1.0))",
+        "output_dtype": "float32"
+      },
+      "gain": {
+        "factor": "numpy.float32(10.0 ** (gain_db_float64 / 20.0))",
+        "operation": "numpy.multiply(shifted,factor_float32,dtype=numpy.float32)",
+        "order": "draw_float64_then_compute_Python_float64_power_then_round_factor_once_to_float32_then_multiply"
+      },
+      "noise_mix": {
+        "addition": "numpy.add(gained,numpy.multiply(noise,scale_float32,dtype=numpy.float32),dtype=numpy.float32)",
+        "command_rms": "numpy.sqrt(numpy.sum(numpy.square(gained,dtype=numpy.float64),dtype=numpy.float64)/numpy.float64(16000))",
+        "noise_rms": "numpy.sqrt(numpy.sum(numpy.square(noise,dtype=numpy.float64),dtype=numpy.float64)/numpy.float64(16000))",
+        "ratio": "10.0 ** (snr_db_float64 / 20.0)",
+        "scale": "scale_float64=command_rms_float64/(noise_rms_float64*ratio_float64);scale_float32=numpy.float32(scale_float64)",
+        "zero_rules": "reject_zero_noise_RMS_before_testing_command_RMS;exact_zero_command_RMS_uses_positive_zero_float32_scale"
+      },
+      "pcm_decode": "convert_little_endian_int16_to_float32_then_numpy.divide_by_numpy.float32(32768.0)_with_dtype_float32",
+      "right_pad": "copy_0_through_16000_decoded_samples_into_a_positive_zero_initialized_float32_length_16000_array;reject_longer_commands",
+      "shift": "create_positive_zero_float32_length_16000_output_then_copy_the_exact_nonwrapped_slice;positive_shift_delays_audio_and_negative_shift_advances_audio"
+    },
+    "frontend": {
+      "call": "falsewake.experiment_002_frontend.complete_log_mel_frames",
+      "input_shape": [
+        16000
+      ],
+      "output_layout": "time_major",
+      "output_shape": [
+        98,
+        40
+      ]
+    },
+    "masking": {
+      "draw_order": "width_then_start_for_time_then_width_then_start_for_mel_using_separate_registered_domains",
+      "fill": "positive_zero_float32_after_global_normalization",
+      "mel": "width=uniform_integer(bound=5);start=uniform_integer(bound=40-width+1);always_draw_start_even_when_width_is_zero",
+      "order": [
+        "time",
+        "mel"
+      ],
+      "time": "width=uniform_integer(bound=11);start=uniform_integer(bound=98-width+1);always_draw_start_even_when_width_is_zero"
+    },
+    "normalization": {
+      "application": "numpy.subtract(log_mel,means,dtype=numpy.float32)_then_numpy.divide(centered,standard_deviations,dtype=numpy.float32)",
+      "statistics": "the_existing_registered_float64_scalar_sum_and_sumsq_accumulator_over_unaugmented_training_commands_using_the_authoritative_streaming_frontend",
+      "validation": "require_finite_float32_output"
+    },
+    "output": {
+      "dtype": "little_endian_float32",
+      "operation": "numpy.ascontiguousarray(masked_time_major.T,dtype=numpy.float32)",
+      "shape": [
+        40,
+        98
+      ]
+    },
+    "silence_waveform": {
+      "operations": [
+        "decode_selected_exact_16000_sample_training_background_window",
+        "gain_with_the_same_float64_to_float32_semantics_as_commands",
+        "finite_gate",
+        "float32_clamp",
+        "authoritative_streaming_frontend",
+        "global_float32_normalization",
+        "time_mask",
+        "mel_mask",
+        "C_contiguous_transpose"
+      ],
+      "prohibited_operations": [
+        "command_shift",
+        "additional_noise_mix"
+      ]
+    },
+    "unaugmented_paths": {
+      "quantization_calibration": "no_shift_no_gain_no_noise_no_masks_and_no_augmentation_RNG",
+      "training_normalization": "all_registered_training_commands_no_shift_no_gain_no_noise_no_masks_and_no_augmentation_RNG",
+      "validation": "no_shift_no_gain_no_noise_no_masks_and_no_augmentation_RNG"
+    }
+  },
+  "golden_vectors": {
+    "command": {
+      "draws": {
+        "gain_db_float64_hex": "0x1.705407fc3f460p+2",
+        "gain_factor_float32_bits": "0x3ff84b4b",
+        "mel_mask_start": 32,
+        "mel_mask_width": 1,
+        "noise_apply": true,
+        "noise_apply_float64_hex": "0x1.150a5f42ca39bp-1",
+        "noise_universe_index": 3263409,
+        "noise_window": {
+          "path": "_background_noise_/exercise_bike.wav",
+          "start_sample": 783586
+        },
+        "shift_samples": 698,
+        "snr_db_float64_hex": "0x1.513d21f53c3a6p+2",
+        "time_mask_start": 3,
+        "time_mask_width": 8
+      },
+      "epoch": 0,
+      "identity": "yes/alice_nohash_0.wav",
+      "intermediates": {
+        "clamped_float32_sha256": "8692de6bacedd9036a87198ca5ff79cb0c063b91faab7096278003f1a1814d97",
+        "command_rms_float64_hex": "0x1.1861ef539a7f7p+0",
+        "gained_float32_sha256": "56d15f0adbe96a2404092c9851c2cf0c909ad6c9f3ed2d4287886fb53da8405c",
+        "masked_identity_normalized_98_by_40_float32_sha256": "248ff58e8b115466554207a167b70ec2de0f381d59401c063e4396efef163d0b",
+        "noise_rms_float64_hex": "0x1.279b057f41b65p-1",
+        "padded_float32_sha256": "67bd4c468f075866c022cacc4bd2173fa41f0076592818f75b13afe55da5e9b1",
+        "scale_float32_bits": "0x3f84605c",
+        "scale_float64_hex": "0x1.08c0b73b4aab6p+0",
+        "shifted_float32_sha256": "c2bf618daf0a8d6f18a24926fefc901b8555a3cce6b158bac3d55a1c2efa8b1e",
+        "streaming_frontend_98_by_40_float32_sha256": "643d7b38c4940e938543662b99619550363b02e10bf3b542d0f6bf23e093af86",
+        "transposed_C_contiguous_40_by_98_float32_sha256": "e37f2d9b85a90eeb6639c855a668d0c00df524f423edcd9302fc9570700fa8ad"
+      },
+      "noise": {
+        "generator": "int16(((i*3571+22222)%65536)-32768)",
+        "sample_count": 16000
+      },
+      "pcm": {
+        "generator": "int16(((i*7919+12345)%65536)-32768)",
+        "sample_count": 15997
+      },
+      "seed": 20260719
+    },
+    "noise_not_applied": {
+      "draw_float64_hex": "0x1.b7d9757ce0920p-1",
+      "epoch": 0,
+      "identity": "yes/golden_nohash_0.wav",
+      "probability": 0.8,
+      "result": false,
+      "seed": 20260719
+    },
+    "silence": {
+      "epoch": 0,
+      "gain_db_float64_hex": "0x1.a86cb6e683940p+0",
+      "gain_factor_float32_bits": "0x3f9aeb55",
+      "identity": "_background_noise_/pink_noise.wav:12345",
+      "mel_mask_start": 27,
+      "mel_mask_width": 3,
+      "seed": 20260719,
+      "time_mask_start": 44,
+      "time_mask_width": 7
+    },
+    "zero_width_masks": {
+      "epoch": 0,
+      "identity": "yes/golden_nohash_54.wav",
+      "mel_mask_start": 39,
+      "mel_mask_width": 0,
+      "seed": 20260719,
+      "time_mask_start": 20,
+      "time_mask_width": 0
+    }
+  },
+  "identity": {
+    "bound_sources": {
+      "src/falsewake/experiment_002_frontend.py": "fdfa2534080cfbea2143c5b87905e1ce43be0d1e4aad4503063506d15e6c65ca",
+      "src/falsewake/experiment_002_normalization.py": "73bbe76aab35d352d2b702f67480f93645eb09cbd7627a9fafde86d3ecb69a81",
+      "src/falsewake/experiment_002_rng.py": "174e445b47d6da586ae92ea3c4a694966bb6e2acdc2be92f31c1a7023a0fcd4e"
+    },
+    "interpretation_phase": "committed_after_model_implementation_but_before_normalization_artifact_feature_cache_training_export_benchmark_or_experiment_002_metrics",
+    "phase_1_training_config_sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a",
+    "purpose": "resolve_pre_result_numeric_ambiguities_without_modifying_the_original_phase_1_preregistration"
+  },
+  "runtime": {
+    "floating_authority": "CPython_3.12.3_float_operations_and_power_using_the_host_libm_plus_NumPy_2.5.1_explicit_dtype_operations_and_the_bound_source_bytes",
+    "numpy": "2.5.1",
+    "python": "3.12.3"
+  },
+  "schema_version": 1
+}

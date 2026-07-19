@@ -124,6 +124,19 @@ filled with normalized zero. Silence starts from a selected training-background
 segment and receives the same gain and feature masking, but no shift or second
 noise mix.
 
+The original phase-1 contract intentionally remains byte-for-byte unchanged. Its
+prose did not fully determine several last-bit choices in PCM conversion, gain,
+RMS/SNR mixing, masking, and frontend execution, so the supplemental
+[configs/experiment-002-numerics.json](../configs/experiment-002-numerics.json)
+closes those ambiguities with executable golden vectors. This interpretation was
+committed after the model implementation, but before the normalization artifact,
+feature cache, training, export, benchmark, or any Experiment 002 metric existed.
+It binds the then-current phase-1 config and numeric source bytes. For every
+Experiment 002 feature-producing path, the chunk-invariant streaming frontend is
+the numeric authority; the legacy batched frontend remains only a geometry and
+single-frame equation reference. Validation, normalization-statistics collection,
+and quantization calibration are unaugmented and consume no augmentation RNG.
+
 Three registered seeds each train from scratch for 30 epochs on CPU `float32`.
 There are exactly 313 batches per epoch and 9,390 optimizer updates. AdamW, label
 smoothing, gradient clipping, one linear warmup epoch, and the remaining cosine
