@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 from pathlib import Path
 from typing import NoReturn, cast
@@ -8,6 +9,7 @@ from typing import NoReturn, cast
 import numpy as np
 import pytest
 
+import falsewake.experiment_002_normalization_artifact as normalization_artifact
 import falsewake.experiment_002_preprocessing as preprocessing
 from falsewake.experiment_002_data import (
     BackgroundSource,
@@ -17,7 +19,8 @@ from falsewake.experiment_002_data import (
     Experiment002DataError,
     WindowExample,
 )
-from falsewake.experiment_002_normalization import NormalizationStats
+from falsewake.experiment_002_normalization import NormalizationStats, serialize_stats
+from falsewake.experiment_002_normalization_artifact import VerifiedNormalization
 from falsewake.experiment_002_pcm_cache import PCMCacheSplitView
 from falsewake.experiment_002_preprocessing import (
     Experiment002PreprocessingError,
@@ -147,6 +150,21 @@ def _identity_stats() -> NormalizationStats:
     )
 
 
+def _verified_normalization(
+    stats: NormalizationStats | None = None,
+) -> VerifiedNormalization:
+    contents = serialize_stats(_identity_stats() if stats is None else stats)
+    identity = normalization_artifact.NormalizationArtifactIdentity(
+        byte_count=len(contents),
+        sha256=hashlib.sha256(contents).hexdigest(),
+    )
+    return normalization_artifact._issue_verified_normalization(
+        contents,
+        identity,
+        normalization_artifact._REGISTERED_LAYOUT,
+    )
+
+
 def _sha256_float32(values: FloatArray) -> str:
     contents = values.astype("<f4", copy=False).tobytes(order="C")
     return hashlib.sha256(contents).hexdigest()
@@ -156,7 +174,7 @@ def _allow_synthetic_context(
     monkeypatch: pytest.MonkeyPatch,
     corpus: Experiment002Corpus,
     cache: _FakeTrainingCache,
-    stats: NormalizationStats | None = None,
+    normalization: VerifiedNormalization | None = None,
 ) -> Experiment002TrainingPreprocessor:
     monkeypatch.setattr(
         preprocessing,
@@ -167,7 +185,7 @@ def _allow_synthetic_context(
     return Experiment002TrainingPreprocessor(
         corpus,
         cast(PCMCacheSplitView, cache),
-        _identity_stats() if stats is None else stats,
+        _verified_normalization() if normalization is None else normalization,
     )
 
 
@@ -189,6 +207,7 @@ def test_module_has_one_validated_cache_bound_training_context() -> None:
     }
 
     assert "falsewake.experiment_002_pcm_cache" in imported
+    assert "falsewake.experiment_002_normalization_artifact" in imported
     assert "_require_registered_training_corpus" in source
     assert "_train_command_sources" in source
     assert "NoiseWindowLoader" not in source
@@ -392,7 +411,7 @@ def test_zero_width_masks_still_draw_both_start_positions(
         seed=SEED,
         epoch=0,
     )
-    unaugmented = unaugmented_model_input(waveform, stats)
+    unaugmented = unaugmented_model_input(waveform, _verified_normalization(stats))
 
     assert observed_domains == [
         "command-time-width",
@@ -457,7 +476,10 @@ def test_unaugmented_paths_consume_no_augmentation_rng(
     monkeypatch.setattr(preprocessing, "bernoulli", forbidden)
 
     log_mel = unaugmented_log_mel(waveform)
-    model_input = unaugmented_model_input(waveform, stats)
+    model_input = unaugmented_model_input(
+        waveform,
+        _verified_normalization(stats),
+    )
     assert log_mel.shape == (98, 40)
     assert model_input.shape == (40, 98)
     assert model_input.tobytes() == np.ascontiguousarray(log_mel.T).tobytes()
@@ -480,7 +502,7 @@ def test_context_rejects_forgeable_corpus_before_cache_access(
         Experiment002TrainingPreprocessor(
             corpus,
             cast(PCMCacheSplitView, cache),
-            _identity_stats(),
+            _verified_normalization(),
         )
     assert cache.command_reads == []
     assert cache.window_reads == []
@@ -504,16 +526,29 @@ def test_context_validates_once_then_uses_constant_time_membership(
         {},
     )
     validations: list[Experiment002Corpus] = []
+    normalization_validations: list[VerifiedNormalization] = []
+    normalization = _verified_normalization()
+    original_verify = normalization_artifact.verify_registered_normalization
     monkeypatch.setattr(preprocessing, "PCMCacheSplitView", _FakeTrainingCache)
     monkeypatch.setattr(
         preprocessing,
         "_require_registered_training_corpus",
         validations.append,
     )
+
+    def record_normalization(candidate: VerifiedNormalization) -> None:
+        normalization_validations.append(candidate)
+        original_verify(candidate)
+
+    monkeypatch.setattr(
+        preprocessing,
+        "verify_registered_normalization",
+        record_normalization,
+    )
     processor = Experiment002TrainingPreprocessor(
         corpus,
         cast(PCMCacheSplitView, cache),
-        _identity_stats(),
+        normalization,
     )
     monkeypatch.setattr(
         preprocessing,
@@ -525,6 +560,7 @@ def test_context_validates_once_then_uses_constant_time_membership(
     processor.command_waveform(_command_example(command), seed=SEED, epoch=0)
 
     assert validations == [corpus]
+    assert normalization_validations == [normalization]
     assert processor._train_commands is corpus._train_command_sources
     assert isinstance(processor._train_backgrounds, frozenset)
 
@@ -546,12 +582,23 @@ def test_context_snapshots_normalization_parameters(
     )
     expected_means = stats.means.copy()
     expected_deviations = stats.standard_deviations.copy()
-    processor = _allow_synthetic_context(monkeypatch, corpus, cache, stats)
+    normalization = _verified_normalization(stats)
+    processor = _allow_synthetic_context(
+        monkeypatch,
+        corpus,
+        cache,
+        normalization,
+    )
 
     stats.means.flags.writeable = True
     stats.standard_deviations.flags.writeable = True
     stats.means[:] = np.float32(99.0)
     stats.standard_deviations[:] = np.float32(77.0)
+    exposed = normalization.stats
+    exposed.means.flags.writeable = True
+    exposed.standard_deviations.flags.writeable = True
+    exposed.means[:] = np.float32(-55.0)
+    exposed.standard_deviations[:] = np.float32(66.0)
 
     np.testing.assert_array_equal(processor._stats.means, expected_means)
     np.testing.assert_array_equal(
@@ -560,6 +607,85 @@ def test_context_snapshots_normalization_parameters(
     )
     assert not processor._stats.means.flags.writeable
     assert not processor._stats.standard_deviations.flags.writeable
+    np.testing.assert_array_equal(normalization.stats.means, expected_means)
+    np.testing.assert_array_equal(
+        normalization.stats.standard_deviations,
+        expected_deviations,
+    )
+    assert not np.shares_memory(processor._stats.means, exposed.means)
+
+
+def test_context_and_unaugmented_path_reject_unverified_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command_source()
+    background = BackgroundSource(
+        "_background_noise_/room.wav",
+        16_000,
+        BACKGROUND_SHA256,
+    )
+    corpus = _corpus(command, background)
+    cache = _FakeTrainingCache({}, {})
+    genuine = _verified_normalization()
+    copied = copy.copy(genuine)
+    forged = object.__new__(VerifiedNormalization)
+    object.__setattr__(forged, "_contents", genuine.contents)
+    object.__setattr__(forged, "_identity", genuine.identity)
+    object.__setattr__(forged, "_clip_count", genuine.clip_count)
+    object.__setattr__(forged, "_frame_count", genuine.frame_count)
+    wrong_population = normalization_artifact._issue_verified_normalization(
+        genuine.contents,
+        genuine.identity,
+        normalization_artifact._NormalizationLayout(
+            clip_count=1,
+            frames_per_clip=98,
+        ),
+    )
+    monkeypatch.setattr(preprocessing, "PCMCacheSplitView", _FakeTrainingCache)
+    monkeypatch.setattr(
+        preprocessing,
+        "_require_registered_training_corpus",
+        lambda observed: None,
+    )
+
+    with pytest.raises(TypeError, match="VerifiedNormalization"):
+        Experiment002TrainingPreprocessor(
+            corpus,
+            cast(PCMCacheSplitView, cache),
+            cast(VerifiedNormalization, _identity_stats()),
+        )
+
+    for candidate in (copied, forged, wrong_population):
+        with pytest.raises(
+            normalization_artifact.Experiment002NormalizationArtifactError,
+            match="issued|capability|population|counts",
+        ):
+            Experiment002TrainingPreprocessor(
+                corpus,
+                cast(PCMCacheSplitView, cache),
+                candidate,
+            )
+
+    def forbidden_frontend(_waveform: FloatArray) -> NoReturn:
+        raise AssertionError("unverified normalization reached the frontend")
+
+    monkeypatch.setattr(
+        preprocessing,
+        "complete_log_mel_frames",
+        forbidden_frontend,
+    )
+    waveform = np.zeros(16_000, dtype=np.float32)
+    with pytest.raises(TypeError, match="VerifiedNormalization"):
+        unaugmented_model_input(
+            waveform,
+            cast(VerifiedNormalization, _identity_stats()),
+        )
+    for candidate in (copied, forged, wrong_population):
+        with pytest.raises(
+            normalization_artifact.Experiment002NormalizationArtifactError,
+            match="issued|capability|population|counts",
+        ):
+            unaugmented_model_input(waveform, candidate)
 
 
 def test_context_requires_concrete_training_split_view(
@@ -582,16 +708,27 @@ def test_context_requires_concrete_training_split_view(
         Experiment002TrainingPreprocessor(
             corpus,
             cast(PCMCacheSplitView, object()),
-            _identity_stats(),
+            _verified_normalization(),
         )
 
     monkeypatch.setattr(preprocessing, "PCMCacheSplitView", _FakeTrainingCache)
+
+    class CacheSubclass(_FakeTrainingCache):
+        pass
+
+    with pytest.raises(TypeError, match="PCMCacheSplitView"):
+        Experiment002TrainingPreprocessor(
+            corpus,
+            cast(PCMCacheSplitView, CacheSubclass({}, {})),
+            _verified_normalization(),
+        )
+
     validation_cache = _FakeTrainingCache({}, {}, split="validation")
     with pytest.raises(Experiment002PreprocessingError, match="training cache"):
         Experiment002TrainingPreprocessor(
             corpus,
             cast(PCMCacheSplitView, validation_cache),
-            _identity_stats(),
+            _verified_normalization(),
         )
 
 

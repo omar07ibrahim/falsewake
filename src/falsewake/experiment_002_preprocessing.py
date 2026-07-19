@@ -22,6 +22,10 @@ from falsewake.experiment_002_normalization import (
     NormalizationStats,
     normalize_log_mel,
 )
+from falsewake.experiment_002_normalization_artifact import (
+    VerifiedNormalization,
+    verify_registered_normalization,
+)
 from falsewake.experiment_002_pcm_cache import PCMCacheSplitView
 from falsewake.experiment_002_rng import bernoulli, uniform_integer, uniform_real
 from falsewake.features import FloatArray
@@ -54,23 +58,21 @@ class Experiment002TrainingPreprocessor:
         self,
         corpus: Experiment002Corpus,
         cache: PCMCacheSplitView,
-        stats: NormalizationStats,
+        normalization: VerifiedNormalization,
     ) -> None:
         _require_registered_training_corpus(corpus)
-        if not isinstance(cache, PCMCacheSplitView):
+        if type(cache) is not PCMCacheSplitView:
             raise TypeError("cache must be a PCMCacheSplitView")
         if cache.split != "train":
             raise Experiment002PreprocessingError(
                 "training preprocessing requires the training cache view"
             )
-        if not isinstance(stats, NormalizationStats):
-            raise TypeError("stats must be NormalizationStats")
+        if type(normalization) is not VerifiedNormalization:
+            raise TypeError("normalization must be a VerifiedNormalization")
+        verify_registered_normalization(normalization)
         self._corpus = corpus
         self._cache = cache
-        self._stats = NormalizationStats(
-            means=stats.means,
-            standard_deviations=stats.standard_deviations,
-        )
+        self._stats = normalization.stats
         self._train_commands = corpus._train_command_sources
         self._train_backgrounds = frozenset(corpus.train_backgrounds)
 
@@ -262,10 +264,14 @@ def _training_model_input(
 
 def unaugmented_model_input(
     waveform: FloatArray,
-    stats: NormalizationStats,
+    normalization: VerifiedNormalization,
 ) -> FloatArray:
     """Normalize and transpose a validation, calibration, or replay clip."""
 
+    if type(normalization) is not VerifiedNormalization:
+        raise TypeError("normalization must be a VerifiedNormalization")
+    verify_registered_normalization(normalization)
+    stats = normalization.stats
     normalized = normalize_log_mel(unaugmented_log_mel(waveform), stats)
     return _model_layout(normalized)
 
