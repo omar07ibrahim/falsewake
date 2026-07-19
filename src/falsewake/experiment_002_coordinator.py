@@ -13,17 +13,21 @@ has been verified and claimed for its single dispatch.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import hashlib
 import importlib
 import json
 import os
 import secrets
 import socket
+import stat
 import struct
 import threading
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from types import FunctionType, ModuleType
 from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 from falsewake.experiment_002_run_authority import (
@@ -46,13 +50,23 @@ _SEED_ROLE: Final = "training_seed"
 _RERUN_ROLE: Final = "selected_seed_rerun"
 _WORKER_MODULE: Final = "falsewake.experiment_002_seed_worker"
 _WORKER_FUNCTION: Final = "run_registered_seed_process"
+_PROCESS_GUARD_MODULE: Final = "falsewake.experiment_002_process_guard"
+_PROCESS_GUARD_GETTER: Final = "get_registered_child_process_guard"
+_PROCESS_GUARD_VERIFIER: Final = "verify_verified_child_process_guard"
 _SCHEMA_VERSION: Final = 1
 _FRAME_MAGIC: Final = b"FW2ACTV1"
 _FRAME_HEADER: Final = struct.Struct(">8sI")
 _CREDENTIALS: Final = struct.Struct("=3i")
+_RIGHT_DESCRIPTOR: Final = struct.Struct("=i")
+_MAX_RIGHT_DESCRIPTORS: Final = 253
+_RECEIVE_CLOEXEC: Final = int(socket.MSG_CMSG_CLOEXEC)
+_ANCILLARY_BYTES: Final = socket.CMSG_SPACE(_CREDENTIALS.size) + socket.CMSG_SPACE(
+    _RIGHT_DESCRIPTOR.size * _MAX_RIGHT_DESCRIPTORS
+)
 _MAX_JSON_BYTES: Final = 3_072
 _MAX_PACKET_BYTES: Final = _FRAME_HEADER.size + _MAX_JSON_BYTES
 _PROTOCOL_TIMEOUT_SECONDS: Final = 30.0
+_CONTROL_STATUS_FLAGS: Final = os.O_RDWR | os.O_NONBLOCK
 _TICKET_DIGEST_DOMAIN: Final = b"falsewake-exp002-activation-ticket-v1\0"
 _LOWER_HEX: Final = frozenset("0123456789abcdef")
 _ACTIVATION_MARKER: Final = object()
@@ -134,6 +148,39 @@ class _PeerCredentials:
 
 
 @dataclass(frozen=True, slots=True)
+class _ReceivedPacket:
+    packet: bytes
+    credentials: _PeerCredentials
+    address: object
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlChannelFrame:
+    channel: socket.socket
+    descriptor: int
+    stat_frame: tuple[int, ...]
+    descriptor_flags: int
+    status_flags: int
+    socket_type: int
+    passcred: int
+    timeout: float
+    local_name: str
+    peer_name: str
+    proc_target: str
+
+
+class _ProcessGuardVerifier(Protocol):
+    def __call__(self, guard: object, /) -> None:
+        """Reverify the exact imported child process guard."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessGuardBinding:
+    guard: object
+    verifier: _ProcessGuardVerifier
+
+
+@dataclass(frozen=True, slots=True)
 class _Ticket:
     assignment: _Assignment
     parent_pid: int
@@ -154,6 +201,8 @@ class _ActivationState:
     ordinal: int
     nonce: str
     ticket_sha256: str
+    process_guard: object
+    process_guard_verifier: _ProcessGuardVerifier
     token: object
     phase: int
 
@@ -170,6 +219,8 @@ class _ActivationGuard:
     ordinal: int
     nonce: str
     ticket_sha256: str
+    process_guard: object
+    process_guard_verifier: _ProcessGuardVerifier
     token: object
     phase: int
 
@@ -186,6 +237,8 @@ class _ActivationAnchor:
     ordinal: int
     nonce: str
     ticket_sha256: str
+    process_guard: object
+    process_guard_verifier: _ProcessGuardVerifier
     token: object
 
 
@@ -204,9 +257,12 @@ class _TrustedActivationAnchor:
     activation_ref: weakref.ReferenceType[VerifiedChildActivation]
     registration: VerifiedRunRegistration
     ticket: _Ticket
+    ticket_frame: tuple[str, int, int, int, int, str, str]
     receipt: _AcceptedTicketReceipt
     receipt_token: object
     activation_token: object
+    process_guard: object
+    process_guard_verifier: _ProcessGuardVerifier
     process_id: int
     marker: object
 
@@ -253,6 +309,8 @@ def _make_trusted_protocol_ledger() -> tuple[
             VerifiedChildActivation,
             VerifiedRunRegistration,
             object,
+            object,
+            _ProcessGuardVerifier,
         ],
         None,
     ],
@@ -270,7 +328,8 @@ def _make_trusted_protocol_ledger() -> tuple[
     accepted_nonces: set[str] = set()
     accepted_digests: set[str] = set()
     receipt_records: weakref.WeakKeyDictionary[
-        _AcceptedTicketReceipt, tuple[_Ticket, object]
+        _AcceptedTicketReceipt,
+        tuple[_Ticket, object, tuple[str, int, int, int, int, str, str]],
     ] = weakref.WeakKeyDictionary()
     consumed_receipts: weakref.WeakSet[_AcceptedTicketReceipt] = weakref.WeakSet()
     issuance_anchors: weakref.WeakKeyDictionary[
@@ -280,6 +339,41 @@ def _make_trusted_protocol_ledger() -> tuple[
     completed: weakref.WeakSet[VerifiedChildActivation] = weakref.WeakSet()
     failed: weakref.WeakSet[VerifiedChildActivation] = weakref.WeakSet()
     ledger_lock = threading.RLock()
+
+    def ticket_frame(
+        ticket: _Ticket,
+    ) -> tuple[str, int, int, int, int, str, str]:
+        _require_ticket(ticket)
+        return (
+            ticket.assignment.role,
+            ticket.assignment.seed,
+            ticket.assignment.ordinal,
+            ticket.parent_pid,
+            ticket.child_pid,
+            ticket.nonce,
+            ticket.packet_sha256,
+        )
+
+    def exact_ticket_frames_match(
+        first: object,
+        second: object,
+    ) -> bool:
+        if (
+            type(first) is not tuple
+            or type(second) is not tuple
+            or len(first) != 7
+            or len(second) != 7
+            or type(first[0]) is not str
+            or type(second[0]) is not str
+            or any(type(first[index]) is not int for index in range(1, 5))
+            or any(type(second[index]) is not int for index in range(1, 5))
+            or type(first[5]) is not str
+            or type(second[5]) is not str
+            or type(first[6]) is not str
+            or type(second[6]) is not str
+        ):
+            return False
+        return all(first[index] == second[index] for index in range(7))
 
     def reserve_issued(nonce: str, digest: str) -> None:
         with ledger_lock:
@@ -292,15 +386,15 @@ def _make_trusted_protocol_ledger() -> tuple[
 
     def accept_ticket(ticket: _Ticket) -> _AcceptedTicketReceipt:
         with ledger_lock:
-            if (
-                ticket.nonce in accepted_nonces
-                or ticket.packet_sha256 in accepted_digests
-            ):
+            accepted_frame = ticket_frame(ticket)
+            accepted_nonce = accepted_frame[5]
+            accepted_digest = accepted_frame[6]
+            if accepted_nonce in accepted_nonces or accepted_digest in accepted_digests:
                 raise Experiment002CoordinatorError("activation ticket was replayed")
-            accepted_nonces.add(ticket.nonce)
-            accepted_digests.add(ticket.packet_sha256)
+            accepted_nonces.add(accepted_nonce)
+            accepted_digests.add(accepted_digest)
             receipt = object.__new__(_AcceptedTicketReceipt)
-            receipt_records[receipt] = (ticket, object())
+            receipt_records[receipt] = (ticket, object(), accepted_frame)
             return receipt
 
     def record_issuance(
@@ -309,6 +403,8 @@ def _make_trusted_protocol_ledger() -> tuple[
         activation: VerifiedChildActivation,
         registration: VerifiedRunRegistration,
         activation_token: object,
+        process_guard: object,
+        process_guard_verifier: _ProcessGuardVerifier,
     ) -> None:
         with ledger_lock:
             if type(receipt) is not _AcceptedTicketReceipt:
@@ -316,10 +412,15 @@ def _make_trusted_protocol_ledger() -> tuple[
                     "activation lacks an exact accepted-ticket receipt"
                 )
             receipt_record = receipt_records.get(receipt)
+            try:
+                current_frame = ticket_frame(ticket)
+            except (TypeError, Experiment002CoordinatorError):
+                current_frame = None
             if (
                 receipt_record is None
                 or receipt in consumed_receipts
-                or receipt_record[0] != ticket
+                or receipt_record[0] is not ticket
+                or not exact_ticket_frames_match(current_frame, receipt_record[2])
                 or activation in issuance_anchors
             ):
                 raise Experiment002CoordinatorError(
@@ -330,9 +431,12 @@ def _make_trusted_protocol_ledger() -> tuple[
                 activation_ref=weakref.ref(activation),
                 registration=registration,
                 ticket=ticket,
+                ticket_frame=receipt_record[2],
                 receipt=receipt,
                 receipt_token=receipt_record[1],
                 activation_token=activation_token,
+                process_guard=process_guard,
+                process_guard_verifier=process_guard_verifier,
                 process_id=os.getpid(),
                 marker=_ACTIVATION_MARKER,
             )
@@ -340,14 +444,17 @@ def _make_trusted_protocol_ledger() -> tuple[
     def receipt_linked(
         activation: VerifiedChildActivation,
         anchor: _TrustedActivationAnchor,
+        current_frame: object,
     ) -> bool:
         receipt_record = receipt_records.get(anchor.receipt)
         return (
             anchor.activation_ref() is activation
             and anchor.receipt in consumed_receipts
             and receipt_record is not None
-            and receipt_record[0] == anchor.ticket
+            and receipt_record[0] is anchor.ticket
             and receipt_record[1] is anchor.receipt_token
+            and exact_ticket_frames_match(receipt_record[2], anchor.ticket_frame)
+            and exact_ticket_frames_match(current_frame, anchor.ticket_frame)
         )
 
     def lifecycle_phase(activation: VerifiedChildActivation) -> int | None:
@@ -368,15 +475,19 @@ def _make_trusted_protocol_ledger() -> tuple[
             is_failed = activation in failed
             if anchor is None:
                 return None, is_failed, False
-            linked = receipt_linked(activation, anchor)
             phase = lifecycle_phase(activation)
+            try:
+                current_frame = ticket_frame(anchor.ticket)
+            except (TypeError, Experiment002CoordinatorError):
+                return phase, is_failed, False
+            linked = receipt_linked(activation, anchor, current_frame)
             if type(state) is not _ActivationState:
                 return phase, is_failed, False
             try:
                 _require_ticket(anchor.ticket)
             except (TypeError, Experiment002CoordinatorError):
                 return phase, is_failed, False
-            ticket = anchor.ticket
+            trusted_ticket_frame = anchor.ticket_frame
             matches = (
                 anchor.registration is state.registration
                 and anchor.process_id == os.getpid()
@@ -387,13 +498,19 @@ def _make_trusted_protocol_ledger() -> tuple[
                 and type(anchor.receipt_token) is object
                 and type(anchor.activation_token) is object
                 and anchor.activation_token is state.token
-                and ticket.parent_pid == state.parent_pid
-                and ticket.child_pid == state.child_pid
-                and ticket.assignment.role == state.role
-                and ticket.assignment.seed == state.seed
-                and ticket.assignment.ordinal == state.ordinal
-                and ticket.nonce == state.nonce
-                and ticket.packet_sha256 == state.ticket_sha256
+                and anchor.process_guard is state.process_guard
+                and anchor.process_guard_verifier is state.process_guard_verifier
+                and exact_ticket_frames_match(
+                    current_frame,
+                    trusted_ticket_frame,
+                )
+                and trusted_ticket_frame[0] == state.role
+                and trusted_ticket_frame[1] == state.seed
+                and trusted_ticket_frame[2] == state.ordinal
+                and trusted_ticket_frame[3] == state.parent_pid
+                and trusted_ticket_frame[4] == state.child_pid
+                and trusted_ticket_frame[5] == state.nonce
+                and trusted_ticket_frame[6] == state.ticket_sha256
             )
             return phase, is_failed, linked and matches
 
@@ -405,10 +522,16 @@ def _make_trusted_protocol_ledger() -> tuple[
         with ledger_lock:
             anchor = issuance_anchors.get(activation)
             phase = lifecycle_phase(activation)
+            try:
+                current_frame = (
+                    ticket_frame(anchor.ticket) if anchor is not None else None
+                )
+            except (TypeError, Experiment002CoordinatorError):
+                current_frame = None
             if (
                 anchor is None
                 or activation in failed
-                or not receipt_linked(activation, anchor)
+                or not receipt_linked(activation, anchor, current_frame)
                 or phase != expected_phase
             ):
                 failed.add(activation)
@@ -468,13 +591,23 @@ def verify_verified_child_activation(
     if type(registration) is not VerifiedRunRegistration:
         raise TypeError("registration must be an exact VerifiedRunRegistration")
     state = _activation_state(activation)
-    if state.registration is not registration:
-        _poison_activation(activation)
-        raise Experiment002CoordinatorError(
-            "child activation belongs to a different run registration"
-        )
     try:
+        if state.registration is not registration:
+            raise Experiment002CoordinatorError(
+                "child activation belongs to a different run registration"
+            )
         verify_verified_run_registration(registration)
+        _require_process_guard_binding(
+            _ProcessGuardBinding(
+                guard=state.process_guard,
+                verifier=state.process_guard_verifier,
+            )
+        )
+        final_state = _activation_state(activation)
+        if final_state is not state:
+            raise Experiment002CoordinatorError(
+                "child activation state changed during verification"
+            )
     except BaseException:
         _poison_activation(activation)
         raise
@@ -484,6 +617,61 @@ def _require_registration(registration: VerifiedRunRegistration) -> None:
     if type(registration) is not VerifiedRunRegistration:
         raise TypeError("registration must be an exact VerifiedRunRegistration")
     verify_verified_run_registration(registration)
+
+
+def _require_process_guard_binding(binding: _ProcessGuardBinding) -> None:
+    if (
+        type(binding) is not _ProcessGuardBinding
+        or binding.guard is None
+        or type(binding.verifier) is not FunctionType
+    ):
+        raise Experiment002CoordinatorError(
+            "child process-guard binding has an invalid exact type"
+        )
+    result = cast(Callable[[object], object], binding.verifier)(binding.guard)
+    if result is not None:
+        raise Experiment002CoordinatorError(
+            "child process-guard verifier returned an unexpected value"
+        )
+
+
+def _claim_and_verify_child_process_guard() -> _ProcessGuardBinding:
+    module = importlib.import_module(_PROCESS_GUARD_MODULE)
+    if (
+        type(module) is not ModuleType
+        or type(module.__name__) is not str
+        or module.__name__ != _PROCESS_GUARD_MODULE
+    ):
+        raise Experiment002CoordinatorError(
+            "child process-guard module identity is invalid"
+        )
+    getter = getattr(module, _PROCESS_GUARD_GETTER, None)
+    verifier = getattr(module, _PROCESS_GUARD_VERIFIER, None)
+    if (
+        type(getter) is not FunctionType
+        or type(verifier) is not FunctionType
+        or type(getter.__module__) is not str
+        or getter.__module__ != _PROCESS_GUARD_MODULE
+        or type(verifier.__module__) is not str
+        or verifier.__module__ != _PROCESS_GUARD_MODULE
+    ):
+        raise Experiment002CoordinatorError(
+            "child process-guard authority routes are invalid"
+        )
+    guard = cast(Callable[[], object], getter)()
+    binding = _ProcessGuardBinding(
+        guard=guard,
+        verifier=cast(_ProcessGuardVerifier, verifier),
+    )
+    _require_process_guard_binding(binding)
+    if (
+        getattr(module, _PROCESS_GUARD_GETTER, None) is not getter
+        or getattr(module, _PROCESS_GUARD_VERIFIER, None) is not verifier
+    ):
+        raise Experiment002CoordinatorError(
+            "child process-guard authority routes changed during claim"
+        )
+    return binding
 
 
 def _registration_binding(
@@ -507,6 +695,28 @@ def _require_registration_binding(binding: _RegistrationBinding) -> None:
     _require_lower_hex(binding.implementation_commit, 40, "implementation commit")
     _require_lower_hex(binding.registration_sha256, 64, "registration sha256")
     _require_lower_hex(binding.source_bundle_sha256, 64, "source bundle sha256")
+
+
+def _registration_bindings_match(
+    first: _RegistrationBinding,
+    second: _RegistrationBinding,
+) -> bool:
+    if (
+        type(first) is not _RegistrationBinding
+        or type(second) is not _RegistrationBinding
+    ):
+        return False
+    try:
+        _require_registration_binding(first)
+        _require_registration_binding(second)
+    except (TypeError, Experiment002CoordinatorError):
+        return False
+    return (
+        first.head_commit == second.head_commit
+        and first.implementation_commit == second.implementation_commit
+        and first.registration_sha256 == second.registration_sha256
+        and first.source_bundle_sha256 == second.source_bundle_sha256
+    )
 
 
 def _assignment(role: object, seed: object) -> _Assignment:
@@ -643,7 +853,17 @@ def _reject_json_number(value: str) -> NoReturn:
 
 
 def _send_packet(channel: socket.socket, packet: bytes) -> None:
-    _prepare_channel(channel)
+    _prepare_send_channel(channel)
+    _send_packet_prepared(channel, packet)
+
+
+def _send_packet_prepared(channel: socket.socket, packet: bytes) -> None:
+    _require_seqpacket_channel(channel)
+    timeout = channel.gettimeout()
+    if type(timeout) is not float or timeout != _PROTOCOL_TIMEOUT_SECONDS:
+        raise Experiment002CoordinatorError(
+            "outbound protocol channel timeout is not exact"
+        )
     if type(packet) is not bytes or not 0 < len(packet) <= _MAX_PACKET_BYTES:
         raise Experiment002CoordinatorError("outbound protocol packet is invalid")
     ancillary = [
@@ -657,23 +877,48 @@ def _send_packet(channel: socket.socket, packet: bytes) -> None:
         sent = channel.sendmsg([packet], ancillary)
     except (OSError, TimeoutError) as error:
         raise Experiment002CoordinatorError("protocol packet send failed") from error
-    if sent != len(packet):
+    if type(sent) is not int or sent != len(packet):
         raise Experiment002CoordinatorError("protocol packet send was incomplete")
 
 
-def _receive_packet(channel: socket.socket) -> tuple[bytes, _PeerCredentials]:
-    _prepare_channel(channel)
-    ancillary_size = socket.CMSG_SPACE(_CREDENTIALS.size)
+def _receive_packet_frame(
+    channel: socket.socket,
+    receive_flags: int,
+) -> _ReceivedPacket:
+    _require_prepared_receive_channel(channel)
+    if type(receive_flags) is not int or receive_flags not in {
+        0,
+        int(socket.MSG_PEEK),
+    }:
+        raise Experiment002CoordinatorError(
+            "protocol receive flags are not an exact fixed mode"
+        )
     try:
-        packet, ancillary, flags, _address = channel.recvmsg(
+        packet, ancillary, flags, address = channel.recvmsg(
             _MAX_PACKET_BYTES + 1,
-            ancillary_size,
+            _ANCILLARY_BYTES,
+            receive_flags | _RECEIVE_CLOEXEC,
         )
     except (OSError, TimeoutError) as error:
         raise Experiment002CoordinatorError("protocol packet receive failed") from error
+    received_rights = _close_received_rights(ancillary)
+    if (
+        type(packet) is not bytes
+        or type(ancillary) is not list
+        or type(flags) is not int
+    ):
+        raise Experiment002CoordinatorError(
+            "protocol receive result has invalid exact types"
+        )
     if flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC):
         raise Experiment002CoordinatorError(
             "protocol packet or credentials were truncated"
+        )
+    if flags != _RECEIVE_CLOEXEC:
+        raise Experiment002CoordinatorError("protocol receive flags are invalid")
+    if received_rights:
+        raise Experiment002CoordinatorError(
+            "protocol packet included forbidden SCM_RIGHTS descriptors"
         )
     if not packet:
         raise Experiment002CoordinatorError(
@@ -681,40 +926,359 @@ def _receive_packet(channel: socket.socket) -> tuple[bytes, _PeerCredentials]:
         )
     if len(packet) > _MAX_PACKET_BYTES:
         raise Experiment002CoordinatorError("protocol packet exceeds its maximum size")
-    credentials_payloads = [
-        payload
-        for level, kind, payload in ancillary
-        if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS
-    ]
-    if len(credentials_payloads) != 1:
+    if len(ancillary) != 1 or type(ancillary[0]) is not tuple:
         raise Experiment002CoordinatorError(
             "protocol packet lacks exactly one SCM_CREDENTIALS record"
         )
-    payload = credentials_payloads[0]
+    record = ancillary[0]
+    if len(record) != 3:
+        raise Experiment002CoordinatorError(
+            "protocol packet has a malformed credentials record"
+        )
+    level, kind, payload = record
+    if (
+        type(level) is not int
+        or type(kind) is not int
+        or type(payload) is not bytes
+        or level != socket.SOL_SOCKET
+        or kind != socket.SCM_CREDENTIALS
+    ):
+        raise Experiment002CoordinatorError(
+            "protocol packet lacks exactly one SCM_CREDENTIALS record"
+        )
     if len(payload) != _CREDENTIALS.size:
         raise Experiment002CoordinatorError("SCM_CREDENTIALS has an invalid size")
     pid, uid, gid = _CREDENTIALS.unpack(payload)
     credentials = _PeerCredentials(pid=pid, uid=uid, gid=gid)
     _require_local_identity(credentials)
-    return bytes(packet), credentials
+    return _ReceivedPacket(
+        packet=packet,
+        credentials=credentials,
+        address=address,
+    )
 
 
-def _prepare_channel(channel: socket.socket) -> None:
+def _receive_packet(channel: socket.socket) -> tuple[bytes, _PeerCredentials]:
+    _prepare_channel(channel)
+    received = _receive_packet_frame(channel, 0)
+    return received.packet, received.credentials
+
+
+def _peek_packet(channel: socket.socket) -> _ReceivedPacket:
+    received = _receive_packet_frame(channel, int(socket.MSG_PEEK))
+    _require_unnamed_received_packet(received)
+    return received
+
+
+def _consume_packet(channel: socket.socket) -> _ReceivedPacket:
+    received = _receive_packet_frame(channel, 0)
+    _require_unnamed_received_packet(received)
+    return received
+
+
+def _require_unnamed_received_packet(received: _ReceivedPacket) -> None:
+    if type(received) is not _ReceivedPacket or received.address is not None:
+        raise Experiment002CoordinatorError(
+            "registered parent packet must have no Unix sender address"
+        )
+
+
+def _require_same_received_packet(
+    peeked: _ReceivedPacket,
+    consumed: _ReceivedPacket,
+) -> None:
+    if type(peeked) is not _ReceivedPacket or type(consumed) is not _ReceivedPacket:
+        raise Experiment002CoordinatorError(
+            "peeked protocol packet frames have invalid types"
+        )
+    _require_local_identity(peeked.credentials)
+    _require_local_identity(consumed.credentials)
+    if (
+        type(peeked.packet) is not bytes
+        or type(consumed.packet) is not bytes
+        or peeked.packet != consumed.packet
+        or peeked.address is not None
+        or consumed.address is not None
+        or peeked.credentials.pid != consumed.credentials.pid
+        or peeked.credentials.uid != consumed.credentials.uid
+        or peeked.credentials.gid != consumed.credentials.gid
+    ):
+        raise Experiment002CoordinatorError(
+            "consumed protocol packet or credentials differ from MSG_PEEK"
+        )
+
+
+def _close_received_rights(ancillary: object) -> bool:
+    """Close every delivered SCM_RIGHTS descriptor before rejecting its frame."""
+
+    if type(ancillary) is not list:
+        return False
+    received_rights = False
+    close_error: OSError | None = None
+    for record in ancillary:
+        if type(record) is not tuple or len(record) != 3:
+            continue
+        level, kind, payload = record
+        if (
+            type(level) is not int
+            or type(kind) is not int
+            or level != socket.SOL_SOCKET
+            or kind != socket.SCM_RIGHTS
+        ):
+            continue
+        received_rights = True
+        if type(payload) is not bytes:
+            continue
+        complete_size = len(payload) - (len(payload) % _RIGHT_DESCRIPTOR.size)
+        for offset in range(0, complete_size, _RIGHT_DESCRIPTOR.size):
+            (descriptor,) = _RIGHT_DESCRIPTOR.unpack_from(payload, offset)
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                if close_error is None:
+                    close_error = error
+    if close_error is not None:
+        raise Experiment002CoordinatorError(
+            "received SCM_RIGHTS descriptor could not be closed"
+        ) from close_error
+    return received_rights
+
+
+def _require_seqpacket_channel(channel: socket.socket) -> None:
     if type(channel) is not socket.socket:
         raise TypeError("protocol channel must be an exact socket")
-    if not hasattr(socket, "SCM_CREDENTIALS") or not hasattr(socket, "SO_PASSCRED"):
+    if (
+        not hasattr(socket, "SCM_CREDENTIALS")
+        or not hasattr(socket, "SO_PASSCRED")
+        or not hasattr(socket, "MSG_CMSG_CLOEXEC")
+    ):
         raise Experiment002CoordinatorError("Linux SCM_CREDENTIALS support is required")
-    if channel.family != socket.AF_UNIX:
+    if channel.family is not socket.AF_UNIX:
         raise Experiment002CoordinatorError("protocol channel must use AF_UNIX")
     try:
         socket_type = channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
+    except OSError as error:
+        raise Experiment002CoordinatorError(
+            "protocol channel inspection failed"
+        ) from error
+    if type(socket_type) is not int or socket_type != socket.SOCK_SEQPACKET:
+        raise Experiment002CoordinatorError(
+            "protocol channel must use Unix SOCK_SEQPACKET"
+        )
+
+
+def _prepare_send_channel(channel: socket.socket) -> None:
+    _require_seqpacket_channel(channel)
+    try:
+        channel.settimeout(_PROTOCOL_TIMEOUT_SECONDS)
+    except OSError as error:
+        raise Experiment002CoordinatorError("protocol channel setup failed") from error
+    timeout = channel.gettimeout()
+    if type(timeout) is not float or timeout != _PROTOCOL_TIMEOUT_SECONDS:
+        raise Experiment002CoordinatorError(
+            "outbound protocol channel timeout is not exact"
+        )
+
+
+def _prepare_channel(channel: socket.socket) -> None:
+    _require_seqpacket_channel(channel)
+    try:
         channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
         channel.settimeout(_PROTOCOL_TIMEOUT_SECONDS)
     except OSError as error:
         raise Experiment002CoordinatorError("protocol channel setup failed") from error
-    if socket_type != socket.SOCK_SEQPACKET:
+    _require_prepared_receive_channel(channel)
+
+
+def _require_prepared_receive_channel(channel: socket.socket) -> None:
+    _require_seqpacket_channel(channel)
+    passcred = channel.getsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED)
+    timeout = channel.gettimeout()
+    if (
+        type(passcred) is not int
+        or passcred != 1
+        or type(timeout) is not float
+        or timeout != _PROTOCOL_TIMEOUT_SECONDS
+    ):
+        raise Experiment002CoordinatorError("protocol channel options are not exact")
+
+
+def _socket_stat_frame(metadata: os.stat_result) -> tuple[int, ...]:
+    if type(metadata) is not os.stat_result:
         raise Experiment002CoordinatorError(
-            "protocol channel must use Unix SOCK_SEQPACKET"
+            "registered child control descriptor stat type is invalid"
+        )
+    frame = (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_blocks,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+    if any(type(value) is not int for value in frame):
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor stat frame is invalid"
+        )
+    return frame
+
+
+def _socket_proc_inode(proc_target: str) -> int:
+    if (
+        type(proc_target) is not str
+        or not proc_target.startswith("socket:[")
+        or not proc_target.endswith("]")
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor proc target is invalid"
+        )
+    digits = proc_target[8:-1]
+    if not digits or not digits.isascii() or not digits.isdecimal():
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor proc inode is invalid"
+        )
+    return int(digits)
+
+
+def _capture_fixed_control_channel_frame(
+    channel: socket.socket,
+) -> _ControlChannelFrame:
+    _prepare_channel(channel)
+    descriptor = channel.fileno()
+    try:
+        metadata = os.fstat(descriptor)
+        descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        socket_type = channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
+        passcred = channel.getsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED)
+        timeout = channel.gettimeout()
+        local_name = channel.getsockname()
+        peer_name = channel.getpeername()
+        proc_target = os.readlink(f"/proc/self/fd/{descriptor}")
+        inheritable = os.get_inheritable(descriptor)
+    except OSError as error:
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor cannot be inspected"
+        ) from error
+    if (
+        type(descriptor) is not int
+        or descriptor != _CHILD_CONTROL_FD
+        or not stat.S_ISSOCK(metadata.st_mode)
+        or type(descriptor_flags) is not int
+        or descriptor_flags != fcntl.FD_CLOEXEC
+        or type(inheritable) is not bool
+        or inheritable is not False
+        or type(status_flags) is not int
+        or status_flags != _CONTROL_STATUS_FLAGS
+        or type(socket_type) is not int
+        or socket_type != socket.SOCK_SEQPACKET
+        or type(passcred) is not int
+        or passcred != 1
+        or type(timeout) is not float
+        or timeout != _PROTOCOL_TIMEOUT_SECONDS
+        or type(local_name) is not str
+        or local_name != ""
+        or type(peer_name) is not str
+        or peer_name != ""
+        or _socket_proc_inode(proc_target) != metadata.st_ino
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor frame is invalid"
+        )
+    return _ControlChannelFrame(
+        channel=channel,
+        descriptor=descriptor,
+        stat_frame=_socket_stat_frame(metadata),
+        descriptor_flags=descriptor_flags,
+        status_flags=status_flags,
+        socket_type=socket_type,
+        passcred=passcred,
+        timeout=timeout,
+        local_name=local_name,
+        peer_name=peer_name,
+        proc_target=proc_target,
+    )
+
+
+def _require_fixed_control_channel_frame(
+    channel: socket.socket,
+    frame: _ControlChannelFrame,
+) -> None:
+    if (
+        type(channel) is not socket.socket
+        or type(frame) is not _ControlChannelFrame
+        or frame.channel is not channel
+        or type(frame.descriptor) is not int
+        or frame.descriptor != _CHILD_CONTROL_FD
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child control socket identity changed"
+        )
+    try:
+        observed_descriptor = channel.fileno()
+        metadata = os.fstat(frame.descriptor)
+        descriptor_flags = fcntl.fcntl(frame.descriptor, fcntl.F_GETFD)
+        status_flags = fcntl.fcntl(frame.descriptor, fcntl.F_GETFL)
+        socket_type = channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
+        passcred = channel.getsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED)
+        timeout = channel.gettimeout()
+        local_name = channel.getsockname()
+        peer_name = channel.getpeername()
+        proc_target = os.readlink(f"/proc/self/fd/{frame.descriptor}")
+        inheritable = os.get_inheritable(frame.descriptor)
+    except OSError as error:
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor changed"
+        ) from error
+    if (
+        type(observed_descriptor) is not int
+        or observed_descriptor != frame.descriptor
+        or type(frame.stat_frame) is not tuple
+        or len(frame.stat_frame) != 10
+        or any(type(value) is not int for value in frame.stat_frame)
+        or _socket_stat_frame(metadata) != frame.stat_frame
+        or type(frame.descriptor_flags) is not int
+        or type(descriptor_flags) is not int
+        or descriptor_flags != frame.descriptor_flags
+        or descriptor_flags != fcntl.FD_CLOEXEC
+        or type(inheritable) is not bool
+        or inheritable is not False
+        or type(frame.status_flags) is not int
+        or type(status_flags) is not int
+        or status_flags != frame.status_flags
+        or status_flags != _CONTROL_STATUS_FLAGS
+        or type(frame.socket_type) is not int
+        or type(socket_type) is not int
+        or socket_type != frame.socket_type
+        or socket_type != socket.SOCK_SEQPACKET
+        or type(frame.passcred) is not int
+        or type(passcred) is not int
+        or passcred != frame.passcred
+        or passcred != 1
+        or type(frame.timeout) is not float
+        or type(timeout) is not float
+        or timeout != frame.timeout
+        or timeout != _PROTOCOL_TIMEOUT_SECONDS
+        or type(frame.local_name) is not str
+        or type(local_name) is not str
+        or local_name != frame.local_name
+        or local_name != ""
+        or type(frame.peer_name) is not str
+        or type(peer_name) is not str
+        or peer_name != frame.peer_name
+        or peer_name != ""
+        or type(frame.proc_target) is not str
+        or type(proc_target) is not str
+        or proc_target != frame.proc_target
+        or _socket_proc_inode(proc_target) != metadata.st_ino
+        or channel.family is not socket.AF_UNIX
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child control descriptor changed"
         )
 
 
@@ -724,6 +1288,10 @@ def _require_local_identity(credentials: _PeerCredentials) -> None:
     if (
         type(credentials.pid) is not int
         or credentials.pid < 1
+        or type(credentials.uid) is not int
+        or credentials.uid < 0
+        or type(credentials.gid) is not int
+        or credentials.gid < 0
         or credentials.uid != os.getuid()
         or credentials.gid != os.getgid()
     ):
@@ -770,63 +1338,113 @@ def _parent_activate_child(
     _require_registration(registration)
 
 
-def _receive_child_activation(
-    channel: socket.socket,
-    registration: VerifiedRunRegistration,
-) -> VerifiedChildActivation:
-    """Accept one parent ticket using a child-local run registration."""
+def _make_guarded_registered_seed_child() -> Callable[[VerifiedRunRegistration], None]:
+    """Capture the terminal one-attempt child route in an unresettable closure."""
 
-    binding = _registration_binding(registration)
-    packet, credentials = _receive_packet(channel)
-    document = _decode_packet(packet)
-    ticket = _validate_ticket(
-        document,
-        credentials,
-        binding=binding,
-        packet=packet,
-    )
-    receipt = _reserve_accepted_ticket(ticket)
-    _require_registration(registration)
-    activation = _issue_activation(registration, ticket, receipt)
-    try:
-        _send_packet(channel, _encode_packet(_ack_document(ticket)))
-    except BaseException:
-        _poison_activation(activation)
-        raise
-    return activation
+    attempted = False
+    attempt_lock = threading.Lock()
 
+    def run_guarded_registered_seed_child(
+        registration: VerifiedRunRegistration,
+        /,
+    ) -> None:
+        nonlocal attempted
 
-def _receive_activation_from_fixed_fd(
-    registration: VerifiedRunRegistration,
-) -> VerifiedChildActivation:
-    if type(registration) is not VerifiedRunRegistration:
-        raise TypeError("registration must be an exact VerifiedRunRegistration")
-    try:
-        channel = socket.socket(fileno=_CHILD_CONTROL_FD)
-    except OSError as error:
-        raise Experiment002CoordinatorError(
-            "registered child control descriptor 3 is unavailable"
-        ) from error
-    with channel:
-        if channel.fileno() != _CHILD_CONTROL_FD:
-            raise Experiment002CoordinatorError(
-                "registered child control descriptor changed"
-            )
+        with attempt_lock:
+            if attempted:
+                raise Experiment002CoordinatorError(
+                    "registered child activation was already attempted"
+                )
+            attempted = True
+
+        if type(registration) is not VerifiedRunRegistration:
+            raise TypeError("registration must be an exact VerifiedRunRegistration")
+
+        activation: VerifiedChildActivation | None = None
         try:
-            os.set_inheritable(_CHILD_CONTROL_FD, False)
-        except OSError as error:
-            raise Experiment002CoordinatorError(
-                "child control descriptor could not be sealed"
-            ) from error
-        return _receive_child_activation(channel, registration)
+            try:
+                channel = socket.socket(fileno=_CHILD_CONTROL_FD)
+            except OSError as error:
+                raise Experiment002CoordinatorError(
+                    "registered child control descriptor 3 is unavailable"
+                ) from error
+
+            with channel:
+                descriptor = channel.fileno()
+                if type(descriptor) is not int or descriptor != _CHILD_CONTROL_FD:
+                    raise Experiment002CoordinatorError(
+                        "registered child control descriptor changed"
+                    )
+                channel_frame = _capture_fixed_control_channel_frame(channel)
+                peeked = _peek_packet(channel)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                process_guard_binding = _claim_and_verify_child_process_guard()
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                registration_binding = _registration_binding(registration)
+                _require_registration(registration)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                ticket = _validate_ticket(
+                    _decode_packet(peeked.packet),
+                    peeked.credentials,
+                    binding=registration_binding,
+                    packet=peeked.packet,
+                )
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                consumed = _consume_packet(channel)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+                _require_same_received_packet(peeked, consumed)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                _require_process_guard_binding(process_guard_binding)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                receipt = _reserve_accepted_ticket(ticket)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+                activation = _issue_activation(
+                    registration,
+                    ticket,
+                    receipt,
+                    process_guard_binding,
+                )
+                _require_fixed_control_channel_frame(channel, channel_frame)
+                verify_verified_child_activation(registration, activation)
+                _require_fixed_control_channel_frame(channel, channel_frame)
+
+                acknowledgement = _encode_packet(_ack_document(ticket))
+                _require_fixed_control_channel_frame(channel, channel_frame)
+                _send_packet_prepared(channel, acknowledgement)
+
+            try:
+                os.fstat(_CHILD_CONTROL_FD)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise Experiment002CoordinatorError(
+                        "closed child control descriptor could not be verified"
+                    ) from error
+            else:
+                raise Experiment002CoordinatorError(
+                    "registered child control descriptor remained open"
+                )
+            if activation is None:
+                raise Experiment002CoordinatorError(
+                    "registered child activation was not issued"
+                )
+            _dispatch_registered_seed_process(registration, activation)
+        except BaseException:
+            if activation is not None:
+                _poison_activation(activation)
+            raise
+
+    return run_guarded_registered_seed_child
 
 
-def _run_registered_seed_child(registration: VerifiedRunRegistration, /) -> None:
-    """Activate descriptor 3 and dispatch the future registered seed worker."""
-
-    _require_registration(registration)
-    activation = _receive_activation_from_fixed_fd(registration)
-    _dispatch_registered_seed_process(registration, activation)
+_run_guarded_registered_seed_child = _make_guarded_registered_seed_child()
+_run_registered_seed_child = _run_guarded_registered_seed_child
+del _make_guarded_registered_seed_child
 
 
 def _validate_ticket(
@@ -836,6 +1454,8 @@ def _validate_ticket(
     binding: _RegistrationBinding,
     packet: bytes,
 ) -> _Ticket:
+    _require_local_identity(credentials)
+    _require_registration_binding(binding)
     _require_exact_keys(
         document,
         {
@@ -851,7 +1471,7 @@ def _validate_ticket(
         },
         "activation ticket",
     )
-    if document["kind"] != "activation_ticket" or type(document["kind"]) is not str:
+    if type(document["kind"]) is not str or document["kind"] != "activation_ticket":
         raise Experiment002CoordinatorError("activation ticket kind is invalid")
     _require_schema_version(document["schema_version"])
     parent_pid = _require_pid(document["parent_pid"], "ticket parent PID")
@@ -873,7 +1493,8 @@ def _validate_ticket(
         raise Experiment002CoordinatorError("activation ticket ordinal is invalid")
     nonce = document["nonce"]
     _require_lower_hex(nonce, 64, "activation nonce")
-    if _parse_binding(document["registration"]) != binding:
+    parsed_binding = _parse_binding(document["registration"])
+    if not _registration_bindings_match(parsed_binding, binding):
         raise Experiment002CoordinatorError(
             "activation ticket registration binding does not match this child"
         )
@@ -896,6 +1517,11 @@ def _validate_ack(
     nonce: str,
     packet_sha256: str,
 ) -> None:
+    _require_local_identity(credentials)
+    _require_assignment(assignment)
+    _require_distinct_processes(parent_pid, child_pid)
+    _require_lower_hex(nonce, 64, "ack nonce")
+    _require_lower_hex(packet_sha256, 64, "ack ticket sha256")
     _require_exact_keys(
         document,
         {
@@ -924,23 +1550,20 @@ def _validate_ack(
         )
     _require_lower_hex(document["nonce"], 64, "ack nonce")
     _require_lower_hex(document["ticket_sha256"], 64, "ack ticket sha256")
-    expected = {
-        "child_pid": child_pid,
-        "kind": "activation_ack",
-        "nonce": nonce,
-        "ordinal": assignment.ordinal,
-        "parent_pid": parent_pid,
-        "role": assignment.role,
-        "schema_version": _SCHEMA_VERSION,
-        "seed": assignment.seed,
-        "status": "accepted",
-        "ticket_sha256": packet_sha256,
-    }
     if (
-        document != expected
+        document["child_pid"] != child_pid
+        or document["kind"] != "activation_ack"
+        or document["nonce"] != nonce
+        or document["ordinal"] != assignment.ordinal
+        or document["parent_pid"] != parent_pid
+        or document["role"] != assignment.role
+        or document["schema_version"] != _SCHEMA_VERSION
+        or document["seed"] != assignment.seed
+        or document["status"] != "accepted"
+        or document["ticket_sha256"] != packet_sha256
         or observed_parent_pid != parent_pid
         or observed_child_pid != child_pid
-        or observed_assignment != assignment
+        or not _assignments_match(observed_assignment, assignment)
         or credentials.pid != child_pid
     ):
         raise Experiment002CoordinatorError(
@@ -975,10 +1598,14 @@ def _parse_binding(value: object) -> _RegistrationBinding:
 def _require_exact_keys(
     document: dict[str, Any], expected: set[str], name: str
 ) -> None:
-    if type(document) is not dict or set(document) != expected:
+    if type(document) is not dict:
         raise Experiment002CoordinatorError(f"{name} fields are not exact")
     if any(type(key) is not str for key in document):
         raise Experiment002CoordinatorError(f"{name} keys must be strings")
+    if type(expected) is not set or any(type(key) is not str for key in expected):
+        raise Experiment002CoordinatorError(f"{name} expected fields are invalid")
+    if set(document) != expected:
+        raise Experiment002CoordinatorError(f"{name} fields are not exact")
 
 
 def _require_schema_version(value: object) -> None:
@@ -1013,8 +1640,33 @@ def _require_lower_hex(value: object, length: int, name: str) -> None:
 def _require_assignment(assignment: _Assignment) -> None:
     if type(assignment) is not _Assignment:
         raise Experiment002CoordinatorError("child assignment has an invalid type")
-    if _assignment(assignment.role, assignment.seed) != assignment:
+    if (
+        type(assignment.role) is not str
+        or type(assignment.seed) is not int
+        or type(assignment.ordinal) is not int
+    ):
+        raise Experiment002CoordinatorError(
+            "child assignment fields have invalid exact types"
+        )
+    expected = _assignment(assignment.role, assignment.seed)
+    if not _assignments_match(assignment, expected):
         raise Experiment002CoordinatorError("child assignment is not registered")
+
+
+def _assignments_match(first: _Assignment, second: _Assignment) -> bool:
+    return (
+        type(first) is _Assignment
+        and type(second) is _Assignment
+        and type(first.role) is str
+        and type(second.role) is str
+        and first.role == second.role
+        and type(first.seed) is int
+        and type(second.seed) is int
+        and first.seed == second.seed
+        and type(first.ordinal) is int
+        and type(second.ordinal) is int
+        and first.ordinal == second.ordinal
+    )
 
 
 def _require_ticket(ticket: _Ticket) -> None:
@@ -1050,15 +1702,22 @@ def _reserve_accepted_ticket(
     ),
 ) -> _AcceptedTicketReceipt:
     _require_ticket(ticket)
+    accepted_nonce = ticket.nonce
+    accepted_digest = ticket.packet_sha256
     with _PROTOCOL_LOCK:
         receipt = _trusted_accept(ticket)
+        _require_ticket(ticket)
         if (
-            ticket.packet_sha256 in _ACCEPTED_TICKET_DIGESTS
-            or ticket.nonce in _ACCEPTED_TICKET_NONCES
+            ticket.nonce != accepted_nonce
+            or ticket.packet_sha256 != accepted_digest
+            or accepted_digest in _ACCEPTED_TICKET_DIGESTS
+            or accepted_nonce in _ACCEPTED_TICKET_NONCES
         ):
-            raise Experiment002CoordinatorError("activation ticket was replayed")
-        _ACCEPTED_TICKET_DIGESTS.add(ticket.packet_sha256)
-        _ACCEPTED_TICKET_NONCES.add(ticket.nonce)
+            raise Experiment002CoordinatorError(
+                "activation ticket was replayed or changed during acceptance"
+            )
+        _ACCEPTED_TICKET_DIGESTS.add(accepted_digest)
+        _ACCEPTED_TICKET_NONCES.add(accepted_nonce)
         return receipt
 
 
@@ -1072,6 +1731,7 @@ def _issue_activation(
     registration: VerifiedRunRegistration,
     ticket: _Ticket,
     receipt: _AcceptedTicketReceipt,
+    process_guard_binding: _ProcessGuardBinding,
     *,
     _trusted_record: Callable[
         [
@@ -1080,6 +1740,8 @@ def _issue_activation(
             VerifiedChildActivation,
             VerifiedRunRegistration,
             object,
+            object,
+            _ProcessGuardVerifier,
         ],
         None,
     ] = _TRUSTED_RECORD_ISSUANCE,
@@ -1088,6 +1750,8 @@ def _issue_activation(
     ),
 ) -> VerifiedChildActivation:
     _require_ticket(ticket)
+    _require_process_guard_binding(process_guard_binding)
+    _require_registration(registration)
     if ticket.child_pid != os.getpid() or ticket.parent_pid != os.getppid():
         raise Experiment002CoordinatorError(
             "activation cannot be issued outside its ticketed child"
@@ -1104,6 +1768,8 @@ def _issue_activation(
         ordinal=ticket.assignment.ordinal,
         nonce=ticket.nonce,
         ticket_sha256=ticket.packet_sha256,
+        process_guard=process_guard_binding.guard,
+        process_guard_verifier=process_guard_binding.verifier,
         token=token,
         phase=_PHASE_ISSUED,
     )
@@ -1116,6 +1782,8 @@ def _issue_activation(
                 activation,
                 registration,
                 token,
+                process_guard_binding.guard,
+                process_guard_binding.verifier,
             )
             _ACTIVATIONS[activation] = state
             _ACTIVATION_GUARDS[activation] = _guard_from_state(state)
@@ -1148,22 +1816,27 @@ def _activation_state(
         phase = _ACTIVATION_PHASES.get(activation)
         was_dispatched = activation in _DISPATCHED_ACTIVATIONS
         was_completed = activation in _COMPLETED_ACTIVATIONS
-        trusted_phase, trusted_failed, trusted_valid = _trusted_verify(
-            activation,
-            state,
-        )
+        try:
+            trusted_phase, trusted_failed, trusted_valid = _trusted_verify(
+                activation,
+                state,
+            )
+        except BaseException:
+            _trusted_poison(activation)
+            _FAILED_ACTIVATIONS.add(activation)
+            raise
         if (
-            state is None
-            or guard is None
-            or anchor is None
-            or phase is None
+            type(state) is not _ActivationState
+            or type(trusted_phase) is not int
+            or type(trusted_failed) is not bool
+            or type(trusted_valid) is not bool
+            or type(phase) is not int
             or activation in _FAILED_ACTIVATIONS
-            or trusted_phase is None
             or trusted_failed
             or not trusted_valid
             or not _valid_activation_state(state)
-            or guard != _guard_from_state(state)
-            or anchor != _anchor_from_state(state)
+            or not _activation_guard_matches_state(guard, state)
+            or not _activation_anchor_matches_state(anchor, state)
             or phase != state.phase
             or trusted_phase != state.phase
             or not _monotonic_phase_matches(
@@ -1198,26 +1871,117 @@ def _monotonic_phase_matches(
     return False
 
 
-def _valid_activation_state(state: _ActivationState) -> bool:
+def _valid_activation_state(state: object) -> bool:
     if type(state) is not _ActivationState:
         return False
     try:
+        if (
+            type(state.role) is not str
+            or type(state.seed) is not int
+            or type(state.ordinal) is not int
+            or type(state.phase) is not int
+            or type(state.registration) is not VerifiedRunRegistration
+            or state.process_guard is None
+            or type(state.process_guard_verifier) is not FunctionType
+            or type(state.token) is not object
+        ):
+            return False
         _require_pid(state.process_id, "activation process PID")
         _require_distinct_processes(state.parent_pid, state.child_pid)
         _require_assignment(_Assignment(state.role, state.seed, state.ordinal))
         _require_lower_hex(state.nonce, 64, "activation nonce")
         _require_lower_hex(state.ticket_sha256, 64, "activation ticket sha256")
-    except (TypeError, Experiment002CoordinatorError):
+        _require_process_guard_binding(
+            _ProcessGuardBinding(
+                guard=state.process_guard,
+                verifier=state.process_guard_verifier,
+            )
+        )
+    except BaseException:
         return False
     return (
         state.marker is _ACTIVATION_MARKER
-        and type(state.registration) is VerifiedRunRegistration
         and state.process_id == os.getpid()
         and state.child_pid == os.getpid()
         and state.parent_pid == os.getppid()
-        and type(state.token) is object
-        and type(state.phase) is int
         and state.phase in {_PHASE_ISSUED, _PHASE_DISPATCHED, _PHASE_COMPLETED}
+    )
+
+
+def _activation_guard_matches_state(guard: object, state: object) -> bool:
+    return (
+        type(guard) is _ActivationGuard
+        and type(state) is _ActivationState
+        and guard.marker is state.marker
+        and guard.marker is _ACTIVATION_MARKER
+        and guard.registration is state.registration
+        and type(guard.process_id) is int
+        and type(state.process_id) is int
+        and guard.process_id == state.process_id
+        and type(guard.parent_pid) is int
+        and type(state.parent_pid) is int
+        and guard.parent_pid == state.parent_pid
+        and type(guard.child_pid) is int
+        and type(state.child_pid) is int
+        and guard.child_pid == state.child_pid
+        and type(guard.role) is str
+        and type(state.role) is str
+        and guard.role == state.role
+        and type(guard.seed) is int
+        and type(state.seed) is int
+        and guard.seed == state.seed
+        and type(guard.ordinal) is int
+        and type(state.ordinal) is int
+        and guard.ordinal == state.ordinal
+        and type(guard.nonce) is str
+        and type(state.nonce) is str
+        and guard.nonce == state.nonce
+        and type(guard.ticket_sha256) is str
+        and type(state.ticket_sha256) is str
+        and guard.ticket_sha256 == state.ticket_sha256
+        and guard.process_guard is state.process_guard
+        and guard.process_guard_verifier is state.process_guard_verifier
+        and guard.token is state.token
+        and type(guard.phase) is int
+        and type(state.phase) is int
+        and guard.phase == state.phase
+    )
+
+
+def _activation_anchor_matches_state(anchor: object, state: object) -> bool:
+    return (
+        type(anchor) is _ActivationAnchor
+        and type(state) is _ActivationState
+        and anchor.marker is state.marker
+        and anchor.marker is _ACTIVATION_MARKER
+        and anchor.registration is state.registration
+        and type(anchor.process_id) is int
+        and type(state.process_id) is int
+        and anchor.process_id == state.process_id
+        and type(anchor.parent_pid) is int
+        and type(state.parent_pid) is int
+        and anchor.parent_pid == state.parent_pid
+        and type(anchor.child_pid) is int
+        and type(state.child_pid) is int
+        and anchor.child_pid == state.child_pid
+        and type(anchor.role) is str
+        and type(state.role) is str
+        and anchor.role == state.role
+        and type(anchor.seed) is int
+        and type(state.seed) is int
+        and anchor.seed == state.seed
+        and type(anchor.ordinal) is int
+        and type(state.ordinal) is int
+        and anchor.ordinal == state.ordinal
+        and type(anchor.nonce) is str
+        and type(state.nonce) is str
+        and anchor.nonce == state.nonce
+        and type(anchor.ticket_sha256) is str
+        and type(state.ticket_sha256) is str
+        and anchor.ticket_sha256 == state.ticket_sha256
+        and anchor.process_guard is state.process_guard
+        and anchor.process_guard_verifier is state.process_guard_verifier
+        and anchor.token is state.token
     )
 
 
@@ -1233,6 +1997,8 @@ def _guard_from_state(state: _ActivationState) -> _ActivationGuard:
         ordinal=state.ordinal,
         nonce=state.nonce,
         ticket_sha256=state.ticket_sha256,
+        process_guard=state.process_guard,
+        process_guard_verifier=state.process_guard_verifier,
         token=state.token,
         phase=state.phase,
     )
@@ -1250,6 +2016,8 @@ def _anchor_from_state(state: _ActivationState) -> _ActivationAnchor:
         ordinal=state.ordinal,
         nonce=state.nonce,
         ticket_sha256=state.ticket_sha256,
+        process_guard=state.process_guard,
+        process_guard_verifier=state.process_guard_verifier,
         token=state.token,
     )
 
@@ -1279,6 +2047,16 @@ def _transition_activation(
         _TRUSTED_POISON_ACTIVATION
     ),
 ) -> _ActivationState:
+    if (
+        type(expected_phase) is not int
+        or type(next_phase) is not int
+        or expected_phase not in {_PHASE_ISSUED, _PHASE_DISPATCHED}
+        or next_phase not in {_PHASE_DISPATCHED, _PHASE_COMPLETED}
+    ):
+        _poison_activation(activation)
+        raise Experiment002CoordinatorError(
+            "child activation transition phases have invalid exact types"
+        )
     with _PROTOCOL_LOCK:
         state = _activation_state(activation)
         if (
