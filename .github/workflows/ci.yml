@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  LC_ALL: C
+  TZ: UTC
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONHASHSEED: "0"
+  PYTHONNOUSERSITE: "1"
+  MPLBACKEND: Agg
+  OMP_DYNAMIC: "FALSE"
+  OMP_NUM_THREADS: "2"
+  MKL_DYNAMIC: "FALSE"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.3"
+
+      - name: Install Ruff
+        run: python -m pip install "ruff>=0.15,<1"
+
+      - name: Lint
+        run: python -m ruff check --no-cache --output-format=github .
+
+  validation:
+    name: Types and portable tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.3"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install registered CPU runtime
+        run: |
+          python -m pip install \
+            --index-url https://download.pytorch.org/whl/cpu \
+            "torch==2.13.0+cpu"
+          python -m pip install \
+            "numpy==2.5.1" \
+            "safetensors==0.8.0"
+          python -m pip install -e ".[dev,train]"
+          python -m pip check
+
+      - name: Strict type check
+        run: python -m mypy --no-incremental --show-error-codes
+
+      - name: Portable unit tests
+        # The omitted files exercise the registered host's fixed paths,
+        # frozen executables, live taskset chain, and owned output roots.
+        run: |
+          python -m pytest -q -W error -p no:cacheprovider \
+            --ignore=tests/test_experiment_002_runner.py \
+            --ignore=tests/test_experiment_002_supervisor.py \
+            --ignore=tests/test_experiment_002_child_result.py \
+            --ignore=tests/test_experiment_002_seed_worker.py
