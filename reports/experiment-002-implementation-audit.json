@@ -1,0 +1,117 @@
+{
+  "bindings": {
+    "metrics_implementation": {
+      "last_committed_commit": "4713acb44b9656f8465bb62019480dcd257efe1b",
+      "review_candidate_source_sha256": "c3cfd393b41f806e8fcce17af81bccad888e7a7b7f462a4744e71ac165f7e379",
+      "review_candidate_tests_sha256": "3e044b248dd66cce62c46b4e8a773e7886bd28850d3601f9261fcdb95b2464a9"
+    },
+    "trainer_registration": {
+      "commit": "28cb87ecd73e4e12f7fb4cb6fe49912b0951a35b",
+      "path": "configs/experiment-002-trainer.json",
+      "sha256": "768720d031a1f2f6d0a36466fd9b4fa095a2f1b9a6fbbc382d4af5fc51514b48"
+    }
+  },
+  "chronology": {
+    "occurred_after_trainer_registration": true,
+    "occurred_before_source_bound_run_registration": true,
+    "run_registration_path": "configs/experiment-002-run.json",
+    "run_registration_present_at_probe_time": false
+  },
+  "contract_assessment": {
+    "literal_trainer_run_prohibition_boundary_crossed": true,
+    "population_bound_registered_validation_evidence_created": false,
+    "reason_no_experiment_result": "synthetic_labels_matched_only_the_frozen_class_support_and_all_logits_were_zero;no_registered_example_identity_feature_or_model_output_was_bound",
+    "scientific_performance_observed": false,
+    "selection_or_gate_decision_made": false
+  },
+  "experiment": "002",
+  "inputs": {
+    "frame_97_logits": {
+      "dtype": "float32",
+      "shape": [
+        10583,
+        12
+      ],
+      "source": "synthetic_in_memory",
+      "values": "all_numeric_zero"
+    },
+    "label_indices": {
+      "class_support": [
+        397,
+        406,
+        350,
+        377,
+        352,
+        363,
+        363,
+        373,
+        350,
+        372,
+        6278,
+        602
+      ],
+      "dtype": "int64",
+      "example_identity_bound": false,
+      "shape": [
+        10583
+      ],
+      "source": "synthetic_in_memory_frozen_support_only"
+    }
+  },
+  "outputs": {
+    "checkpoint_created": false,
+    "learned_artifact_created": false,
+    "metric_results_published": false,
+    "metric_results_retained": false,
+    "probe_output_file_created": false,
+    "registered_validation_input_digest_created": false,
+    "registered_validation_prediction_digest_created": false,
+    "training_history_entry_created": false
+  },
+  "probes": {
+    "metric_arithmetic_executed": [
+      "frame_97_argmax",
+      "confusion_matrix",
+      "validation_cross_entropy",
+      "macro_f1"
+    ],
+    "private_unmarked_route": {
+      "computations": 1,
+      "entrypoint_at_probe_time": "_compute_validation_metrics",
+      "examples_per_computation": 10583,
+      "examples_scored": 10583,
+      "layout_issuance_marker_present": false
+    },
+    "public_layout_marked_route": {
+      "computations": 2,
+      "entrypoint_at_probe_time": "evaluate_registered_validation_logits",
+      "examples_per_computation": 10583,
+      "examples_scored": 21166,
+      "historical_registered_issuance_marker_present": true,
+      "registered_layout_verifier_acceptance_observed": true
+    },
+    "totals": {
+      "computations": 3,
+      "examples_scored": 31749
+    }
+  },
+  "resolution": {
+    "full_shape_synthetic_scoring_before_run_registration_forbidden": true,
+    "layout_only_public_entrypoint": "evaluate_validation_layout_logits",
+    "layout_only_verifier": "verify_validation_layout_metrics",
+    "population_bound_evidence_requires_exact_corpus_population_identity_feature_label_logit_and_prediction_binding": true,
+    "run_registration_must_bind_this_report": true
+  },
+  "schema_version": 1,
+  "scope_exclusions": {
+    "checkpoint_accessed": false,
+    "experiment_output_artifact_accessed": false,
+    "model_accessed": false,
+    "normalization_artifact_or_capability_accessed": false,
+    "pcm_cache_accessed": false,
+    "registered_corpus_or_manifest_rows_accessed": false,
+    "registered_validation_features_accessed": false,
+    "speech_commands_audio_accessed": false,
+    "training_population_accessed": false
+  }
+}

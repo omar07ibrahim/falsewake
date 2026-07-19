@@ -1,4 +1,7 @@
-"""Exact validation arithmetic and gates for Experiment 002."""
+"""Exact validation arithmetic and gates for Experiment 002.
+
+Population provenance belongs to the separate registered-evidence layer.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ Int64Array = NDArray[np.int64]
 CLASS_COUNT: Final = len(CLASS_ORDER)
 TARGET_CLASS_COUNT: Final = 10
 TARGET_POPULATION: Final = 3_703
+_LAYOUT_ROUTE_MARKER: Final = object()
 
 
 class Experiment002MetricsError(ValueError):
@@ -31,8 +35,12 @@ class ValidationMetrics:
 
     _confusion_matrix: Int64Array
     _cross_entropy: np.float64
+    _frame_97_logits: Float32Array
+    _label_indices: Int64Array
+    _layout: _MetricLayout
     _macro_f1: Fraction
     _predicted_indices: Int64Array
+    _layout_route_marker: object | None
 
     def __init__(self) -> None:
         raise TypeError("ValidationMetrics values are issued by this module")
@@ -57,7 +65,7 @@ class ValidationMetrics:
 
     @property
     def predicted_indices(self) -> Int64Array:
-        """Return a fresh immutable snapshot in registered example order."""
+        """Return a fresh immutable snapshot in the issued input-row order."""
 
         return _snapshot_int64(_issued_metric_state(self).predicted_indices)
 
@@ -72,8 +80,12 @@ class ValidationMetrics:
 class _IssuedValidationMetricsState:
     confusion_matrix: Int64Array
     cross_entropy: np.float64
+    frame_97_logits: Float32Array
+    label_indices: Int64Array
+    layout: _MetricLayout
     macro_f1: Fraction
     predicted_indices: Int64Array
+    layout_route_marker: object | None
 
 
 _ISSUED_METRICS: weakref.WeakKeyDictionary[
@@ -84,7 +96,7 @@ _ISSUED_METRICS_LOCK = threading.Lock()
 
 @dataclass(frozen=True, slots=True)
 class ValidationGateResults:
-    """The five independently reported registered validation gates."""
+    """The five frozen validation predicates evaluated on one confusion matrix."""
 
     every_target_recall: bool
     macro_f1: bool
@@ -105,7 +117,7 @@ class ValidationGateResults:
 
     @property
     def passed(self) -> bool:
-        """Return whether every registered absolute gate passed."""
+        """Return whether every frozen absolute predicate passed."""
 
         return (
             self.every_target_recall
@@ -136,46 +148,74 @@ class _MetricLayout:
             raise Experiment002MetricsError("class_support differs from example_count")
 
 
-_REGISTERED_LAYOUT: Final = _MetricLayout(
+_FROZEN_VALIDATION_LAYOUT: Final = _MetricLayout(
     example_count=VALIDATION_EXAMPLE_COUNT,
     class_support=VALIDATION_CLASS_SUPPORT,
 )
 
 
-def evaluate_registered_validation_logits(
+def evaluate_validation_layout_logits(
     label_indices: Int64Array,
     frame_97_logits: Float32Array,
 ) -> ValidationMetrics:
-    """Evaluate the frozen 10,583-row validation population exactly once."""
+    """Score arrays that match the frozen validation shape and class support.
 
-    _require_metric_inputs(label_indices, frame_97_logits, _REGISTERED_LAYOUT)
+    This route does not bind rows to registered population identities and therefore
+    cannot, by itself, issue registered validation evidence.
+    """
+
+    _require_metric_inputs(label_indices, frame_97_logits, _FROZEN_VALIDATION_LAYOUT)
     return _compute_validation_metrics(
         label_indices,
         frame_97_logits,
-        _REGISTERED_LAYOUT,
+        _FROZEN_VALIDATION_LAYOUT,
+        layout_route_marker=_LAYOUT_ROUTE_MARKER,
     )
 
 
-def verify_registered_validation_metrics(result: ValidationMetrics) -> None:
-    """Reject metric values not issued for the registered validation layout."""
+def verify_validation_layout_metrics(result: ValidationMetrics) -> None:
+    """Reject values not issued through the frozen layout-only route."""
 
     state = _issued_metric_state(result)
+    if state.layout_route_marker is not _LAYOUT_ROUTE_MARKER or (
+        state.layout != _FROZEN_VALIDATION_LAYOUT
+    ):
+        raise Experiment002MetricsError(
+            "validation metrics differ from the frozen layout route"
+        )
     observed_support = tuple(
         _row_total(state.confusion_matrix, class_index)
         for class_index in range(CLASS_COUNT)
     )
-    if observed_support != _REGISTERED_LAYOUT.class_support or (
-        state.predicted_indices.shape != (_REGISTERED_LAYOUT.example_count,)
+    if observed_support != _FROZEN_VALIDATION_LAYOUT.class_support or (
+        state.predicted_indices.shape != (_FROZEN_VALIDATION_LAYOUT.example_count,)
     ):
         raise Experiment002MetricsError(
-            "validation metrics differ from the registered layout"
+            "validation metrics differ from the frozen layout route"
         )
 
 
-def registered_validation_gates(
+def verify_validation_metrics_inputs(
+    result: ValidationMetrics,
+    label_indices: Int64Array,
+    frame_97_logits: Float32Array,
+) -> None:
+    """Verify exact label/logit bytes, without asserting population provenance."""
+
+    state = _issued_metric_state(result)
+    _require_metric_inputs(label_indices, frame_97_logits, state.layout)
+    if not _same_int64_bytes(label_indices, state.label_indices) or not (
+        _same_float32_bytes(frame_97_logits, state.frame_97_logits)
+    ):
+        raise Experiment002MetricsError(
+            "validation metric inputs differ from the issued computation"
+        )
+
+
+def evaluate_validation_gate_predicates(
     confusion_matrix: Int64Array,
 ) -> ValidationGateResults:
-    """Evaluate all preregistered absolute gates without floating arithmetic."""
+    """Evaluate preregistered predicates; this does not issue result evidence."""
 
     _require_confusion_matrix(confusion_matrix)
     observed_support = tuple(
@@ -183,7 +223,7 @@ def registered_validation_gates(
     )
     if observed_support != VALIDATION_CLASS_SUPPORT:
         raise Experiment002MetricsError(
-            "confusion matrix support differs from registered validation"
+            "confusion matrix support differs from the frozen validation layout"
         )
 
     every_target_recall = all(
@@ -245,7 +285,7 @@ def _evaluate_validation_logits(
     *,
     layout: _MetricLayout,
 ) -> ValidationMetrics:
-    """Private synthetic-layout seam with the registered scalar arithmetic."""
+    """Private synthetic-layout seam with the frozen scalar arithmetic."""
 
     if type(layout) is not _MetricLayout:
         raise TypeError("layout must be a _MetricLayout")
@@ -257,9 +297,15 @@ def _compute_validation_metrics(
     label_indices: Int64Array,
     frame_97_logits: Float32Array,
     layout: _MetricLayout,
+    *,
+    layout_route_marker: object | None = None,
 ) -> ValidationMetrics:
+    labels_snapshot = _snapshot_int64(label_indices)
+    logits_snapshot = _snapshot_float32(frame_97_logits)
+    layout_snapshot = _MetricLayout(layout.example_count, layout.class_support)
+    _require_metric_inputs(labels_snapshot, logits_snapshot, layout_snapshot)
     predictions = np.array(
-        np.argmax(frame_97_logits, axis=1),
+        np.argmax(logits_snapshot, axis=1),
         dtype=np.int64,
         order="C",
         copy=True,
@@ -267,12 +313,12 @@ def _compute_validation_metrics(
     confusion = np.zeros((CLASS_COUNT, CLASS_COUNT), dtype=np.int64, order="C")
     cross_entropy_sum = np.float64(0.0)
 
-    for row_index in range(layout.example_count):
-        true_index = int(label_indices[row_index])
+    for row_index in range(layout_snapshot.example_count):
+        true_index = int(labels_snapshot[row_index])
         predicted_index = int(predictions[row_index])
         confusion[true_index, predicted_index] += np.int64(1)
 
-        row = frame_97_logits[row_index]
+        row = logits_snapshot[row_index]
         maximum = np.float64(row[0])
         for class_index in range(1, CLASS_COUNT):
             candidate = np.float64(row[class_index])
@@ -295,20 +341,40 @@ def _compute_validation_metrics(
             )
         cross_entropy_sum = np.float64(cross_entropy_sum + row_cross_entropy)
 
-    cross_entropy = np.float64(cross_entropy_sum / np.float64(layout.example_count))
+    cross_entropy = np.float64(
+        cross_entropy_sum / np.float64(layout_snapshot.example_count)
+    )
     macro_f1 = macro_f1_from_confusion(confusion)
     _validate_metric_values(confusion, cross_entropy, macro_f1, predictions)
 
     result = object.__new__(ValidationMetrics)
     object.__setattr__(result, "_confusion_matrix", _snapshot_int64(confusion))
     object.__setattr__(result, "_cross_entropy", np.float64(cross_entropy))
+    object.__setattr__(
+        result,
+        "_frame_97_logits",
+        _snapshot_float32(logits_snapshot),
+    )
+    object.__setattr__(result, "_label_indices", _snapshot_int64(labels_snapshot))
+    object.__setattr__(result, "_layout", layout_snapshot)
     object.__setattr__(result, "_macro_f1", macro_f1)
     object.__setattr__(result, "_predicted_indices", _snapshot_int64(predictions))
+    object.__setattr__(
+        result,
+        "_layout_route_marker",
+        layout_route_marker,
+    )
     state = _IssuedValidationMetricsState(
         confusion_matrix=_snapshot_int64(confusion),
         cross_entropy=np.float64(cross_entropy),
+        frame_97_logits=_snapshot_float32(logits_snapshot),
+        label_indices=_snapshot_int64(labels_snapshot),
+        layout=_MetricLayout(
+            layout_snapshot.example_count, layout_snapshot.class_support
+        ),
         macro_f1=macro_f1,
         predicted_indices=_snapshot_int64(predictions),
+        layout_route_marker=layout_route_marker,
     )
     with _ISSUED_METRICS_LOCK:
         _ISSUED_METRICS[result] = state
@@ -445,11 +511,20 @@ def _issued_metric_state(result: ValidationMetrics) -> _IssuedValidationMetricsS
         state.macro_f1,
         state.predicted_indices,
     )
+    _require_metric_inputs(
+        state.label_indices,
+        state.frame_97_logits,
+        state.layout,
+    )
     try:
         result_confusion = result._confusion_matrix
         result_cross_entropy = result._cross_entropy
+        result_logits = result._frame_97_logits
+        result_labels = result._label_indices
+        result_layout = result._layout
         result_macro_f1 = result._macro_f1
         result_predictions = result._predicted_indices
+        result_layout_route_marker = result._layout_route_marker
     except AttributeError as error:
         raise Experiment002MetricsError(
             "validation metric capability changed after issuance"
@@ -458,8 +533,13 @@ def _issued_metric_state(result: ValidationMetrics) -> _IssuedValidationMetricsS
         not _same_int64_bytes(result_confusion, state.confusion_matrix)
         or type(result_cross_entropy) is not np.float64
         or result_cross_entropy.tobytes() != state.cross_entropy.tobytes()
+        or not _same_float32_bytes(result_logits, state.frame_97_logits)
+        or not _same_int64_bytes(result_labels, state.label_indices)
+        or not _same_metric_layout(result_layout, state.layout)
+        or type(result_macro_f1) is not Fraction
         or result_macro_f1 != state.macro_f1
         or not _same_int64_bytes(result_predictions, state.predicted_indices)
+        or result_layout_route_marker is not state.layout_route_marker
     ):
         raise Experiment002MetricsError(
             "validation metric capability changed after issuance"
@@ -475,6 +555,14 @@ def _snapshot_int64(values: Int64Array) -> Int64Array:
     return snapshot
 
 
+def _snapshot_float32(values: Float32Array) -> Float32Array:
+    if type(values) is not np.ndarray or values.dtype != np.dtype(np.float32):
+        raise TypeError("metric snapshot must be a float32 NumPy array")
+    snapshot = np.array(values, dtype=np.float32, order="C", copy=True)
+    snapshot.setflags(write=False)
+    return snapshot
+
+
 def _same_int64_bytes(left: Int64Array, right: Int64Array) -> bool:
     return (
         type(left) is np.ndarray
@@ -484,6 +572,29 @@ def _same_int64_bytes(left: Int64Array, right: Int64Array) -> bool:
         and left.flags.owndata
         and not left.flags.writeable
         and left.tobytes(order="C") == right.tobytes(order="C")
+    )
+
+
+def _same_float32_bytes(left: Float32Array, right: Float32Array) -> bool:
+    return (
+        type(left) is np.ndarray
+        and left.dtype == np.dtype(np.float32)
+        and left.shape == right.shape
+        and left.flags.c_contiguous
+        and left.flags.owndata
+        and not left.flags.writeable
+        and left.tobytes(order="C") == right.tobytes(order="C")
+    )
+
+
+def _same_metric_layout(left: _MetricLayout, right: _MetricLayout) -> bool:
+    return (
+        type(left) is _MetricLayout
+        and type(left.example_count) is int
+        and left.example_count == right.example_count
+        and type(left.class_support) is tuple
+        and all(type(count) is int for count in left.class_support)
+        and left.class_support == right.class_support
     )
 
 

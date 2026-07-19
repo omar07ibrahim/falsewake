@@ -213,6 +213,24 @@ one on a zero-input 53-parameter-state fixture and one on a scalar parameter wit
 zero gradient. Neither used registered audio, features, labels, or validation, and
 neither emitted a metric, checkpoint, or file.
 
+During a later post-registration implementation audit, three discarded full-shape
+synthetic metric computations were accidentally executed before the source-bound
+run registration. Two used the then-public registered-layout entry point and its
+issuance marker/verifier; one used the private unmarked path. Every computation used
+only in-memory labels matching the frozen class support and all-zero `float32`
+logits with shape `[10583, 12]`, for 31,749 synthetic rows in total. This crossed
+the literal pre-run prohibition at the API/layout level. It accessed no registered
+corpus rows, PCM cache, normalization, validation features, model, checkpoint,
+training population, or experiment artifact. No result was retained or published,
+and no experimental performance, gate, or selection decision was observed. The
+[canonical implementation audit](../reports/experiment-002-implementation-audit.json)
+is immutable and must be bound by the later run registration.
+
+The corrected metrics API now issues only layout-conforming arithmetic results. A
+separate evidence layer must bind exact corpus and materialized-population
+identities, feature, label, and logit bytes, predictions, and registered digest
+framing before any value can be treated as registered validation evidence.
+
 The addendum deliberately does not authorize training by itself. After the
 validation, trainer, artifact, and launcher implementations have been reviewed and
 committed, a second source-bound run registration must bind their exact committed

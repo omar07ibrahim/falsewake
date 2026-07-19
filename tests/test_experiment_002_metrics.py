@@ -60,7 +60,7 @@ def _tiny_inputs() -> tuple[
     return labels, logits, metrics._MetricLayout(4, tuple(support))
 
 
-def _registered_confusion() -> np.ndarray[tuple[int, int], np.dtype[np.int64]]:
+def _frozen_layout_confusion() -> np.ndarray[tuple[int, int], np.dtype[np.int64]]:
     confusion = np.zeros((12, 12), dtype=np.int64)
     for class_index, support in enumerate(VALIDATION_CLASS_SUPPORT):
         confusion[class_index, class_index] = support
@@ -90,7 +90,7 @@ def test_metric_module_is_pure_and_reconciles_the_frozen_registration() -> None:
         "weakref",
     }
     assert not any(name in source for name in ("torch", "random", "secrets"))
-    assert "np.argmax(frame_97_logits, axis=1)" in source
+    assert "np.argmax(logits_snapshot, axis=1)" in source
     assert "np.sum" not in source
 
     config = json.loads(
@@ -100,7 +100,7 @@ def test_metric_module_is_pure_and_reconciles_the_frozen_registration() -> None:
     assert tuple(config["metrics"]["support"]) == VALIDATION_CLASS_SUPPORT
     assert config["metrics"]["target_population"] == metrics.TARGET_POPULATION
     assert config["validation_execution"]["population_count"] == (
-        metrics._REGISTERED_LAYOUT.example_count
+        metrics._FROZEN_VALIDATION_LAYOUT.example_count
     )
 
 
@@ -145,21 +145,25 @@ def test_macro_f1_uses_zero_for_empty_classes_and_reduced_fractions() -> None:
     assert metrics.macro_f1_from_confusion(confusion) == expected
 
 
-def test_registered_gates_use_exact_integer_boundaries(
+def test_frozen_gate_predicates_use_exact_integer_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    perfect = _registered_confusion()
-    perfect_gates = metrics.registered_validation_gates(perfect)
+    perfect = _frozen_layout_confusion()
+    perfect_gates = metrics.evaluate_validation_gate_predicates(perfect)
     assert perfect_gates.passed
 
     target_recall = perfect.copy(order="C")
     target_recall[0] = 0
     target_recall[0, 0] = 277
     target_recall[0, 10] = VALIDATION_CLASS_SUPPORT[0] - 277
-    assert not metrics.registered_validation_gates(target_recall).every_target_recall
+    assert not metrics.evaluate_validation_gate_predicates(
+        target_recall
+    ).every_target_recall
     target_recall[0, 0] += 1
     target_recall[0, 10] -= 1
-    assert metrics.registered_validation_gates(target_recall).every_target_recall
+    assert metrics.evaluate_validation_gate_predicates(
+        target_recall
+    ).every_target_recall
 
     target_accuracy = perfect.copy(order="C")
     errors = [56, 56, 56, 56, 56, 55, 55, 55, 55, 55]
@@ -167,47 +171,53 @@ def test_registered_gates_use_exact_integer_boundaries(
         target_accuracy[class_index, class_index] -= error_count
         target_accuracy[class_index, 10] += error_count
     assert sum(int(target_accuracy[index, index]) for index in range(10)) == 3_148
-    assert metrics.registered_validation_gates(target_accuracy).target_accuracy
+    assert metrics.evaluate_validation_gate_predicates(target_accuracy).target_accuracy
     target_accuracy[9, 9] -= 1
     target_accuracy[9, 10] += 1
-    assert not metrics.registered_validation_gates(target_accuracy).target_accuracy
+    assert not metrics.evaluate_validation_gate_predicates(
+        target_accuracy
+    ).target_accuracy
 
     unknown_rate = perfect.copy(order="C")
     unknown_rate[10, 10] -= 1_255
     unknown_rate[10, 0] += 1_255
-    assert metrics.registered_validation_gates(unknown_rate).unknown_target_rate
+    assert metrics.evaluate_validation_gate_predicates(unknown_rate).unknown_target_rate
     unknown_rate[10, 10] -= 1
     unknown_rate[10, 0] += 1
-    assert not metrics.registered_validation_gates(unknown_rate).unknown_target_rate
+    assert not metrics.evaluate_validation_gate_predicates(
+        unknown_rate
+    ).unknown_target_rate
 
     silence_rate = perfect.copy(order="C")
     silence_rate[11, 11] -= 30
     silence_rate[11, 0] += 30
-    assert metrics.registered_validation_gates(silence_rate).silence_target_rate
+    assert metrics.evaluate_validation_gate_predicates(silence_rate).silence_target_rate
     silence_rate[11, 11] -= 1
     silence_rate[11, 0] += 1
-    assert not metrics.registered_validation_gates(silence_rate).silence_target_rate
+    assert not metrics.evaluate_validation_gate_predicates(
+        silence_rate
+    ).silence_target_rate
 
     macro_failure = np.zeros((12, 12), dtype=np.int64)
     for class_index, support in enumerate(VALIDATION_CLASS_SUPPORT):
         macro_failure[class_index, 0] = support
-    assert not metrics.registered_validation_gates(macro_failure).macro_f1
+    assert not metrics.evaluate_validation_gate_predicates(macro_failure).macro_f1
 
     monkeypatch.setattr(
         metrics,
         "macro_f1_from_confusion",
         lambda value: Fraction(4, 5),
     )
-    assert metrics.registered_validation_gates(perfect).macro_f1
+    assert metrics.evaluate_validation_gate_predicates(perfect).macro_f1
     monkeypatch.setattr(
         metrics,
         "macro_f1_from_confusion",
         lambda value: Fraction(4, 5) - Fraction(1, 10**30),
     )
-    assert not metrics.registered_validation_gates(perfect).macro_f1
+    assert not metrics.evaluate_validation_gate_predicates(perfect).macro_f1
 
 
-def test_public_entrypoint_binds_the_registered_layout_without_scoring(
+def test_public_entrypoint_binds_only_the_frozen_layout_without_scoring(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     labels = np.repeat(
@@ -224,16 +234,19 @@ def test_public_entrypoint_binds_the_registered_layout_without_scoring(
         observed_labels: metrics.Int64Array,
         observed_logits: metrics.Float32Array,
         layout: metrics._MetricLayout,
+        *,
+        layout_route_marker: object | None = None,
     ) -> ValidationMetrics:
         nonlocal calls
         calls += 1
         assert observed_labels is labels
         assert observed_logits is logits
-        assert layout is metrics._REGISTERED_LAYOUT
+        assert layout is metrics._FROZEN_VALIDATION_LAYOUT
+        assert layout_route_marker is metrics._LAYOUT_ROUTE_MARKER
         return sentinel
 
     monkeypatch.setattr(metrics, "_compute_validation_metrics", compute)
-    observed = metrics.evaluate_registered_validation_logits(labels, logits)
+    observed = metrics.evaluate_validation_layout_logits(labels, logits)
 
     assert observed is sentinel
     assert calls == 1
@@ -326,8 +339,21 @@ def test_results_are_issuer_only_and_return_fresh_immutable_snapshots() -> None:
         first_confusion[0, 0] = 0
     with pytest.raises(ValueError, match="read-only"):
         first_predictions[0] = 11
-    with pytest.raises(Experiment002MetricsError, match="registered layout"):
-        metrics.verify_registered_validation_metrics(observed)
+    metrics.verify_validation_metrics_inputs(observed, labels, logits)
+    changed_logits = logits.copy(order="C")
+    changed_logits[0, 0] = np.float32(-0.0)
+    changed_logits.setflags(write=False)
+    assert np.array_equal(changed_logits, logits)
+    assert changed_logits.tobytes(order="C") != logits.tobytes(order="C")
+    with pytest.raises(Experiment002MetricsError, match="inputs differ"):
+        metrics.verify_validation_metrics_inputs(observed, labels, changed_logits)
+    changed_labels = labels.copy(order="C")
+    changed_labels[[0, 1]] = changed_labels[[1, 0]]
+    changed_labels.setflags(write=False)
+    with pytest.raises(Experiment002MetricsError, match="inputs differ"):
+        metrics.verify_validation_metrics_inputs(observed, changed_labels, logits)
+    with pytest.raises(Experiment002MetricsError, match="frozen layout route"):
+        metrics.verify_validation_layout_metrics(observed)
 
     with pytest.raises(TypeError, match="issued"):
         ValidationMetrics()
@@ -354,6 +380,85 @@ def test_results_are_issuer_only_and_return_fresh_immutable_snapshots() -> None:
     with pytest.raises(Experiment002MetricsError, match="changed"):
         _ = observed.cross_entropy
 
+    class EqualityLiar:
+        def __ne__(self, other: object) -> bool:
+            return False
+
+    layout_tampered = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+    object.__setattr__(
+        layout_tampered,
+        "_layout",
+        cast(metrics._MetricLayout, EqualityLiar()),
+    )
+    with pytest.raises(Experiment002MetricsError, match="changed"):
+        _ = layout_tampered.macro_f1
+
+    macro_tampered = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+    object.__setattr__(
+        macro_tampered,
+        "_macro_f1",
+        cast(Fraction, EqualityLiar()),
+    )
+    with pytest.raises(Experiment002MetricsError, match="changed"):
+        _ = macro_tampered.macro_f1
+
+
+def test_metric_computation_uses_a_private_pre_scoring_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels, logits, layout = _tiny_inputs()
+    reference = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+    original_snapshot = metrics._snapshot_float32
+
+    def snapshot(values: metrics.Float32Array) -> metrics.Float32Array:
+        captured = original_snapshot(values)
+        if values is logits:
+            values.setflags(write=True)
+            values[0, 0] = np.float32(100.0)
+            values.setflags(write=False)
+        return captured
+
+    monkeypatch.setattr(metrics, "_snapshot_float32", snapshot)
+    observed = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+
+    assert observed.cross_entropy_hex == reference.cross_entropy_hex
+    np.testing.assert_array_equal(
+        observed.predicted_indices,
+        reference.predicted_indices,
+    )
+    with pytest.raises(Experiment002MetricsError, match="inputs differ"):
+        metrics.verify_validation_metrics_inputs(observed, labels, logits)
+
+
+def test_metric_computation_uses_the_private_layout_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels, logits, layout = _tiny_inputs()
+    reference = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+    real_require = metrics._require_metric_inputs
+    calls = 0
+
+    def require(
+        observed_labels: metrics.Int64Array,
+        observed_logits: metrics.Float32Array,
+        observed_layout: metrics._MetricLayout,
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        real_require(observed_labels, observed_logits, observed_layout)
+        if calls == 2:
+            object.__setattr__(layout, "example_count", 1)
+            object.__setattr__(layout, "class_support", (1,) + (0,) * 11)
+
+    monkeypatch.setattr(metrics, "_require_metric_inputs", require)
+    observed = metrics._evaluate_validation_logits(labels, logits, layout=layout)
+
+    assert observed.cross_entropy_hex == reference.cross_entropy_hex
+    np.testing.assert_array_equal(
+        observed.confusion_matrix,
+        reference.confusion_matrix,
+    )
+
 
 def test_layout_and_confusion_types_fail_closed() -> None:
     with pytest.raises(TypeError, match="integer"):
@@ -375,10 +480,10 @@ def test_layout_and_confusion_types_fail_closed() -> None:
         with pytest.raises((TypeError, Experiment002MetricsError)):
             metrics.macro_f1_from_confusion(cast(metrics.Int64Array, confusion))
 
-    wrong_support = _registered_confusion()
+    wrong_support = _frozen_layout_confusion()
     wrong_support[0, 0] -= 1
     with pytest.raises(Experiment002MetricsError, match="support"):
-        metrics.registered_validation_gates(wrong_support)
+        metrics.evaluate_validation_gate_predicates(wrong_support)
 
     gates = metrics.ValidationGateResults(True, True, True, True, True)
     assert gates.passed
