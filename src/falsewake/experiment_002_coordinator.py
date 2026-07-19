@@ -18,6 +18,7 @@ import fcntl
 import hashlib
 import importlib
 import json
+import math
 import os
 import secrets
 import socket
@@ -27,7 +28,8 @@ import threading
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from types import FunctionType, ModuleType
+from fractions import Fraction
+from types import FunctionType, MemberDescriptorType, ModuleType
 from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 from falsewake.experiment_002_run_authority import (
@@ -53,6 +55,16 @@ _WORKER_FUNCTION: Final = "run_registered_seed_process"
 _PROCESS_GUARD_MODULE: Final = "falsewake.experiment_002_process_guard"
 _PROCESS_GUARD_GETTER: Final = "get_registered_child_process_guard"
 _PROCESS_GUARD_VERIFIER: Final = "verify_verified_child_process_guard"
+_SUPERVISOR_MODULE: Final = "falsewake.experiment_002_supervisor"
+_SUPERVISE_CHILD_FUNCTION: Final = "_supervise_child"
+_SUPERVISED_CHILD_RESULT_TYPE: Final = "_SupervisedChildResult"
+_CHILD_RESULT_MODULE: Final = "falsewake.experiment_002_child_result"
+_CHILD_RESULT_BINDING_TYPE: Final = "ChildResultBinding"
+_VERIFIED_CHILD_RESULT_TYPE: Final = "VerifiedChildResult"
+_CHILD_RESULT_LOADER: Final = "load_registered_child_result"
+_CHILD_RESULT_VERIFIER: Final = "verify_verified_child_result"
+_CHILD_RESULT_LOADER_FUNCTION: Final = "load_route"
+_CHILD_RESULT_VERIFIER_FUNCTION: Final = "verify_route"
 _SCHEMA_VERSION: Final = 1
 _FRAME_MAGIC: Final = b"FW2ACTV1"
 _FRAME_HEADER: Final = struct.Struct(">8sI")
@@ -73,6 +85,24 @@ _ACTIVATION_MARKER: Final = object()
 _PHASE_ISSUED: Final = 1
 _PHASE_DISPATCHED: Final = 2
 _PHASE_COMPLETED: Final = 3
+
+type _ChildResultBindingFrame = tuple[str, int, int, str, str, str, str]
+type _RegisteredAssignmentFrame = tuple[str, int, int]
+type _RegistrationBindingFrame = tuple[str, str, str, str]
+type _VerifiedChildResultFrame = tuple[
+    str,
+    int,
+    int,
+    str,
+    str,
+    str,
+    str,
+    int,
+    int,
+    int,
+    str,
+    str,
+]
 
 
 class Experiment002CoordinatorError(RuntimeError):
@@ -178,6 +208,61 @@ class _ProcessGuardVerifier(Protocol):
 class _ProcessGuardBinding:
     guard: object
     verifier: _ProcessGuardVerifier
+
+
+class _VerifiedChildResultView(Protocol):
+    @property
+    def role(self) -> str: ...
+
+    @property
+    def ordinal(self) -> int: ...
+
+    @property
+    def seed(self) -> int: ...
+
+    @property
+    def registration_head_commit(self) -> str: ...
+
+    @property
+    def implementation_commit(self) -> str: ...
+
+    @property
+    def registration_sha256(self) -> str: ...
+
+    @property
+    def source_bundle_sha256(self) -> str: ...
+
+    @property
+    def winner_epoch(self) -> int: ...
+
+    @property
+    def winner_macro_f1(self) -> Fraction: ...
+
+    @property
+    def winner_validation_cross_entropy(self) -> float: ...
+
+    @property
+    def model_tensor_sha256(self) -> str: ...
+
+
+type _ParentExecutionRoutes = tuple[
+    ModuleType,
+    ModuleType,
+    FunctionType,
+    type[object],
+    type[object],
+    type[object],
+    FunctionType,
+    FunctionType,
+]
+type _RegisteredParentChildResult = tuple[
+    int,
+    tuple[int, int],
+    int,
+    int,
+    int,
+    _VerifiedChildResultView,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -674,6 +759,184 @@ def _claim_and_verify_child_process_guard() -> _ProcessGuardBinding:
     return binding
 
 
+def _require_parent_module_identity(module: object, name: str) -> ModuleType:
+    if (
+        type(module) is not ModuleType
+        or type(module.__name__) is not str
+        or module.__name__ != name
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent execution module identity is invalid"
+        )
+    return module
+
+
+def _require_parent_function_identity(
+    route: object,
+    name: str,
+    module_name: str,
+) -> FunctionType:
+    if (
+        type(route) is not FunctionType
+        or type(route.__name__) is not str
+        or route.__name__ != name
+        or type(route.__module__) is not str
+        or route.__module__ != module_name
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent execution function identity is invalid"
+        )
+    return route
+
+
+def _require_parent_type_identity(
+    value: object,
+    name: str,
+    module_name: str,
+) -> type[object]:
+    if (
+        type(value) is not type
+        or type(value.__name__) is not str
+        or value.__name__ != name
+        or type(value.__module__) is not str
+        or value.__module__ != module_name
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent execution type identity is invalid"
+        )
+    return value
+
+
+def _require_parent_execution_routes_unchanged(
+    routes: _ParentExecutionRoutes,
+    /,
+) -> None:
+    if type(routes) is not tuple or len(routes) != 8:
+        raise Experiment002CoordinatorError(
+            "registered parent execution routes have an invalid exact type"
+        )
+    (
+        claimed_supervisor_module,
+        claimed_child_result_module,
+        claimed_supervise_child,
+        claimed_supervised_child_result_type,
+        claimed_child_result_binding_type,
+        claimed_verified_child_result_type,
+        claimed_load_registered_child_result,
+        claimed_verify_verified_child_result,
+    ) = routes
+    supervisor_module = _require_parent_module_identity(
+        claimed_supervisor_module,
+        _SUPERVISOR_MODULE,
+    )
+    child_result_module = _require_parent_module_identity(
+        claimed_child_result_module,
+        _CHILD_RESULT_MODULE,
+    )
+    supervise_child = _require_parent_function_identity(
+        claimed_supervise_child,
+        _SUPERVISE_CHILD_FUNCTION,
+        _SUPERVISOR_MODULE,
+    )
+    supervised_child_result_type = _require_parent_type_identity(
+        claimed_supervised_child_result_type,
+        _SUPERVISED_CHILD_RESULT_TYPE,
+        _SUPERVISOR_MODULE,
+    )
+    child_result_binding_type = _require_parent_type_identity(
+        claimed_child_result_binding_type,
+        _CHILD_RESULT_BINDING_TYPE,
+        _CHILD_RESULT_MODULE,
+    )
+    verified_child_result_type = _require_parent_type_identity(
+        claimed_verified_child_result_type,
+        _VERIFIED_CHILD_RESULT_TYPE,
+        _CHILD_RESULT_MODULE,
+    )
+    load_registered_child_result = _require_parent_function_identity(
+        claimed_load_registered_child_result,
+        _CHILD_RESULT_LOADER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    verify_verified_child_result = _require_parent_function_identity(
+        claimed_verify_verified_child_result,
+        _CHILD_RESULT_VERIFIER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    if (
+        getattr(supervisor_module, _SUPERVISE_CHILD_FUNCTION, None)
+        is not supervise_child
+        or getattr(supervisor_module, _SUPERVISED_CHILD_RESULT_TYPE, None)
+        is not supervised_child_result_type
+        or getattr(child_result_module, _CHILD_RESULT_BINDING_TYPE, None)
+        is not child_result_binding_type
+        or getattr(child_result_module, _VERIFIED_CHILD_RESULT_TYPE, None)
+        is not verified_child_result_type
+        or getattr(child_result_module, _CHILD_RESULT_LOADER, None)
+        is not load_registered_child_result
+        or getattr(child_result_module, _CHILD_RESULT_VERIFIER, None)
+        is not verify_verified_child_result
+        or getattr(supervisor_module, _CHILD_RESULT_BINDING_TYPE, None)
+        is not child_result_binding_type
+        or getattr(supervisor_module, _VERIFIED_CHILD_RESULT_TYPE, None)
+        is not verified_child_result_type
+        or getattr(supervisor_module, _CHILD_RESULT_LOADER, None)
+        is not load_registered_child_result
+        or getattr(supervisor_module, _CHILD_RESULT_VERIFIER, None)
+        is not verify_verified_child_result
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent execution routes changed or disagree"
+        )
+
+
+def _claim_and_verify_parent_execution_routes() -> _ParentExecutionRoutes:
+    supervisor_module = _require_parent_module_identity(
+        importlib.import_module(_SUPERVISOR_MODULE),
+        _SUPERVISOR_MODULE,
+    )
+    child_result_module = _require_parent_module_identity(
+        importlib.import_module(_CHILD_RESULT_MODULE),
+        _CHILD_RESULT_MODULE,
+    )
+    routes = (
+        supervisor_module,
+        child_result_module,
+        _require_parent_function_identity(
+            getattr(supervisor_module, _SUPERVISE_CHILD_FUNCTION, None),
+            _SUPERVISE_CHILD_FUNCTION,
+            _SUPERVISOR_MODULE,
+        ),
+        _require_parent_type_identity(
+            getattr(supervisor_module, _SUPERVISED_CHILD_RESULT_TYPE, None),
+            _SUPERVISED_CHILD_RESULT_TYPE,
+            _SUPERVISOR_MODULE,
+        ),
+        _require_parent_type_identity(
+            getattr(child_result_module, _CHILD_RESULT_BINDING_TYPE, None),
+            _CHILD_RESULT_BINDING_TYPE,
+            _CHILD_RESULT_MODULE,
+        ),
+        _require_parent_type_identity(
+            getattr(child_result_module, _VERIFIED_CHILD_RESULT_TYPE, None),
+            _VERIFIED_CHILD_RESULT_TYPE,
+            _CHILD_RESULT_MODULE,
+        ),
+        _require_parent_function_identity(
+            getattr(child_result_module, _CHILD_RESULT_LOADER, None),
+            _CHILD_RESULT_LOADER_FUNCTION,
+            _CHILD_RESULT_MODULE,
+        ),
+        _require_parent_function_identity(
+            getattr(child_result_module, _CHILD_RESULT_VERIFIER, None),
+            _CHILD_RESULT_VERIFIER_FUNCTION,
+            _CHILD_RESULT_MODULE,
+        ),
+    )
+    _require_parent_execution_routes_unchanged(routes)
+    return routes
+
+
 def _registration_binding(
     registration: VerifiedRunRegistration,
 ) -> _RegistrationBinding:
@@ -717,6 +980,127 @@ def _registration_bindings_match(
         and first.registration_sha256 == second.registration_sha256
         and first.source_bundle_sha256 == second.source_bundle_sha256
     )
+
+
+def _snapshot_registered_assignment(assignment: _Assignment, /) -> _Assignment:
+    _require_assignment(assignment)
+    first = (assignment.role, assignment.seed, assignment.ordinal)
+    snapshot = _assignment(first[0], first[1])
+    second = (assignment.role, assignment.seed, assignment.ordinal)
+    if first != second or not _assignments_match(snapshot, assignment):
+        raise Experiment002CoordinatorError(
+            "child assignment changed while it was snapshotted"
+        )
+    return snapshot
+
+
+def _snapshot_registered_cpu_ids(cpu_ids: tuple[int, int], /) -> tuple[int, int]:
+    if (
+        type(cpu_ids) is not tuple
+        or len(cpu_ids) != 2
+        or any(type(value) is not int or value < 0 for value in cpu_ids)
+        or cpu_ids[0] >= cpu_ids[1]
+    ):
+        raise Experiment002CoordinatorError("captured CPU IDs are invalid")
+    first = (cpu_ids[0], cpu_ids[1])
+    second = (cpu_ids[0], cpu_ids[1])
+    if first != second:
+        raise Experiment002CoordinatorError(
+            "captured CPU IDs changed while they were snapshotted"
+        )
+    return first
+
+
+def _dynamic_child_result_binding_frame(
+    binding: object,
+    binding_type: type[object],
+    /,
+) -> _ChildResultBindingFrame:
+    if type(binding) is not binding_type:
+        raise Experiment002CoordinatorError(
+            "registered child-result binding has an invalid exact type"
+        )
+    role = getattr(binding, "role", None)
+    ordinal = getattr(binding, "ordinal", None)
+    seed = getattr(binding, "seed", None)
+    registration_head_commit = getattr(binding, "registration_head_commit", None)
+    implementation_commit = getattr(binding, "implementation_commit", None)
+    registration_sha256 = getattr(binding, "registration_sha256", None)
+    source_bundle_sha256 = getattr(binding, "source_bundle_sha256", None)
+    if (
+        type(role) is not str
+        or type(ordinal) is not int
+        or type(seed) is not int
+        or type(registration_head_commit) is not str
+        or type(implementation_commit) is not str
+        or type(registration_sha256) is not str
+        or type(source_bundle_sha256) is not str
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child-result binding fields have invalid exact types"
+        )
+    return (
+        role,
+        ordinal,
+        seed,
+        registration_head_commit,
+        implementation_commit,
+        registration_sha256,
+        source_bundle_sha256,
+    )
+
+
+def _build_registered_child_result_binding(
+    routes: _ParentExecutionRoutes,
+    assignment_frame: _RegisteredAssignmentFrame,
+    registration_frame: _RegistrationBindingFrame,
+    /,
+) -> object:
+    _require_parent_execution_routes_unchanged(routes)
+    child_result_binding_type = routes[4]
+    if (
+        type(assignment_frame) is not tuple
+        or len(assignment_frame) != 3
+        or type(assignment_frame[0]) is not str
+        or type(assignment_frame[1]) is not int
+        or type(assignment_frame[2]) is not int
+        or type(registration_frame) is not tuple
+        or len(registration_frame) != 4
+        or any(type(value) is not str for value in registration_frame)
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent binding frames have invalid exact types"
+        )
+    expected = (
+        assignment_frame[0],
+        assignment_frame[2],
+        assignment_frame[1],
+        *registration_frame,
+    )
+    constructor = cast(Callable[..., object], child_result_binding_type)
+    binding = constructor(
+        role=expected[0],
+        ordinal=expected[1],
+        seed=expected[2],
+        registration_head_commit=expected[3],
+        implementation_commit=expected[4],
+        registration_sha256=expected[5],
+        source_bundle_sha256=expected[6],
+    )
+    first = _dynamic_child_result_binding_frame(
+        binding,
+        child_result_binding_type,
+    )
+    second = _dynamic_child_result_binding_frame(
+        binding,
+        child_result_binding_type,
+    )
+    if first != expected or second != first:
+        raise Experiment002CoordinatorError(
+            "registered child-result binding changed during construction"
+        )
+    _require_parent_execution_routes_unchanged(routes)
+    return binding
 
 
 def _assignment(role: object, seed: object) -> _Assignment:
@@ -1336,6 +1720,706 @@ def _parent_activate_child(
         packet_sha256=packet_sha256,
     )
     _require_registration(registration)
+
+
+def _supervised_parent_child_frame(
+    result: object,
+    routes: _ParentExecutionRoutes,
+    /,
+) -> tuple[int, tuple[int, int], int, int, int, object]:
+    supervised_child_result_type = routes[3]
+    verified_child_result_type = routes[5]
+    if type(result) is not supervised_child_result_type:
+        raise Experiment002CoordinatorError(
+            "supervisor returned an invalid exact child-result type"
+        )
+    pid = getattr(result, "pid", None)
+    cpu_ids = getattr(result, "cpu_ids", None)
+    elapsed_nanoseconds = getattr(result, "elapsed_nanoseconds", None)
+    maximum_rss_bytes = getattr(result, "maximum_rss_bytes", None)
+    output_and_scratch_bytes = getattr(result, "output_and_scratch_bytes", None)
+    verified_child_result = getattr(result, "verified_child_result", None)
+    if (
+        type(pid) is not int
+        or pid < 1
+        or pid == os.getpid()
+        or type(cpu_ids) is not tuple
+        or len(cpu_ids) != 2
+        or any(type(value) is not int or value < 0 for value in cpu_ids)
+        or cpu_ids[0] >= cpu_ids[1]
+        or type(elapsed_nanoseconds) is not int
+        or elapsed_nanoseconds < 0
+        or type(maximum_rss_bytes) is not int
+        or maximum_rss_bytes < 0
+        or type(output_and_scratch_bytes) is not int
+        or output_and_scratch_bytes < 0
+        or type(verified_child_result) is not verified_child_result_type
+    ):
+        raise Experiment002CoordinatorError(
+            "supervised child result fields have invalid exact types or values"
+        )
+    return (
+        pid,
+        cpu_ids,
+        elapsed_nanoseconds,
+        maximum_rss_bytes,
+        output_and_scratch_bytes,
+        verified_child_result,
+    )
+
+
+def _make_verified_child_result_identity_frame() -> Callable[
+    [object, _ParentExecutionRoutes],
+    _VerifiedChildResultFrame,
+]:
+    exact_type = type
+    read = getattr
+    fraction_type = Fraction
+    finite = math.isfinite
+    sign = math.copysign
+    binding_frame_route = _dynamic_child_result_binding_frame
+    lower_hex = frozenset(_LOWER_HEX)
+    error_type = Experiment002CoordinatorError
+
+    def identity_frame(
+        result: object,
+        routes: _ParentExecutionRoutes,
+        /,
+    ) -> _VerifiedChildResultFrame:
+        child_result_binding_type = routes[4]
+        verified_child_result_type = routes[5]
+        if exact_type(result) is not verified_child_result_type:
+            raise error_type("verified child result has an invalid exact type")
+        binding = read(result, "binding", None)
+        binding_frame = binding_frame_route(
+            binding,
+            child_result_binding_type,
+        )
+        direct_frame = (
+            read(result, "role", None),
+            read(result, "ordinal", None),
+            read(result, "seed", None),
+            read(result, "registration_head_commit", None),
+            read(result, "implementation_commit", None),
+            read(result, "registration_sha256", None),
+            read(result, "source_bundle_sha256", None),
+        )
+        if (
+            exact_type(direct_frame[0]) is not str
+            or exact_type(direct_frame[1]) is not int
+            or exact_type(direct_frame[2]) is not int
+            or exact_type(direct_frame[3]) is not str
+            or exact_type(direct_frame[4]) is not str
+            or exact_type(direct_frame[5]) is not str
+            or exact_type(direct_frame[6]) is not str
+            or direct_frame != binding_frame
+        ):
+            raise error_type("verified child result identity differs from its binding")
+        winner_epoch = read(result, "winner_epoch", None)
+        winner_macro_f1 = read(result, "winner_macro_f1", None)
+        winner_validation_cross_entropy = read(
+            result,
+            "winner_validation_cross_entropy",
+            None,
+        )
+        model_tensor_sha256 = read(result, "model_tensor_sha256", None)
+        if (
+            exact_type(winner_epoch) is not int
+            or exact_type(winner_macro_f1) is not fraction_type
+            or exact_type(winner_validation_cross_entropy) is not float
+            or exact_type(model_tensor_sha256) is not str
+        ):
+            raise error_type(
+                "verified child result rank fields have invalid exact types or values"
+            )
+        typed_winner_epoch = cast(int, winner_epoch)
+        typed_winner_macro_f1 = cast(Fraction, winner_macro_f1)
+        typed_winner_validation_cross_entropy = cast(
+            float,
+            winner_validation_cross_entropy,
+        )
+        typed_model_tensor_sha256 = cast(str, model_tensor_sha256)
+        if (
+            not 0 <= typed_winner_epoch < 30
+            or not fraction_type(0, 1) <= typed_winner_macro_f1 <= fraction_type(1, 1)
+            or not finite(typed_winner_validation_cross_entropy)
+            or not typed_winner_validation_cross_entropy >= 0.0
+            or sign(1.0, typed_winner_validation_cross_entropy) < 0.0
+            or len(typed_model_tensor_sha256) != 64
+            or any(
+                character not in lower_hex for character in typed_model_tensor_sha256
+            )
+        ):
+            raise error_type(
+                "verified child result rank fields have invalid exact types or values"
+            )
+        return (
+            *binding_frame,
+            typed_winner_epoch,
+            typed_winner_macro_f1.numerator,
+            typed_winner_macro_f1.denominator,
+            typed_winner_validation_cross_entropy.hex(),
+            typed_model_tensor_sha256,
+        )
+
+    return identity_frame
+
+
+_verified_child_result_identity_frame = _make_verified_child_result_identity_frame()
+del _make_verified_child_result_identity_frame
+
+
+type _ParentInputDescriptorGuard = Callable[[], None]
+type _RegistrationBindingFramer = Callable[[object], _RegistrationBindingFrame]
+type _ParentChildImplementation = Callable[
+    [
+        VerifiedRunRegistration,
+        _RegisteredAssignmentFrame,
+        tuple[int, int],
+        int,
+        _ParentInputDescriptorGuard,
+        _RegistrationBindingFramer,
+    ],
+    _RegisteredParentChildResult,
+]
+type _ParentChildRoute = Callable[
+    [VerifiedRunRegistration, _Assignment, tuple[int, int], int],
+    _RegisteredParentChildResult,
+]
+
+
+def _bind_registered_parent_input_snapshot_authority(
+    implementation: _ParentChildImplementation,
+    /,
+) -> _ParentChildRoute:
+    exact_type = type
+    type_cast = cast
+    assignment_type = _Assignment
+    role_descriptor = assignment_type.__dict__["role"]
+    seed_descriptor = assignment_type.__dict__["seed"]
+    ordinal_descriptor = assignment_type.__dict__["ordinal"]
+    registration_binding_type = _RegistrationBinding
+    head_commit_descriptor = registration_binding_type.__dict__["head_commit"]
+    implementation_commit_descriptor = registration_binding_type.__dict__[
+        "implementation_commit"
+    ]
+    registration_sha256_descriptor = registration_binding_type.__dict__[
+        "registration_sha256"
+    ]
+    source_bundle_sha256_descriptor = registration_binding_type.__dict__[
+        "source_bundle_sha256"
+    ]
+    if any(
+        exact_type(descriptor) is not MemberDescriptorType
+        for descriptor in (
+            role_descriptor,
+            seed_descriptor,
+            ordinal_descriptor,
+            head_commit_descriptor,
+            implementation_commit_descriptor,
+            registration_sha256_descriptor,
+            source_bundle_sha256_descriptor,
+        )
+    ):
+        raise RuntimeError("registered parent slot authority is unavailable")
+    allocate = object.__new__
+    error_type = Experiment002CoordinatorError
+    base_exception_type = BaseException
+    seed_role = _SEED_ROLE
+    rerun_role = _RERUN_ROLE
+    registered_seeds = (
+        REGISTERED_SEEDS[0],
+        REGISTERED_SEEDS[1],
+        REGISTERED_SEEDS[2],
+    )
+    lower_hex = frozenset(_LOWER_HEX)
+
+    def require_input_descriptors_unchanged() -> None:
+        if (
+            assignment_type.__dict__.get("role") is not role_descriptor
+            or assignment_type.__dict__.get("seed") is not seed_descriptor
+            or assignment_type.__dict__.get("ordinal") is not ordinal_descriptor
+            or registration_binding_type.__dict__.get("head_commit")
+            is not head_commit_descriptor
+            or registration_binding_type.__dict__.get("implementation_commit")
+            is not implementation_commit_descriptor
+            or registration_binding_type.__dict__.get("registration_sha256")
+            is not registration_sha256_descriptor
+            or registration_binding_type.__dict__.get("source_bundle_sha256")
+            is not source_bundle_sha256_descriptor
+        ):
+            raise error_type("registered parent input descriptors changed")
+
+    def assignment_frame(value: object, /) -> tuple[str, int, int]:
+        if exact_type(value) is not assignment_type:
+            raise error_type("child assignment has an invalid exact type")
+        role = role_descriptor.__get__(value, assignment_type)
+        seed = seed_descriptor.__get__(value, assignment_type)
+        ordinal = ordinal_descriptor.__get__(value, assignment_type)
+        if (
+            exact_type(role) is not str
+            or exact_type(seed) is not int
+            or exact_type(ordinal) is not int
+        ):
+            raise error_type("child assignment fields have invalid exact types")
+        return role, seed, ordinal
+
+    def snapshot_assignment(value: object, /) -> _Assignment:
+        require_input_descriptors_unchanged()
+        first = assignment_frame(value)
+        role, seed, ordinal = first
+        if role == seed_role:
+            if seed == registered_seeds[0]:
+                expected_ordinal = 0
+            elif seed == registered_seeds[1]:
+                expected_ordinal = 1
+            elif seed == registered_seeds[2]:
+                expected_ordinal = 2
+            else:
+                raise error_type("training child seed is not registered")
+        elif role == rerun_role and seed in registered_seeds:
+            expected_ordinal = 3
+        else:
+            raise error_type("child role and seed are not registered")
+        if ordinal != expected_ordinal or assignment_frame(value) != first:
+            raise error_type("child assignment changed while it was snapshotted")
+        snapshot = allocate(assignment_type)
+        role_descriptor.__set__(snapshot, role)
+        seed_descriptor.__set__(snapshot, seed)
+        ordinal_descriptor.__set__(snapshot, ordinal)
+        if assignment_frame(snapshot) != first or assignment_frame(value) != first:
+            raise error_type("child assignment changed while it was snapshotted")
+        require_input_descriptors_unchanged()
+        return snapshot
+
+    def registration_binding_frame(
+        value: object,
+        /,
+    ) -> _RegistrationBindingFrame:
+        require_input_descriptors_unchanged()
+        if exact_type(value) is not registration_binding_type:
+            raise error_type("registration binding has an invalid exact type")
+
+        def capture() -> _RegistrationBindingFrame:
+            head_commit = head_commit_descriptor.__get__(
+                value,
+                registration_binding_type,
+            )
+            implementation_commit = implementation_commit_descriptor.__get__(
+                value,
+                registration_binding_type,
+            )
+            registration_sha256 = registration_sha256_descriptor.__get__(
+                value,
+                registration_binding_type,
+            )
+            source_bundle_sha256 = source_bundle_sha256_descriptor.__get__(
+                value,
+                registration_binding_type,
+            )
+            if (
+                exact_type(head_commit) is not str
+                or exact_type(implementation_commit) is not str
+                or exact_type(registration_sha256) is not str
+                or exact_type(source_bundle_sha256) is not str
+            ):
+                raise error_type("registration binding fields have invalid exact types")
+            frame = (
+                head_commit,
+                implementation_commit,
+                registration_sha256,
+                source_bundle_sha256,
+            )
+            if (
+                len(head_commit) != 40
+                or len(implementation_commit) != 40
+                or len(registration_sha256) != 64
+                or len(source_bundle_sha256) != 64
+                or any(
+                    character not in lower_hex for field in frame for character in field
+                )
+            ):
+                raise error_type("registration binding fields are not canonical")
+            return frame
+
+        first = capture()
+        second = capture()
+        require_input_descriptors_unchanged()
+        if second != first:
+            raise error_type("registration binding changed while it was snapshotted")
+        return first
+
+    def snapshot_cpu_ids(value: object, /) -> tuple[int, int]:
+        if exact_type(value) is not tuple:
+            raise error_type("captured CPU IDs are invalid")
+        tuple_value = type_cast("tuple[object, ...]", value)
+        if len(tuple_value) != 2:
+            raise error_type("captured CPU IDs are invalid")
+        left = tuple_value[0]
+        right = tuple_value[1]
+        if exact_type(left) is not int or exact_type(right) is not int:
+            raise error_type("captured CPU IDs are invalid")
+        typed_left = type_cast(int, left)
+        typed_right = type_cast(int, right)
+        if typed_left < 0 or typed_left >= typed_right:
+            raise error_type("captured CPU IDs are invalid")
+        snapshot = (typed_left, typed_right)
+        if (tuple_value[0], tuple_value[1]) != snapshot:
+            raise error_type("captured CPU IDs changed while they were snapshotted")
+        return snapshot
+
+    def _run_one_registered_parent_child(
+        registration: VerifiedRunRegistration,
+        assignment: _Assignment,
+        cpu_ids: tuple[int, int],
+        source_bundle_fd: int,
+        /,
+    ) -> _RegisteredParentChildResult:
+        require_input_descriptors_unchanged()
+        assignment_before = assignment_frame(assignment)
+        assignment_snapshot = snapshot_assignment(assignment)
+        assignment_snapshot_frame = assignment_frame(assignment_snapshot)
+        if (
+            assignment_snapshot_frame != assignment_before
+            or assignment_frame(assignment) != assignment_before
+        ):
+            raise error_type("child assignment changed across its parent snapshot")
+        cpu_ids_snapshot = snapshot_cpu_ids(cpu_ids)
+        if exact_type(source_bundle_fd) is not int or source_bundle_fd < 0:
+            raise error_type("source bundle descriptor has an invalid exact value")
+        require_input_descriptors_unchanged()
+        try:
+            result = implementation(
+                registration,
+                assignment_snapshot_frame,
+                cpu_ids_snapshot,
+                source_bundle_fd,
+                require_input_descriptors_unchanged,
+                registration_binding_frame,
+            )
+        except base_exception_type as primary:
+            try:
+                require_input_descriptors_unchanged()
+            except base_exception_type:
+                raise error_type(
+                    "registered parent execution failed after its input "
+                    "descriptors changed"
+                ) from primary
+            raise
+        require_input_descriptors_unchanged()
+        return result
+
+    return _run_one_registered_parent_child
+
+
+@_bind_registered_parent_input_snapshot_authority
+def _run_one_registered_parent_child(
+    registration: VerifiedRunRegistration,
+    assignment_frame: _RegisteredAssignmentFrame,
+    cpu_ids: tuple[int, int],
+    source_bundle_fd: int,
+    require_input_descriptors_unchanged: _ParentInputDescriptorGuard,
+    registration_binding_frame: _RegistrationBindingFramer,
+    /,
+) -> _RegisteredParentChildResult:
+    """Run one fixed registered child while borrowing parent-owned resources."""
+
+    require_registration = _require_registration
+    registration_binding_route = _registration_binding
+    claim_parent_execution_routes = _claim_and_verify_parent_execution_routes
+    require_parent_execution_routes_unchanged = (
+        _require_parent_execution_routes_unchanged
+    )
+    build_child_result_binding = _build_registered_child_result_binding
+    parent_activate_child = _parent_activate_child
+    supervised_parent_child_frame = _supervised_parent_child_frame
+    verified_child_result_identity_frame = _verified_child_result_identity_frame
+    dynamic_child_result_binding_frame = _dynamic_child_result_binding_frame
+    fraction_type = Fraction
+    math_module = math
+    finite = math.isfinite
+    sign = math.copysign
+    lower_hex = _LOWER_HEX
+
+    def require_coordinator_parent_routes_unchanged() -> None:
+        if (
+            _require_registration is not require_registration
+            or _registration_binding is not registration_binding_route
+            or _claim_and_verify_parent_execution_routes
+            is not claim_parent_execution_routes
+            or _require_parent_execution_routes_unchanged
+            is not require_parent_execution_routes_unchanged
+            or _build_registered_child_result_binding is not build_child_result_binding
+            or _parent_activate_child is not parent_activate_child
+            or _supervised_parent_child_frame is not supervised_parent_child_frame
+            or _verified_child_result_identity_frame
+            is not verified_child_result_identity_frame
+            or _dynamic_child_result_binding_frame
+            is not dynamic_child_result_binding_frame
+            or Fraction is not fraction_type
+            or math is not math_module
+            or math.isfinite is not finite
+            or math.copysign is not sign
+            or _LOWER_HEX is not lower_hex
+        ):
+            raise Experiment002CoordinatorError(
+                "coordinator parent execution routes changed"
+            )
+
+    require_input_descriptors_unchanged()
+    require_registration(registration)
+    if (
+        type(assignment_frame) is not tuple
+        or len(assignment_frame) != 3
+        or type(assignment_frame[0]) is not str
+        or type(assignment_frame[1]) is not int
+        or type(assignment_frame[2]) is not int
+    ):
+        raise Experiment002CoordinatorError(
+            "registered assignment frame has invalid exact types"
+        )
+    assignment_role, assignment_seed, assignment_ordinal = assignment_frame
+    cpu_ids_snapshot = cpu_ids
+    if type(source_bundle_fd) is not int or source_bundle_fd < 0:
+        raise Experiment002CoordinatorError(
+            "source bundle descriptor has an invalid exact value"
+        )
+    initial_registration_frame = registration_binding_frame(
+        registration_binding_route(registration)
+    )
+    routes = claim_parent_execution_routes()
+    (
+        _supervisor_module,
+        _child_result_module,
+        supervise_child_route,
+        _supervised_child_result_type,
+        child_result_binding_type,
+        _verified_child_result_type,
+        _load_registered_child_result,
+        verify_verified_child_result_route,
+    ) = routes
+    require_coordinator_parent_routes_unchanged()
+    imported_registration_frame = registration_binding_frame(
+        registration_binding_route(registration)
+    )
+    if initial_registration_frame != imported_registration_frame:
+        raise Experiment002CoordinatorError(
+            "run registration changed while parent routes were imported"
+        )
+    child_result_binding = build_child_result_binding(
+        routes,
+        assignment_frame,
+        imported_registration_frame,
+    )
+    expected_child_result_binding_frame = (
+        assignment_role,
+        assignment_ordinal,
+        assignment_seed,
+        *initial_registration_frame,
+    )
+    first_child_result_binding_frame = dynamic_child_result_binding_frame(
+        child_result_binding,
+        child_result_binding_type,
+    )
+    second_child_result_binding_frame = dynamic_child_result_binding_frame(
+        child_result_binding,
+        child_result_binding_type,
+    )
+    if (
+        first_child_result_binding_frame != expected_child_result_binding_frame
+        or second_child_result_binding_frame != first_child_result_binding_frame
+    ):
+        raise Experiment002CoordinatorError(
+            "registered child-result binding differs from parent primitive frames"
+        )
+    constructed_registration_frame = registration_binding_frame(
+        registration_binding_route(registration)
+    )
+    if initial_registration_frame != constructed_registration_frame:
+        raise Experiment002CoordinatorError(
+            "run registration changed while the child binding was constructed"
+        )
+
+    def require_stable_parent_boundary() -> None:
+        require_input_descriptors_unchanged()
+        require_coordinator_parent_routes_unchanged()
+        require_parent_execution_routes_unchanged(routes)
+        require_registration(registration)
+        current_registration_frame = registration_binding_frame(
+            registration_binding_route(registration)
+        )
+        if initial_registration_frame != current_registration_frame:
+            raise Experiment002CoordinatorError(
+                "run registration changed across the parent execution boundary"
+            )
+        require_input_descriptors_unchanged()
+
+    activation_lock = threading.Lock()
+    accepting_activation = True
+    activation_attempts = 0
+    activated_pid: int | None = None
+
+    def activate(channel: socket.socket, child_pid: int, /) -> None:
+        nonlocal activated_pid, activation_attempts
+        with activation_lock:
+            if not accepting_activation:
+                raise Experiment002CoordinatorError(
+                    "supervisor activation callback is no longer accepting calls"
+                )
+            activation_attempts += 1
+            if activation_attempts != 1:
+                raise Experiment002CoordinatorError(
+                    "supervisor attempted child activation more than once"
+                )
+            require_input_descriptors_unchanged()
+            parent_activate_child(
+                channel,
+                registration,
+                role=assignment_role,
+                seed=assignment_seed,
+                child_pid=child_pid,
+            )
+            require_input_descriptors_unchanged()
+            if activated_pid is not None:
+                raise Experiment002CoordinatorError(
+                    "supervisor completed child activation more than once"
+                )
+            activated_pid = child_pid
+
+    require_registration(registration)
+    supervise_child = cast(
+        Callable[
+            [tuple[int, int], Callable[[socket.socket, int], None], int, object],
+            object,
+        ],
+        supervise_child_route,
+    )
+    try:
+        try:
+            supervised = supervise_child(
+                cpu_ids_snapshot,
+                activate,
+                source_bundle_fd,
+                child_result_binding,
+            )
+        finally:
+            with activation_lock:
+                accepting_activation = False
+    except BaseException as primary:
+        try:
+            require_stable_parent_boundary()
+        except BaseException:
+            raise Experiment002CoordinatorError(
+                "child supervision failed after its parent boundary changed"
+            ) from primary
+        raise
+    try:
+        require_stable_parent_boundary()
+        with activation_lock:
+            completed_activation_attempts = activation_attempts
+            completed_activation_pid = activated_pid
+        if completed_activation_attempts != 1 or completed_activation_pid is None:
+            raise Experiment002CoordinatorError(
+                "supervisor returned without one completed child activation"
+            )
+
+        first = supervised_parent_child_frame(supervised, routes)
+        second = supervised_parent_child_frame(supervised, routes)
+        if first[:-1] != second[:-1] or first[-1] is not second[-1]:
+            raise Experiment002CoordinatorError(
+                "supervised child result changed while it was snapshotted"
+            )
+        if first[0] != completed_activation_pid or first[1] != cpu_ids_snapshot:
+            raise Experiment002CoordinatorError(
+                "supervised child result differs from its activation or CPU assignment"
+            )
+        verified_child_result = first[-1]
+        verifier = cast(
+            Callable[[object], object],
+            verify_verified_child_result_route,
+        )
+        verification = verifier(verified_child_result)
+        if verification is not None:
+            raise Experiment002CoordinatorError(
+                "verified child-result verifier returned an unexpected value"
+            )
+        expected_identity = (
+            assignment_role,
+            assignment_ordinal,
+            assignment_seed,
+            *initial_registration_frame,
+        )
+        first_identity = verified_child_result_identity_frame(
+            verified_child_result,
+            routes,
+        )
+        second_identity = verified_child_result_identity_frame(
+            verified_child_result,
+            routes,
+        )
+        if first_identity[:7] != expected_identity or second_identity != first_identity:
+            raise Experiment002CoordinatorError(
+                "verified child result differs from its registered assignment"
+            )
+        verification = verifier(verified_child_result)
+        if verification is not None:
+            raise Experiment002CoordinatorError(
+                "verified child-result verifier returned an unexpected value"
+            )
+
+        third = supervised_parent_child_frame(supervised, routes)
+        fourth = supervised_parent_child_frame(supervised, routes)
+        if (
+            third[:-1] != first[:-1]
+            or third[-1] is not first[-1]
+            or fourth[:-1] != third[:-1]
+            or fourth[-1] is not third[-1]
+        ):
+            raise Experiment002CoordinatorError(
+                "supervised child result changed after final verification"
+            )
+        third_identity = verified_child_result_identity_frame(
+            verified_child_result,
+            routes,
+        )
+        fourth_identity = verified_child_result_identity_frame(
+            verified_child_result,
+            routes,
+        )
+        if (
+            third_identity != first_identity
+            or fourth_identity != third_identity
+            or third_identity[:7] != expected_identity
+        ):
+            raise Experiment002CoordinatorError(
+                "verified child result changed after final verification"
+            )
+        require_stable_parent_boundary()
+        registered_result = (
+            third[0],
+            third[1],
+            third[2],
+            third[3],
+            third[4],
+            cast(
+                _VerifiedChildResultView,
+                verified_child_result,
+            ),
+        )
+        require_stable_parent_boundary()
+    except BaseException as primary:
+        try:
+            require_stable_parent_boundary()
+        except BaseException:
+            raise Experiment002CoordinatorError(
+                "child result validation failed after its registration or "
+                "coordinator parent execution routes changed"
+            ) from primary
+        raise
+    return registered_result
+
+
+del _bind_registered_parent_input_snapshot_authority
 
 
 def _make_guarded_registered_seed_child() -> Callable[[VerifiedRunRegistration], None]:
