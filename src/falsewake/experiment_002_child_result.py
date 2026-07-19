@@ -217,6 +217,19 @@ class VerifiedChildResult:
         return _bootstrap_verified_state(self).history_summary.winner_epoch
 
     @property
+    def winner_macro_f1(self) -> Fraction:
+        summary = _bootstrap_verified_state(self).history_summary
+        return Fraction(
+            summary.winner_macro_f1_numerator,
+            summary.winner_macro_f1_denominator,
+        )
+
+    @property
+    def winner_validation_cross_entropy(self) -> float:
+        summary = _bootstrap_verified_state(self).history_summary
+        return float.fromhex(summary.winner_validation_cross_entropy_float64_hex)
+
+    @property
     def model_tensor_sha256(self) -> str:
         return _bootstrap_verified_state(
             self
@@ -260,6 +273,9 @@ class _HistorySummary:
     seed: int
     winner_epoch: int
     winner_model_tensor_sha256: str
+    winner_macro_f1_numerator: int
+    winner_macro_f1_denominator: int
+    winner_validation_cross_entropy_float64_hex: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -947,6 +963,11 @@ def _parse_history(raw: bytes) -> _HistorySummary:
         seed=seed,
         winner_epoch=winner.zero_based_epoch,
         winner_model_tensor_sha256=winner.model_tensor_sha256,
+        winner_macro_f1_numerator=winner.macro_f1.numerator,
+        winner_macro_f1_denominator=winner.macro_f1.denominator,
+        winner_validation_cross_entropy_float64_hex=(
+            winner.validation_cross_entropy.hex()
+        ),
     )
 
 
@@ -1736,6 +1757,9 @@ def _make_result_routes() -> tuple[
             summary.seed,
             summary.winner_epoch,
             summary.winner_model_tensor_sha256,
+            summary.winner_macro_f1_numerator,
+            summary.winner_macro_f1_denominator,
+            summary.winner_validation_cross_entropy_float64_hex,
         )
         return (
             value.marker,
@@ -1782,12 +1806,27 @@ def _make_result_routes() -> tuple[
             "winner_model_tensor_sha256",
             source.winner_model_tensor_sha256,
         )
+        assign(
+            result,
+            "winner_macro_f1_numerator",
+            source.winner_macro_f1_numerator,
+        )
+        assign(
+            result,
+            "winner_macro_f1_denominator",
+            source.winner_macro_f1_denominator,
+        )
+        assign(
+            result,
+            "winner_validation_cross_entropy_float64_hex",
+            source.winner_validation_cross_entropy_float64_hex,
+        )
         return result
 
     def materialize(truth: _AuthorityFrame) -> _VerifiedState:
         if (
             exact_type(truth) is not tuple
-            or len(truth) != 17
+            or len(truth) != 20
             or truth[0] is not state_marker
         ):
             raise Experiment002ChildResultError(
@@ -1806,6 +1845,9 @@ def _make_result_routes() -> tuple[
             bytes,
             str,
             str,
+            str,
+            int,
+            int,
             str,
             int,
             int,
@@ -1840,6 +1882,13 @@ def _make_result_routes() -> tuple[
         assign(summary, "seed", values[13])
         assign(summary, "winner_epoch", values[14])
         assign(summary, "winner_model_tensor_sha256", values[15])
+        assign(summary, "winner_macro_f1_numerator", values[16])
+        assign(summary, "winner_macro_f1_denominator", values[17])
+        assign(
+            summary,
+            "winner_validation_cross_entropy_float64_hex",
+            values[18],
+        )
         detached = allocate(state_type)
         assign(detached, "marker", truth[0])
         assign(detached, "binding", binding)
@@ -2030,6 +2079,14 @@ def _install_lexical_result_properties(
 ) -> None:
     """Replace bootstrap fget bodies with routes that cannot be map-swapped."""
 
+    exact_type = type
+    fraction_type = Fraction
+    float_type = float
+    finite = math.isfinite
+    sign = math.copysign
+    summary_type = _HistorySummary
+    error_type = Experiment002ChildResultError
+
     def binding(result: VerifiedChildResult) -> ChildResultBinding:
         return supplier(result).binding
 
@@ -2069,6 +2126,57 @@ def _install_lexical_result_properties(
     def winner_epoch(result: VerifiedChildResult) -> int:
         return supplier(result).history_summary.winner_epoch
 
+    def winner_macro_f1(result: VerifiedChildResult) -> Fraction:
+        summary = supplier(result).history_summary
+        if exact_type(summary) is not summary_type:
+            raise error_type("winner macro-F1 authority summary type changed")
+        numerator = summary.winner_macro_f1_numerator
+        denominator = summary.winner_macro_f1_denominator
+        if (
+            exact_type(numerator) is not int
+            or exact_type(denominator) is not int
+            or numerator < 0
+            or denominator <= 0
+            or numerator > denominator
+        ):
+            raise error_type("winner macro-F1 authority scalars changed")
+        value = fraction_type(numerator, denominator)
+        if (
+            exact_type(value) is not fraction_type
+            or value.numerator != numerator
+            or value.denominator != denominator
+        ):
+            raise error_type("winner macro-F1 authority fraction is not reduced")
+        return value
+
+    def winner_validation_cross_entropy(result: VerifiedChildResult) -> float:
+        summary = supplier(result).history_summary
+        if exact_type(summary) is not summary_type:
+            raise error_type(
+                "winner validation cross-entropy authority summary type changed"
+            )
+        encoded = summary.winner_validation_cross_entropy_float64_hex
+        if exact_type(encoded) is not str:
+            raise error_type("winner validation cross-entropy authority scalar changed")
+        try:
+            value = float_type.fromhex(encoded)
+        except (OverflowError, ValueError) as error:
+            raise error_type(
+                "winner validation cross-entropy authority scalar is invalid"
+            ) from error
+        if (
+            exact_type(value) is not float_type
+            or not finite(value)
+            or value < 0.0
+            or sign(1.0, value) < 0.0
+            or value.hex() != encoded
+            or encoded.lower() != encoded
+        ):
+            raise error_type(
+                "winner validation cross-entropy authority scalar is not canonical"
+            )
+        return value
+
     def model_tensor_sha256(result: VerifiedChildResult) -> str:
         return supplier(result).history_summary.winner_model_tensor_sha256
 
@@ -2098,6 +2206,8 @@ def _install_lexical_result_properties(
         "safetensors_sha256": safetensors_sha256,
         "safetensors_byte_count": safetensors_byte_count,
         "winner_epoch": winner_epoch,
+        "winner_macro_f1": winner_macro_f1,
+        "winner_validation_cross_entropy": winner_validation_cross_entropy,
         "model_tensor_sha256": model_tensor_sha256,
         "envelope_sha256": envelope_sha256,
         "canonical_history_bytes": canonical_history_bytes,

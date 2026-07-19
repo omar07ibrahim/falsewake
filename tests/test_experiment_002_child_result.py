@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from pathlib import Path
 from types import FrameType
 from typing import Any, cast
@@ -27,6 +28,14 @@ _SCRATCH_ROOT = Path("/home/ubuntu/gitcode/.t")
 _HISTORY_DOMAIN = b"falsewake-exp002-history-v1\0"
 _ENVELOPE_DOMAIN = b"falsewake-exp002-child-result-envelope-v1\0"
 _CLASS_SUPPORT = (397, 406, 350, 377, 352, 363, 363, 373, 350, 372, 6_278, 602)
+
+
+class EqualIntegerSubclass(int):
+    pass
+
+
+class EqualStringSubclass(str):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +201,18 @@ def _history(
         }
     )
     return history, winner_model_sha256
+
+
+def _imperfect_confusion() -> tuple[list[list[int]], Fraction]:
+    confusion: list[list[int]] = []
+    for index, support in enumerate(_CLASS_SUPPORT):
+        row = [0] * len(_CLASS_SUPPORT)
+        row[index] = support
+        confusion.append(row)
+    confusion[0][0] -= 1
+    confusion[0][1] += 1
+    macro_f1 = (Fraction(792, 793) + Fraction(812, 813) + 10) / 12
+    return confusion, macro_f1
 
 
 def _case(*, role: str = "training_seed", ordinal: int = 0) -> _Case:
@@ -362,6 +383,17 @@ def test_canonical_roundtrip_owns_exact_bytes_and_digest_domains(
     assert observed.safetensors_sha256 == case.safetensors_sha256
     assert observed.safetensors_byte_count == len(case.safetensors)
     assert observed.winner_epoch == case.winner_epoch
+    first_macro_f1 = observed.winner_macro_f1
+    second_macro_f1 = observed.winner_macro_f1
+    first_validation_cross_entropy = observed.winner_validation_cross_entropy
+    second_validation_cross_entropy = observed.winner_validation_cross_entropy
+    assert type(first_macro_f1) is Fraction
+    assert first_macro_f1 == second_macro_f1 == Fraction(1, 1)
+    assert first_macro_f1 is not second_macro_f1
+    assert type(first_validation_cross_entropy) is float
+    assert first_validation_cross_entropy == second_validation_cross_entropy == 0.25
+    assert first_validation_cross_entropy is not second_validation_cross_entropy
+    assert first_validation_cross_entropy.hex() == (0.25).hex()
     assert observed.model_tensor_sha256 == case.model_tensor_sha256
     assert observed.canonical_history_bytes is observed.canonical_history_bytes
     assert observed.canonical_history_bytes == case.history
@@ -373,6 +405,13 @@ def test_canonical_roundtrip_owns_exact_bytes_and_digest_domains(
         ).hexdigest()
     )
     child_result.verify_verified_child_result(observed)
+    summary = child_result._ISSUED[observed].history_summary
+    assert type(summary.winner_macro_f1_numerator) is int
+    assert type(summary.winner_macro_f1_denominator) is int
+    assert type(summary.winner_validation_cross_entropy_float64_hex) is str
+    assert summary.winner_macro_f1_numerator == 1
+    assert summary.winner_macro_f1_denominator == 1
+    assert summary.winner_validation_cross_entropy_float64_hex == (0.25).hex()
     for copier in (copy.copy, copy.deepcopy, pickle.dumps):
         with pytest.raises(TypeError, match="cannot be copied|cannot be serialized"):
             copier(observed)
@@ -582,6 +621,11 @@ def test_history_is_independently_ranked_and_binds_winner_model_digest(
     case = _case()
     document = cast(dict[str, Any], json.loads(case.history))
     epochs = cast(list[dict[str, Any]], document["epochs"])
+    confusion, expected_macro_f1 = _imperfect_confusion()
+    for epoch in epochs:
+        epoch["validation_confusion_matrix"] = copy.deepcopy(confusion)
+        epoch["macro_f1_exact_numerator"] = expected_macro_f1.numerator
+        epoch["macro_f1_exact_denominator"] = expected_macro_f1.denominator
     epochs[7]["validation_cross_entropy_float64_hex"] = (3.0).hex()
     epochs[11]["validation_cross_entropy_float64_hex"] = (0.125).hex()
     epochs[11]["model_tensor_digest"] = case.model_tensor_sha256
@@ -598,7 +642,48 @@ def test_history_is_independently_ranked_and_binds_winner_model_digest(
         scratch_directory, changed.binding
     )
     assert result.winner_epoch == 11
+    assert result.winner_macro_f1 == expected_macro_f1
+    assert result.winner_validation_cross_entropy == 0.125
+    assert result.winner_validation_cross_entropy.hex() == (0.125).hex()
     assert result.model_tensor_sha256 == epochs[11]["model_tensor_digest"]
+
+
+def test_history_rank_uses_macro_f1_then_cross_entropy_then_earliest_epoch(
+    scratch_directory: Path,
+) -> None:
+    case = _case()
+    document = cast(dict[str, Any], json.loads(case.history))
+    epochs = cast(list[dict[str, Any]], document["epochs"])
+    perfect_confusion = copy.deepcopy(epochs[0]["validation_confusion_matrix"])
+    imperfect_confusion, imperfect_macro_f1 = _imperfect_confusion()
+    for epoch in epochs:
+        epoch["validation_confusion_matrix"] = copy.deepcopy(imperfect_confusion)
+        epoch["macro_f1_exact_numerator"] = imperfect_macro_f1.numerator
+        epoch["macro_f1_exact_denominator"] = imperfect_macro_f1.denominator
+        epoch["validation_cross_entropy_float64_hex"] = (0.0).hex()
+    for epoch_index in (11, 13):
+        epochs[epoch_index]["validation_confusion_matrix"] = copy.deepcopy(
+            perfect_confusion
+        )
+        epochs[epoch_index]["macro_f1_exact_numerator"] = 1
+        epochs[epoch_index]["macro_f1_exact_denominator"] = 1
+        epochs[epoch_index]["validation_cross_entropy_float64_hex"] = (100.0).hex()
+    epochs[11]["model_tensor_digest"] = case.model_tensor_sha256
+    history = _canonical(cast(dict[str, object], document))
+    changed = replace(
+        case,
+        history=history,
+        history_sha256=hashlib.sha256(_HISTORY_DOMAIN + history).hexdigest(),
+        winner_epoch=11,
+        model_tensor_sha256=case.model_tensor_sha256,
+    )
+    _write(scratch_directory, changed)
+    result = child_result.load_registered_child_result(
+        scratch_directory, changed.binding
+    )
+    assert result.winner_epoch == 11
+    assert result.winner_macro_f1 == Fraction(1, 1)
+    assert result.winner_validation_cross_entropy == 100.0
 
 
 def test_history_confusion_support_macro_fraction_and_epoch_order_are_checked(
@@ -972,6 +1057,65 @@ def test_coherent_cache_replacement_cannot_replace_closure_truth(
         _ = result.seed
 
 
+def test_coherent_canonical_history_tamper_reaches_hidden_authority_and_poisons(
+    scratch_directory: Path,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(scratch_directory, case.binding)
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
+    document = cast(dict[str, Any], json.loads(state.history_bytes))
+    epochs = cast(list[dict[str, Any]], document["epochs"])
+    changed_cross_entropy_hex = (0.5).hex()
+    epochs[state.history_summary.winner_epoch][
+        "validation_cross_entropy_float64_hex"
+    ] = changed_cross_entropy_hex
+    changed_history = _canonical(cast(dict[str, object], document))
+    changed_history_sha256 = hashlib.sha256(
+        _HISTORY_DOMAIN + changed_history
+    ).hexdigest()
+    changed_envelope = child_result._canonical_envelope_bytes(
+        binding=state.binding,
+        history_byte_count=len(changed_history),
+        history_sha256=changed_history_sha256,
+        safetensors_byte_count=len(state.safetensors_bytes),
+        safetensors_sha256=state.safetensors_sha256,
+        winner_epoch=state.history_summary.winner_epoch,
+        model_tensor_sha256=state.history_summary.winner_model_tensor_sha256,
+    )
+    changed_envelope_sha256 = hashlib.sha256(
+        _ENVELOPE_DOMAIN + changed_envelope
+    ).hexdigest()
+    for authority_value in (state, guard):
+        object.__setattr__(authority_value, "history_bytes", changed_history)
+        object.__setattr__(
+            authority_value,
+            "history_sha256",
+            changed_history_sha256,
+        )
+        object.__setattr__(authority_value, "envelope_bytes", changed_envelope)
+        object.__setattr__(
+            authority_value,
+            "envelope_sha256",
+            changed_envelope_sha256,
+        )
+        object.__setattr__(
+            authority_value,
+            "history_summary",
+            replace(
+                authority_value.history_summary,
+                winner_validation_cross_entropy_float64_hex=(changed_cross_entropy_hex),
+            ),
+        )
+
+    assert child_result._parse_history(changed_history) == state.history_summary
+    with pytest.raises(child_result.Experiment002ChildResultError, match="authority"):
+        _ = result.winner_validation_cross_entropy
+    with pytest.raises(child_result.Experiment002ChildResultError, match="terminally"):
+        _ = result.winner_macro_f1
+
+
 def test_cache_deletion_is_sticky_after_complete_restoration(
     scratch_directory: Path,
 ) -> None:
@@ -1017,6 +1161,43 @@ def test_authority_frames_distinguish_bool_from_equal_integer(
         child_result.verify_verified_child_result(result)
 
 
+@pytest.mark.parametrize(
+    "tamper",
+    ["bool_numerator", "integer_subclass_denominator", "string_subclass_cross_entropy"],
+)
+def test_winner_metric_authority_rejects_equality_compatible_scalar_spoofs(
+    scratch_directory: Path,
+    tamper: str,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(scratch_directory, case.binding)
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
+    for summary in (state.history_summary, guard.history_summary):
+        if tamper == "bool_numerator":
+            object.__setattr__(summary, "winner_macro_f1_numerator", True)
+        elif tamper == "integer_subclass_denominator":
+            object.__setattr__(
+                summary,
+                "winner_macro_f1_denominator",
+                EqualIntegerSubclass(summary.winner_macro_f1_denominator),
+            )
+        else:
+            object.__setattr__(
+                summary,
+                "winner_validation_cross_entropy_float64_hex",
+                EqualStringSubclass(
+                    summary.winner_validation_cross_entropy_float64_hex
+                ),
+            )
+
+    with pytest.raises(child_result.Experiment002ChildResultError, match="authority"):
+        _ = result.winner_macro_f1
+    with pytest.raises(child_result.Experiment002ChildResultError, match="terminally"):
+        _ = result.winner_validation_cross_entropy
+
+
 def test_property_routes_are_lexically_bound_to_the_verified_state(
     scratch_directory: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1024,13 +1205,33 @@ def test_property_routes_are_lexically_bound_to_the_verified_state(
     case = _case()
     _write(scratch_directory, case)
     result = child_result.load_registered_child_result(scratch_directory, case.binding)
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
 
     def forbidden(_result: child_result.VerifiedChildResult, /) -> None:
         raise AssertionError("mutable public verifier route was used")
 
     monkeypatch.setattr(child_result, "verify_verified_child_result", forbidden)
+    monkeypatch.setattr(child_result, "_bootstrap_verified_state", forbidden)
+    forged_summary = replace(
+        state.history_summary,
+        winner_macro_f1_numerator=0,
+        winner_validation_cross_entropy_float64_hex=(99.0).hex(),
+    )
+    monkeypatch.setattr(
+        child_result,
+        "_ISSUED",
+        {result: replace(state, history_summary=forged_summary)},
+    )
+    monkeypatch.setattr(
+        child_result,
+        "_GUARDS",
+        {result: replace(guard, history_summary=replace(forged_summary))},
+    )
     assert result.seed == case.binding.seed
     assert result.binding == case.binding
+    assert result.winner_macro_f1 == Fraction(1, 1)
+    assert result.winner_validation_cross_entropy == 0.25
 
 
 def test_authority_validation_uses_lexically_captured_exact_type(
