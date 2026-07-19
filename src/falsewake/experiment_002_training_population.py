@@ -20,7 +20,9 @@ import math
 import struct
 import threading
 import weakref
+from contextlib import suppress
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from typing import Final, Literal, NoReturn, Protocol
 
 import numpy as np
@@ -57,6 +59,19 @@ from falsewake.experiment_002_preprocessing import (
     TIME_FRAMES,
     Experiment002TrainingPreprocessor,
 )
+from falsewake.experiment_002_training_bridge import (
+    RegisteredExecutorSessionAuthority,
+    RegisteredOptimizerTransition,
+    TraceConsumedTransition,
+    _accept_trace_consumed_transition,
+    _executor_session_snapshot,
+    _fail_optimizer_transition,
+    _fail_registered_executor_session,
+    _OptimizerTransitionSnapshot,
+    _require_registered_executor_generation,
+    _trace_consumption_snapshot,
+    _transition_snapshot,
+)
 from falsewake.features import FloatArray
 
 TRAINING_BATCH_SIZE: Final = 128
@@ -82,6 +97,32 @@ _RLOCK_TYPE: Final = type(threading.RLock())
 
 class Experiment002TrainingPopulationError(ValueError):
     """Training input provenance or one-pass state violated the contract."""
+
+
+@dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
+class _RegisteredEpochConstructionAuthority:
+    """One-use authority joining the checked registered begin path."""
+
+    def __init__(self) -> None:
+        raise TypeError("registered epoch construction authorities are issuer-only")
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisteredEpochConstructionGuard:
+    source: RegisteredTrainingInputSource
+    executor_authority: RegisteredExecutorSessionAuthority
+    executor_session_token: object
+    seed: int
+    zero_based_epoch: int
+
+
+_REGISTERED_EPOCH_CONSTRUCTION_GUARDS: weakref.WeakKeyDictionary[
+    _RegisteredEpochConstructionAuthority, _RegisteredEpochConstructionGuard
+] = weakref.WeakKeyDictionary()
+_CONSUMED_EPOCH_CONSTRUCTION_AUTHORITIES: weakref.WeakSet[
+    _RegisteredEpochConstructionAuthority
+] = weakref.WeakSet()
+_REGISTERED_EPOCH_CONSTRUCTION_LOCK = threading.Lock()
 
 
 def _require_positive_integer(value: object, name: str) -> None:
@@ -152,12 +193,11 @@ class RegisteredTrainingInputSource:
     def begin_epoch(
         self, *, seed: int, zero_based_epoch: int
     ) -> RegisteredTrainingEpoch:
-        """Build the registered epoch plan exactly once for this context."""
+        """Reject direct registered use; the exact executor owns epoch plans."""
 
-        return _begin_registered_epoch(
-            self,
-            seed=seed,
-            zero_based_epoch=zero_based_epoch,
+        del seed, zero_based_epoch
+        raise Experiment002TrainingPopulationError(
+            "registered training epochs are owned by the exact executor"
         )
 
     def __copy__(self) -> NoReturn:
@@ -185,8 +225,26 @@ class _IssuedSourceState:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceIssuanceGuard:
+    corpus: Experiment002Corpus
+    cache: PCMCacheSplitView
+    normalization: VerifiedNormalization
+    preprocessor: Experiment002TrainingPreprocessor
+    corpus_snapshot: tuple[object, ...]
+    cache_snapshot: tuple[object, ...]
+    normalization_contents: bytes
+    marker: object
+
+
 _ISSUED_SOURCES: weakref.WeakKeyDictionary[
     RegisteredTrainingInputSource, _IssuedSourceState
+] = weakref.WeakKeyDictionary()
+_SOURCE_GUARDS: weakref.WeakKeyDictionary[
+    RegisteredTrainingInputSource, _SourceIssuanceGuard
+] = weakref.WeakKeyDictionary()
+_SOURCE_CONTEXT_GUARDS: weakref.WeakKeyDictionary[
+    RegisteredTrainingInputSource, frozenset[tuple[int, int]]
 ] = weakref.WeakKeyDictionary()
 _ISSUED_SOURCES_LOCK = threading.Lock()
 
@@ -244,8 +302,26 @@ class _IssuedBatchState:
     label_indices_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class _BatchIssuanceGuard:
+    session_token: object
+    batch_token: object
+    batch_index: int
+    global_update: int
+    first_example: int
+    examples: tuple[_Example, ...]
+    example_snapshots: tuple[tuple[object, ...], ...]
+    model_inputs: FloatArray
+    label_indices: np.ndarray[tuple[int], np.dtype[np.int64]]
+    model_inputs_sha256: str
+    label_indices_sha256: str
+
+
 _ISSUED_BATCHES: weakref.WeakKeyDictionary[
     MaterializedTrainingBatch, _IssuedBatchState
+] = weakref.WeakKeyDictionary()
+_BATCH_GUARDS: weakref.WeakKeyDictionary[
+    MaterializedTrainingBatch, _BatchIssuanceGuard
 ] = weakref.WeakKeyDictionary()
 _ISSUED_BATCHES_LOCK = threading.Lock()
 
@@ -297,6 +373,7 @@ class _CompletedTrainingUpdateSnapshot:
     session_token: object
     batch_token: object
     receipt_token: object
+    optimizer_transition_token: object | None
     seed: int
     zero_based_epoch: int
     batch_index: int
@@ -317,12 +394,28 @@ class _IssuedReceiptState:
     session_token: object
     batch_token: object
     receipt_token: object
+    optimizer_transition_token: object | None
+    optimizer_transition: RegisteredOptimizerTransition | None
     accepted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ReceiptIssuanceGuard:
+    authority_payload: bytes
+    session_token: object
+    batch_token: object
+    receipt_token: object
+    optimizer_transition_token: object | None
+    optimizer_transition: RegisteredOptimizerTransition | None
 
 
 _ISSUED_RECEIPTS: weakref.WeakKeyDictionary[
     CompletedTrainingUpdate, _IssuedReceiptState
 ] = weakref.WeakKeyDictionary()
+_RECEIPT_GUARDS: weakref.WeakKeyDictionary[
+    CompletedTrainingUpdate, _ReceiptIssuanceGuard
+] = weakref.WeakKeyDictionary()
+_ACCEPTED_RECEIPTS: weakref.WeakSet[CompletedTrainingUpdate] = weakref.WeakSet()
 _ISSUED_RECEIPTS_LOCK = threading.Lock()
 
 
@@ -332,6 +425,10 @@ class _AcceptedUpdateAuthority:
     session_token: object
     batch_token: object
     receipt_token: object
+    optimizer_transition_token: object | None
+    optimizer_transition: RegisteredOptimizerTransition | None
+    trace_consumption: TraceConsumedTransition | None
+    trace_consumption_token: object | None
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -389,6 +486,9 @@ class _CompletedTrainingPopulationSnapshot:
     updates: tuple[_CompletedTrainingUpdateSnapshot, ...]
     ordered_batch_tokens: tuple[object, ...]
     ordered_receipt_tokens: tuple[object, ...]
+    ordered_optimizer_transition_tokens: tuple[object, ...]
+    ordered_optimizer_transitions: tuple[RegisteredOptimizerTransition, ...]
+    ordered_trace_consumptions: tuple[TraceConsumedTransition, ...]
     route_marker: object | None
 
 
@@ -404,11 +504,34 @@ class _IssuedPopulationState:
     update_authority_payloads: tuple[bytes, ...]
     ordered_batch_tokens: tuple[object, ...]
     ordered_receipt_tokens: tuple[object, ...]
+    ordered_optimizer_transition_tokens: tuple[object, ...]
+    ordered_optimizer_transitions: tuple[RegisteredOptimizerTransition, ...]
+    ordered_trace_consumptions: tuple[TraceConsumedTransition, ...]
+    route_marker: object | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PopulationIssuanceGuard:
+    sha256: str
+    seed: int
+    zero_based_epoch: int
+    example_count: int
+    batch_count: int
+    session_token: object
+    update_authority_payloads: tuple[bytes, ...]
+    ordered_batch_tokens: tuple[object, ...]
+    ordered_receipt_tokens: tuple[object, ...]
+    ordered_optimizer_transition_tokens: tuple[object, ...]
+    ordered_optimizer_transitions: tuple[RegisteredOptimizerTransition, ...]
+    ordered_trace_consumptions: tuple[TraceConsumedTransition, ...]
     route_marker: object | None
 
 
 _ISSUED_POPULATIONS: weakref.WeakKeyDictionary[
     CompletedTrainingPopulation, _IssuedPopulationState
+] = weakref.WeakKeyDictionary()
+_POPULATION_GUARDS: weakref.WeakKeyDictionary[
+    CompletedTrainingPopulation, _PopulationIssuanceGuard
 ] = weakref.WeakKeyDictionary()
 _ISSUED_POPULATIONS_LOCK = threading.Lock()
 
@@ -424,6 +547,8 @@ class _EpochState:
     source: RegisteredTrainingInputSource | None
     route_marker: object | None
     session_token: object
+    executor_authority: RegisteredExecutorSessionAuthority | None
+    executor_session_token: object | None
     hasher: _IncrementalDigest
     phase: TrainingState = "OPEN"
     cursor: int = 0
@@ -437,8 +562,39 @@ class _EpochState:
     accepted_update_authorities: list[_AcceptedUpdateAuthority] = field(
         default_factory=list
     )
+    active_executor_authority: RegisteredExecutorSessionAuthority | None = None
+    active_transition: RegisteredOptimizerTransition | None = None
+    active_consumption: TraceConsumedTransition | None = None
+    active_verification_phase: str | None = None
     finished: bool = False
     lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass(frozen=True, slots=True)
+class _EpochIssuanceGuard:
+    seed: int
+    zero_based_epoch: int
+    layout: _TrainingLayout
+    examples: tuple[_Example, ...]
+    example_snapshots: tuple[tuple[object, ...], ...]
+    preprocessor: _TrainingPreprocessor
+    source: RegisteredTrainingInputSource | None
+    route_marker: object | None
+    session_token: object
+    executor_authority: RegisteredExecutorSessionAuthority | None
+    executor_session_token: object | None
+    hasher: _IncrementalDigest
+
+
+@dataclass(frozen=True, slots=True)
+class _EpochLifecycleGuard:
+    phase: TrainingState
+    cursor: int
+    batch_index: int
+    current_batch: MaterializedTrainingBatch | None
+    pending_verifications: int
+    ready_receipt: CompletedTrainingUpdate | None
+    finished: bool
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -466,16 +622,18 @@ class RegisteredTrainingEpoch:
         state = _issued_epoch_state(self)
         with state.lock:
             try:
+                _require_epoch_call_authority(state)
                 _require_phase(state, "OPEN")
                 _require_expected_global_update(state, global_update)
                 _verify_epoch_backing(state, full=False)
-                batch = _materialize_next_batch(state, global_update)
+                batch = _materialize_next_batch(self, state, global_update)
                 state.current_batch = batch
                 state.pending_verifications = 0
                 state.phase = "BATCH_PENDING"
+                _sync_epoch_lifecycle(self, state)
                 return batch
             except BaseException:
-                state.phase = "FAILED"
+                _terminal_fail_epoch_state(self, state)
                 raise
 
     def verify_pending_batch(
@@ -489,16 +647,26 @@ class RegisteredTrainingEpoch:
         state = _issued_epoch_state(self)
         with state.lock:
             try:
+                _require_epoch_call_authority(state)
                 _require_phase(state, "BATCH_PENDING")
                 _require_expected_global_update(state, global_update)
+                if state.route_marker is _REGISTERED_EPOCH_MARKER:
+                    expected_phase = (
+                        "PRE" if state.pending_verifications == 0 else "POST"
+                    )
+                    if state.active_verification_phase != expected_phase:
+                        raise Experiment002TrainingPopulationError(
+                            "registered batch verification phase differs"
+                        )
                 if state.pending_verifications >= 2:
                     raise Experiment002TrainingPopulationError(
                         "pending batch was already verified before and after its step"
                     )
                 _verify_pending_batch(state, batch)
                 state.pending_verifications += 1
+                _sync_epoch_lifecycle(self, state)
             except BaseException:
-                state.phase = "FAILED"
+                _terminal_fail_epoch_state(self, state)
                 raise
 
     def complete_update(
@@ -514,24 +682,51 @@ class RegisteredTrainingEpoch:
         state = _issued_epoch_state(self)
         with state.lock:
             try:
+                _require_epoch_call_authority(state)
                 _require_phase(state, "BATCH_PENDING")
                 if state.pending_verifications != 2:
                     raise Experiment002TrainingPopulationError(
                         "pending batch requires exactly two verifications"
                     )
                 batch_state = _verify_pending_batch(state, batch)
+                transition_token: object | None = None
+                if state.route_marker is _REGISTERED_EPOCH_MARKER:
+                    transition = state.active_transition
+                    if type(transition) is not RegisteredOptimizerTransition:
+                        raise Experiment002TrainingPopulationError(
+                            "registered update requires an optimizer transition"
+                        )
+                    transition_snapshot = _transition_snapshot(
+                        transition, required_phase="ISSUED"
+                    )
+                    _require_transition_matches_batch(
+                        state,
+                        batch_state,
+                        transition_snapshot,
+                        learning_rate=learning_rate,
+                        batch_mean_training_loss=batch_mean_training_loss,
+                        returned_preclip_l2_norm=returned_preclip_l2_norm,
+                    )
+                    transition_token = transition_snapshot.transition_token
                 receipt = _issue_completed_update(
                     state,
                     batch_state,
                     learning_rate=learning_rate,
                     batch_mean_training_loss=batch_mean_training_loss,
                     returned_preclip_l2_norm=returned_preclip_l2_norm,
+                    optimizer_transition_token=transition_token,
+                    optimizer_transition=(
+                        transition
+                        if state.route_marker is _REGISTERED_EPOCH_MARKER
+                        else None
+                    ),
                 )
                 state.ready_receipt = receipt
                 state.phase = "READY"
+                _sync_epoch_lifecycle(self, state)
                 return receipt
             except BaseException:
-                state.phase = "FAILED"
+                _terminal_fail_epoch_state(self, state)
                 raise
 
     def accept_completed_update(self, receipt: CompletedTrainingUpdate) -> None:
@@ -540,6 +735,7 @@ class RegisteredTrainingEpoch:
         state = _issued_epoch_state(self)
         with state.lock:
             try:
+                _require_epoch_call_authority(state)
                 _require_phase(state, "READY")
                 if type(receipt) is not CompletedTrainingUpdate:
                     raise TypeError("receipt must be a CompletedTrainingUpdate")
@@ -559,23 +755,100 @@ class RegisteredTrainingEpoch:
                     )
                 batch_state = _verify_pending_batch(state, batch)
                 _verify_receipt_matches_batch(state, receipt_state, batch_state)
-                receipt_state.accepted = True
-                accepted_snapshot = _copy_update_snapshot(receipt_state.snapshot)
-                _validate_receipt_state(receipt_state)
-                state.accepted_updates.append(accepted_snapshot)
-                state.accepted_update_authorities.append(
-                    _AcceptedUpdateAuthority(
+                with _ISSUED_EPOCHS_LOCK:
+                    accepted_guard = _EPOCH_ACCEPTED_GUARDS.get(self)
+                if (
+                    type(accepted_guard) is not tuple
+                    or tuple(state.accepted_update_authorities) != accepted_guard
+                ):
+                    raise Experiment002TrainingPopulationError(
+                        "accepted update authority differs from issuance guard"
+                    )
+                if state.route_marker is _REGISTERED_EPOCH_MARKER:
+                    transition = state.active_transition
+                    consumption = state.active_consumption
+                    if type(transition) is not RegisteredOptimizerTransition:
+                        raise Experiment002TrainingPopulationError(
+                            "registered acceptance lost its optimizer transition"
+                        )
+                    if type(consumption) is not TraceConsumedTransition:
+                        raise Experiment002TrainingPopulationError(
+                            "registered acceptance requires trace consumption"
+                        )
+                    _require_consumption_matches_receipt(
+                        state,
+                        receipt_state,
+                        transition,
+                        consumption,
+                    )
+                    consumption_snapshot = _trace_consumption_snapshot(
+                        consumption, required_used=False
+                    )
+                    accepted_snapshot = _copy_update_snapshot(receipt_state.snapshot)
+                    accepted_authority = _AcceptedUpdateAuthority(
                         payload=receipt_state.authority_payload,
                         session_token=receipt_state.session_token,
                         batch_token=receipt_state.batch_token,
                         receipt_token=receipt_state.receipt_token,
+                        optimizer_transition_token=(
+                            receipt_state.optimizer_transition_token
+                        ),
+                        optimizer_transition=transition,
+                        trace_consumption=consumption,
+                        trace_consumption_token=(
+                            consumption_snapshot.consumption_token
+                        ),
                     )
-                )
+                    executor_authority = state.executor_authority
+                    if (
+                        type(executor_authority)
+                        is not RegisteredExecutorSessionAuthority
+                    ):
+                        raise Experiment002TrainingPopulationError(
+                            "registered epoch lost its executor authority"
+                        )
+                    next_accepted_guard = accepted_guard + (
+                        dataclass_replace(accepted_authority),
+                    )
+                    _accept_trace_consumed_transition(
+                        transition,
+                        consumption,
+                        receipt_token=receipt_state.receipt_token,
+                        executor_authority=executor_authority,
+                        epoch_session_token=state.session_token,
+                        batch_token=batch_state.batch_token,
+                    )
+                else:
+                    accepted_snapshot = _copy_update_snapshot(receipt_state.snapshot)
+                    accepted_authority = _AcceptedUpdateAuthority(
+                        payload=receipt_state.authority_payload,
+                        session_token=receipt_state.session_token,
+                        batch_token=receipt_state.batch_token,
+                        receipt_token=receipt_state.receipt_token,
+                        optimizer_transition_token=None,
+                        optimizer_transition=None,
+                        trace_consumption=None,
+                        trace_consumption_token=None,
+                    )
+                    next_accepted_guard = accepted_guard + (
+                        dataclass_replace(accepted_authority),
+                    )
+                with _ISSUED_RECEIPTS_LOCK:
+                    receipt_state.accepted = True
+                    _ACCEPTED_RECEIPTS.add(receipt)
+                state.accepted_updates.append(accepted_snapshot)
+                state.accepted_update_authorities.append(accepted_authority)
+                with _ISSUED_EPOCHS_LOCK:
+                    _EPOCH_ACCEPTED_GUARDS[self] = next_accepted_guard
                 state.cursor += batch_state.label_indices.shape[0]
                 state.batch_index += 1
                 with _ISSUED_BATCHES_LOCK:
                     removed = _ISSUED_BATCHES.pop(batch, None)
-                if removed is not batch_state:
+                    removed_guard = _BATCH_GUARDS.pop(batch, None)
+                if (
+                    removed is not batch_state
+                    or type(removed_guard) is not _BatchIssuanceGuard
+                ):
                     raise Experiment002TrainingPopulationError(
                         "batch issuance changed while it was accepted"
                     )
@@ -585,8 +858,9 @@ class RegisteredTrainingEpoch:
                 state.phase = (
                     "COMPLETE" if state.cursor == state.layout.example_count else "OPEN"
                 )
+                _sync_epoch_lifecycle(self, state)
             except BaseException:
-                state.phase = "FAILED"
+                _terminal_fail_epoch_state(self, state)
                 raise
 
     def finish(self) -> CompletedTrainingPopulation:
@@ -595,6 +869,7 @@ class RegisteredTrainingEpoch:
         state = _issued_epoch_state(self)
         with state.lock:
             try:
+                _require_epoch_call_authority(state)
                 _require_phase(state, "COMPLETE")
                 if state.finished:
                     raise Experiment002TrainingPopulationError(
@@ -621,11 +896,13 @@ class RegisteredTrainingEpoch:
                     raise Experiment002TrainingPopulationError(
                         "accepted update snapshots differ from issuer authority"
                     )
+                _verify_epoch_hashers(self, state)
                 result = _issue_completed_population(state)
                 state.finished = True
+                _sync_epoch_lifecycle(self, state)
                 return result
             except BaseException:
-                state.phase = "FAILED"
+                _terminal_fail_epoch_state(self, state)
                 raise
 
     def __copy__(self) -> NoReturn:
@@ -642,6 +919,18 @@ class RegisteredTrainingEpoch:
 _ISSUED_EPOCHS: weakref.WeakKeyDictionary[RegisteredTrainingEpoch, _EpochState] = (
     weakref.WeakKeyDictionary()
 )
+_EPOCH_GUARDS: weakref.WeakKeyDictionary[
+    RegisteredTrainingEpoch, _EpochIssuanceGuard
+] = weakref.WeakKeyDictionary()
+_EPOCH_ACCEPTED_GUARDS: weakref.WeakKeyDictionary[
+    RegisteredTrainingEpoch, tuple[_AcceptedUpdateAuthority, ...]
+] = weakref.WeakKeyDictionary()
+_EPOCH_HASH_MIRRORS: weakref.WeakKeyDictionary[
+    RegisteredTrainingEpoch, _IncrementalDigest
+] = weakref.WeakKeyDictionary()
+_EPOCH_LIFECYCLES: weakref.WeakKeyDictionary[
+    RegisteredTrainingEpoch, _EpochLifecycleGuard
+] = weakref.WeakKeyDictionary()
 _ISSUED_EPOCHS_LOCK = threading.Lock()
 
 
@@ -692,6 +981,17 @@ def bind_registered_training_inputs(
     )
     with _ISSUED_SOURCES_LOCK:
         _ISSUED_SOURCES[result] = state
+        _SOURCE_GUARDS[result] = _SourceIssuanceGuard(
+            corpus=corpus,
+            cache=cache,
+            normalization=normalization,
+            preprocessor=preprocessor,
+            corpus_snapshot=tuple(corpus_snapshot),
+            cache_snapshot=tuple(cache_snapshot),
+            normalization_contents=bytes(normalization_contents),
+            marker=_REGISTERED_SOURCE_MARKER,
+        )
+        _SOURCE_CONTEXT_GUARDS[result] = frozenset()
     return result
 
 
@@ -723,15 +1023,24 @@ def verify_completed_registered_training_population(
         )
 
 
-def _begin_registered_epoch(
+def _begin_registered_epoch_for_executor(
     source: RegisteredTrainingInputSource,
     *,
+    executor_authority: RegisteredExecutorSessionAuthority,
     seed: int,
     zero_based_epoch: int,
 ) -> RegisteredTrainingEpoch:
     if type(source) is not RegisteredTrainingInputSource:
         raise TypeError("source must be a RegisteredTrainingInputSource")
+    executor = _executor_session_snapshot(executor_authority)
     _require_registered_context(seed, zero_based_epoch)
+    if executor.seed != seed:
+        raise Experiment002TrainingPopulationError(
+            "executor seed differs from the registered epoch"
+        )
+    _require_registered_executor_generation(
+        executor_authority, zero_based_epoch * REGISTERED_BATCH_COUNT
+    )
     source_state = _issued_source_state(source)
     with source_state.lock:
         _verify_registered_source_state(source_state)
@@ -740,14 +1049,32 @@ def _begin_registered_epoch(
             raise Experiment002TrainingPopulationError(
                 "this registered seed and epoch was already begun"
             )
+        with _ISSUED_SOURCES_LOCK:
+            guarded_contexts = _SOURCE_CONTEXT_GUARDS.get(source)
+            if type(guarded_contexts) is not frozenset or guarded_contexts != frozenset(
+                source_state.begun_contexts
+            ):
+                raise Experiment002TrainingPopulationError(
+                    "registered source contexts differ from append-only authority"
+                )
+            next_guarded_contexts = guarded_contexts | {context}
         source_state.begun_contexts.add(context)
+        with _ISSUED_SOURCES_LOCK:
+            _SOURCE_CONTEXT_GUARDS[source] = next_guarded_contexts
         examples = build_training_epoch(
             source_state.corpus,
             seed=seed,
             epoch=zero_based_epoch,
         )
         _verify_registered_source_state(source_state)
-        return _begin_training_epoch(
+        construction_authority = _issue_registered_epoch_construction(
+            source=source,
+            executor_authority=executor_authority,
+            executor_session_token=executor.session_token,
+            seed=seed,
+            zero_based_epoch=zero_based_epoch,
+        )
+        return _construct_training_epoch(
             examples,
             source_state.preprocessor,
             seed=seed,
@@ -755,7 +1082,59 @@ def _begin_registered_epoch(
             layout=_REGISTERED_LAYOUT,
             source=source,
             route_marker=_REGISTERED_EPOCH_MARKER,
+            executor_authority=executor_authority,
+            executor_session_token=executor.session_token,
+            construction_authority=construction_authority,
         )
+
+
+def _issue_registered_epoch_construction(
+    *,
+    source: RegisteredTrainingInputSource,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    executor_session_token: object,
+    seed: int,
+    zero_based_epoch: int,
+) -> _RegisteredEpochConstructionAuthority:
+    result = object.__new__(_RegisteredEpochConstructionAuthority)
+    guard = _RegisteredEpochConstructionGuard(
+        source=source,
+        executor_authority=executor_authority,
+        executor_session_token=executor_session_token,
+        seed=seed,
+        zero_based_epoch=zero_based_epoch,
+    )
+    with _REGISTERED_EPOCH_CONSTRUCTION_LOCK:
+        _REGISTERED_EPOCH_CONSTRUCTION_GUARDS[result] = guard
+    return result
+
+
+def _consume_registered_epoch_construction(
+    authority: _RegisteredEpochConstructionAuthority,
+    *,
+    source: RegisteredTrainingInputSource,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    executor_session_token: object,
+    seed: int,
+    zero_based_epoch: int,
+) -> None:
+    if type(authority) is not _RegisteredEpochConstructionAuthority:
+        raise TypeError("construction_authority must be an exact registered authority")
+    with _REGISTERED_EPOCH_CONSTRUCTION_LOCK:
+        guard = _REGISTERED_EPOCH_CONSTRUCTION_GUARDS.get(authority)
+        if (
+            type(guard) is not _RegisteredEpochConstructionGuard
+            or authority in _CONSUMED_EPOCH_CONSTRUCTION_AUTHORITIES
+            or guard.source is not source
+            or guard.executor_authority is not executor_authority
+            or guard.executor_session_token is not executor_session_token
+            or guard.seed != seed
+            or guard.zero_based_epoch != zero_based_epoch
+        ):
+            raise Experiment002TrainingPopulationError(
+                "registered epoch construction authority differs"
+            )
+        _CONSUMED_EPOCH_CONSTRUCTION_AUTHORITIES.add(authority)
 
 
 def _begin_training_epoch(
@@ -765,8 +1144,30 @@ def _begin_training_epoch(
     seed: int,
     zero_based_epoch: int,
     layout: _TrainingLayout,
+) -> RegisteredTrainingEpoch:
+    """Private synthetic-layout seam, permanently outside registered authority."""
+
+    return _construct_training_epoch(
+        examples,
+        preprocessor,
+        seed=seed,
+        zero_based_epoch=zero_based_epoch,
+        layout=layout,
+    )
+
+
+def _construct_training_epoch(
+    examples: tuple[_Example, ...],
+    preprocessor: _TrainingPreprocessor,
+    *,
+    seed: int,
+    zero_based_epoch: int,
+    layout: _TrainingLayout,
     source: RegisteredTrainingInputSource | None = None,
     route_marker: object | None = None,
+    executor_authority: RegisteredExecutorSessionAuthority | None = None,
+    executor_session_token: object | None = None,
+    construction_authority: _RegisteredEpochConstructionAuthority | None = None,
 ) -> RegisteredTrainingEpoch:
     """Private tiny-layout seam retaining the production state machine."""
 
@@ -785,20 +1186,48 @@ def _begin_training_epoch(
     ):
         raise TypeError("preprocessor does not implement the training interface")
     if route_marker is None:
-        if source is not None:
+        if (
+            source is not None
+            or executor_authority is not None
+            or executor_session_token is not None
+            or construction_authority is not None
+        ):
             raise Experiment002TrainingPopulationError(
                 "an unregistered epoch cannot bind a registered source"
             )
     elif route_marker is not _REGISTERED_EPOCH_MARKER:
         raise Experiment002TrainingPopulationError("epoch route marker is invalid")
-    elif source is None or layout != _REGISTERED_LAYOUT:
+    elif (
+        source is None
+        or layout != _REGISTERED_LAYOUT
+        or type(executor_authority) is not RegisteredExecutorSessionAuthority
+        or type(executor_session_token) is not object
+        or type(construction_authority) is not _RegisteredEpochConstructionAuthority
+    ):
         raise Experiment002TrainingPopulationError(
             "registered epoch requires its source and exact layout"
         )
+    if route_marker is _REGISTERED_EPOCH_MARKER:
+        assert source is not None
+        assert executor_authority is not None
+        assert executor_session_token is not None
+        assert construction_authority is not None
+        _consume_registered_epoch_construction(
+            construction_authority,
+            source=source,
+            executor_authority=executor_authority,
+            executor_session_token=executor_session_token,
+            seed=seed,
+            zero_based_epoch=zero_based_epoch,
+        )
     snapshots = _snapshot_plan(examples)
     hasher = hashlib.sha256()
+    guard_hasher = hashlib.sha256()
     hasher.update(TRAINING_POPULATION_DOMAIN)
-    hasher.update(struct.pack("<III", seed, zero_based_epoch, layout.example_count))
+    guard_hasher.update(TRAINING_POPULATION_DOMAIN)
+    context_frame = struct.pack("<III", seed, zero_based_epoch, layout.example_count)
+    hasher.update(context_frame)
+    guard_hasher.update(context_frame)
     result = object.__new__(RegisteredTrainingEpoch)
     state = _EpochState(
         seed=seed,
@@ -810,14 +1239,289 @@ def _begin_training_epoch(
         source=source,
         route_marker=route_marker,
         session_token=object(),
+        executor_authority=executor_authority,
+        executor_session_token=executor_session_token,
         hasher=hasher,
     )
     with _ISSUED_EPOCHS_LOCK:
         _ISSUED_EPOCHS[result] = state
+        _EPOCH_GUARDS[result] = _EpochIssuanceGuard(
+            seed=seed,
+            zero_based_epoch=zero_based_epoch,
+            layout=dataclass_replace(layout),
+            examples=tuple(examples),
+            example_snapshots=tuple(snapshots),
+            preprocessor=preprocessor,
+            source=source,
+            route_marker=route_marker,
+            session_token=state.session_token,
+            executor_authority=executor_authority,
+            executor_session_token=executor_session_token,
+            hasher=hasher,
+        )
+        _EPOCH_ACCEPTED_GUARDS[result] = ()
+        _EPOCH_HASH_MIRRORS[result] = guard_hasher
+        _EPOCH_LIFECYCLES[result] = _EpochLifecycleGuard(
+            phase="OPEN",
+            cursor=0,
+            batch_index=0,
+            current_batch=None,
+            pending_verifications=0,
+            ready_receipt=None,
+            finished=False,
+        )
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class _RegisteredBatchBinding:
+    executor_session_token: object
+    epoch_session_token: object
+    batch_token: object
+    seed: int
+    zero_based_epoch: int
+    zero_based_global_update: int
+    batch_size: int
+
+
+def _executor_next_batch(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    global_update: int,
+) -> MaterializedTrainingBatch:
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        state.active_executor_authority = executor_authority
+        try:
+            return epoch.next_batch(global_update)
+        finally:
+            state.active_executor_authority = None
+
+
+def _executor_verify_pending_batch(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    batch: MaterializedTrainingBatch,
+    *,
+    global_update: int,
+    phase: Literal["PRE", "POST"],
+) -> None:
+    if phase not in {"PRE", "POST"}:
+        raise Experiment002TrainingPopulationError(
+            "registered verification phase must be PRE or POST"
+        )
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        state.active_executor_authority = executor_authority
+        state.active_verification_phase = phase
+        try:
+            epoch.verify_pending_batch(batch, global_update=global_update)
+        finally:
+            state.active_verification_phase = None
+            state.active_executor_authority = None
+
+
+def _executor_batch_binding(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    batch: MaterializedTrainingBatch,
+) -> _RegisteredBatchBinding:
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        if (
+            state.phase != "BATCH_PENDING"
+            or state.current_batch is not batch
+            or state.pending_verifications != 2
+            or state.active_verification_phase is not None
+        ):
+            _terminal_fail_epoch_state(epoch, state)
+            raise Experiment002TrainingPopulationError(
+                "executor batch binding requires exact completed POST verification"
+            )
+        batch_state = _verify_pending_batch(state, batch)
+        return _RegisteredBatchBinding(
+            executor_session_token=state.executor_session_token,
+            epoch_session_token=state.session_token,
+            batch_token=batch_state.batch_token,
+            seed=state.seed,
+            zero_based_epoch=state.zero_based_epoch,
+            zero_based_global_update=batch_state.global_update,
+            batch_size=batch_state.label_indices.shape[0],
+        )
+
+
+def _executor_complete_update(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    batch: MaterializedTrainingBatch,
+    transition: RegisteredOptimizerTransition,
+) -> CompletedTrainingUpdate:
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        try:
+            transition_snapshot = _transition_snapshot(
+                transition, required_phase="ISSUED"
+            )
+            batch_state = _issued_batch_state(batch)
+            if (
+                state.current_batch is not batch
+                or transition_snapshot.executor_session_token
+                is not state.executor_session_token
+                or transition_snapshot.epoch_session_token is not state.session_token
+                or transition_snapshot.batch_token is not batch_state.batch_token
+                or transition_snapshot.seed != state.seed
+                or transition_snapshot.zero_based_epoch != state.zero_based_epoch
+                or transition_snapshot.zero_based_global_update
+                != batch_state.global_update
+                or transition_snapshot.batch_size != batch_state.label_indices.shape[0]
+            ):
+                raise Experiment002TrainingPopulationError(
+                    "optimizer transition does not belong to this executor batch"
+                )
+        except BaseException:
+            _terminal_fail_epoch_state(epoch, state)
+            raise
+        state.active_executor_authority = executor_authority
+        state.active_transition = transition
+        try:
+            return epoch.complete_update(
+                batch,
+                learning_rate=transition_snapshot.learning_rate,
+                batch_mean_training_loss=(transition_snapshot.batch_mean_training_loss),
+                returned_preclip_l2_norm=(transition_snapshot.returned_preclip_l2_norm),
+            )
+        finally:
+            state.active_transition = None
+            state.active_executor_authority = None
+
+
+def _executor_accept_completed_update(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    receipt: CompletedTrainingUpdate,
+    transition: RegisteredOptimizerTransition,
+    consumption: TraceConsumedTransition,
+) -> None:
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        local_transition: RegisteredOptimizerTransition | None = None
+        try:
+            local_receipt = state.ready_receipt
+            if type(local_receipt) is not CompletedTrainingUpdate:
+                raise Experiment002TrainingPopulationError(
+                    "executor epoch lost its local ready receipt"
+                )
+            receipt_state = _issued_receipt_state(local_receipt)
+            local_transition = receipt_state.optimizer_transition
+            if (
+                type(local_transition) is not RegisteredOptimizerTransition
+                or receipt_state.session_token is not state.session_token
+                or receipt_state.snapshot.session_token is not state.session_token
+                or receipt_state.batch_token is not receipt_state.snapshot.batch_token
+                or receipt_state.optimizer_transition_token is None
+            ):
+                raise Experiment002TrainingPopulationError(
+                    "receipt lost its local optimizer transition authority"
+                )
+            # Only the exact transition already bound into the local ready
+            # receipt may become active. The caller-supplied candidate is never
+            # adopted, so a foreign capability cannot be failed as collateral.
+            state.active_transition = local_transition
+            if receipt is not local_receipt:
+                raise Experiment002TrainingPopulationError(
+                    "receipt does not belong to this executor epoch"
+                )
+            transition_snapshot = _transition_snapshot(
+                local_transition, required_phase="TRACE_CONSUMED"
+            )
+            consumption_snapshot = _trace_consumption_snapshot(
+                consumption, required_used=False
+            )
+            if (
+                transition is not local_transition
+                or transition_snapshot.executor_session_token
+                is not state.executor_session_token
+                or transition_snapshot.epoch_session_token is not state.session_token
+                or transition_snapshot.batch_token is not receipt_state.batch_token
+                or transition_snapshot.transition_token
+                is not receipt_state.optimizer_transition_token
+                or consumption_snapshot.executor_session_token
+                is not state.executor_session_token
+                or consumption_snapshot.epoch_session_token is not state.session_token
+                or consumption_snapshot.batch_token is not receipt_state.batch_token
+                or consumption_snapshot.transition_token
+                is not receipt_state.optimizer_transition_token
+                or consumption_snapshot.receipt_token is not receipt_state.receipt_token
+                or consumption_snapshot.zero_based_global_update
+                != receipt_state.snapshot.zero_based_global_update
+            ):
+                raise Experiment002TrainingPopulationError(
+                    "trace consumption does not belong to this executor receipt"
+                )
+        except BaseException:
+            _terminal_fail_epoch_state(epoch, state)
+            state.active_transition = None
+            raise
+        state.active_executor_authority = executor_authority
+        state.active_consumption = consumption
+        try:
+            epoch.accept_completed_update(receipt)
+        finally:
+            state.active_consumption = None
+            state.active_transition = None
+            state.active_executor_authority = None
+
+
+def _executor_finish_epoch(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+) -> CompletedTrainingPopulation:
+    state = _require_executor_epoch(epoch, executor_authority)
+    with state.lock:
+        state.active_executor_authority = executor_authority
+        try:
+            return epoch.finish()
+        finally:
+            state.active_executor_authority = None
+
+
+def _executor_fail_epoch(
+    epoch: RegisteredTrainingEpoch | None,
+    executor_authority: RegisteredExecutorSessionAuthority,
+) -> None:
+    if epoch is None:
+        return
+    state = _require_executor_epoch(epoch, executor_authority, require_live=False)
+    with state.lock:
+        _terminal_fail_epoch_state(epoch, state)
+        state.active_executor_authority = None
+        state.active_transition = None
+        state.active_consumption = None
+        state.active_verification_phase = None
+
+
+def _require_executor_epoch(
+    epoch: RegisteredTrainingEpoch,
+    executor_authority: RegisteredExecutorSessionAuthority,
+    *,
+    require_live: bool = True,
+) -> _EpochState:
+    executor = _executor_session_snapshot(executor_authority, require_live=require_live)
+    state = _issued_epoch_state(epoch)
+    if (
+        state.route_marker is not _REGISTERED_EPOCH_MARKER
+        or state.executor_authority is not executor_authority
+        or state.executor_session_token is not executor.session_token
+        or state.seed != executor.seed
+    ):
+        raise Experiment002TrainingPopulationError(
+            "training epoch does not belong to this exact executor"
+        )
+    return state
+
+
 def _materialize_next_batch(
+    epoch: RegisteredTrainingEpoch,
     state: _EpochState,
     global_update: int,
 ) -> MaterializedTrainingBatch:
@@ -879,6 +1583,14 @@ def _materialize_next_batch(
             "materialized batch changed while it was issued"
         )
     state.hasher.update(framed)
+    with _ISSUED_EPOCHS_LOCK:
+        guard_hasher = _EPOCH_HASH_MIRRORS.get(epoch)
+    if guard_hasher is None:
+        raise Experiment002TrainingPopulationError(
+            "training population digest mirror is missing"
+        )
+    guard_hasher.update(framed)
+    _verify_epoch_hashers(epoch, state)
     batch = object.__new__(MaterializedTrainingBatch)
     batch_state = _IssuedBatchState(
         session_token=state.session_token,
@@ -895,6 +1607,19 @@ def _materialize_next_batch(
     )
     with _ISSUED_BATCHES_LOCK:
         _ISSUED_BATCHES[batch] = batch_state
+        _BATCH_GUARDS[batch] = _BatchIssuanceGuard(
+            session_token=batch_state.session_token,
+            batch_token=batch_state.batch_token,
+            batch_index=batch_state.batch_index,
+            global_update=batch_state.global_update,
+            first_example=batch_state.first_example,
+            examples=tuple(batch_state.examples),
+            example_snapshots=tuple(batch_state.example_snapshots),
+            model_inputs=batch_state.model_inputs,
+            label_indices=batch_state.label_indices,
+            model_inputs_sha256=batch_state.model_inputs_sha256,
+            label_indices_sha256=batch_state.label_indices_sha256,
+        )
     return batch
 
 
@@ -953,6 +1678,8 @@ def _issue_completed_update(
     learning_rate: float,
     batch_mean_training_loss: np.float32,
     returned_preclip_l2_norm: np.float32,
+    optimizer_transition_token: object | None = None,
+    optimizer_transition: RegisteredOptimizerTransition | None = None,
 ) -> CompletedTrainingUpdate:
     if type(learning_rate) is not float:
         raise TypeError("learning_rate must be an exact float")
@@ -966,6 +1693,7 @@ def _issue_completed_update(
         session_token=state.session_token,
         batch_token=batch.batch_token,
         receipt_token=object(),
+        optimizer_transition_token=optimizer_transition_token,
         seed=state.seed,
         zero_based_epoch=state.zero_based_epoch,
         batch_index=state.batch_index,
@@ -979,13 +1707,24 @@ def _issue_completed_update(
         returned_preclip_l2_norm_bytes=struct.pack("<f", norm),
     )
     receipt = object.__new__(CompletedTrainingUpdate)
+    receipt_state = _IssuedReceiptState(
+        snapshot=snapshot,
+        authority_payload=_frame_update_snapshot(snapshot),
+        session_token=snapshot.session_token,
+        batch_token=snapshot.batch_token,
+        receipt_token=snapshot.receipt_token,
+        optimizer_transition_token=snapshot.optimizer_transition_token,
+        optimizer_transition=optimizer_transition,
+    )
     with _ISSUED_RECEIPTS_LOCK:
-        _ISSUED_RECEIPTS[receipt] = _IssuedReceiptState(
-            snapshot=snapshot,
-            authority_payload=_frame_update_snapshot(snapshot),
-            session_token=snapshot.session_token,
-            batch_token=snapshot.batch_token,
-            receipt_token=snapshot.receipt_token,
+        _ISSUED_RECEIPTS[receipt] = receipt_state
+        _RECEIPT_GUARDS[receipt] = _ReceiptIssuanceGuard(
+            authority_payload=receipt_state.authority_payload,
+            session_token=receipt_state.session_token,
+            batch_token=receipt_state.batch_token,
+            receipt_token=receipt_state.receipt_token,
+            optimizer_transition_token=receipt_state.optimizer_transition_token,
+            optimizer_transition=receipt_state.optimizer_transition,
         )
     return receipt
 
@@ -1020,6 +1759,16 @@ def _issue_completed_population(
     state: _EpochState,
 ) -> CompletedTrainingPopulation:
     updates = tuple(_copy_update_snapshot(item) for item in state.accepted_updates)
+    optimizer_transitions = tuple(
+        authority.optimizer_transition
+        for authority in state.accepted_update_authorities
+        if authority.optimizer_transition is not None
+    )
+    trace_consumptions = tuple(
+        authority.trace_consumption
+        for authority in state.accepted_update_authorities
+        if authority.trace_consumption is not None
+    )
     snapshot = _CompletedTrainingPopulationSnapshot(
         session_token=state.session_token,
         seed=state.seed,
@@ -1030,24 +1779,54 @@ def _issue_completed_population(
         updates=updates,
         ordered_batch_tokens=tuple(item.batch_token for item in updates),
         ordered_receipt_tokens=tuple(item.receipt_token for item in updates),
+        ordered_optimizer_transition_tokens=tuple(
+            item.optimizer_transition_token
+            for item in updates
+            if item.optimizer_transition_token is not None
+        ),
+        ordered_optimizer_transitions=optimizer_transitions,
+        ordered_trace_consumptions=trace_consumptions,
         route_marker=state.route_marker,
     )
     result = object.__new__(CompletedTrainingPopulation)
+    issued_state = _IssuedPopulationState(
+        snapshot=snapshot,
+        sha256=snapshot.sha256,
+        seed=snapshot.seed,
+        zero_based_epoch=snapshot.zero_based_epoch,
+        example_count=snapshot.example_count,
+        batch_count=snapshot.batch_count,
+        session_token=snapshot.session_token,
+        update_authority_payloads=tuple(
+            _frame_update_snapshot(item) for item in snapshot.updates
+        ),
+        ordered_batch_tokens=snapshot.ordered_batch_tokens,
+        ordered_receipt_tokens=snapshot.ordered_receipt_tokens,
+        ordered_optimizer_transition_tokens=(
+            snapshot.ordered_optimizer_transition_tokens
+        ),
+        ordered_optimizer_transitions=snapshot.ordered_optimizer_transitions,
+        ordered_trace_consumptions=snapshot.ordered_trace_consumptions,
+        route_marker=snapshot.route_marker,
+    )
     with _ISSUED_POPULATIONS_LOCK:
-        _ISSUED_POPULATIONS[result] = _IssuedPopulationState(
-            snapshot=snapshot,
-            sha256=snapshot.sha256,
-            seed=snapshot.seed,
-            zero_based_epoch=snapshot.zero_based_epoch,
-            example_count=snapshot.example_count,
-            batch_count=snapshot.batch_count,
-            session_token=snapshot.session_token,
-            update_authority_payloads=tuple(
-                _frame_update_snapshot(item) for item in snapshot.updates
+        _ISSUED_POPULATIONS[result] = issued_state
+        _POPULATION_GUARDS[result] = _PopulationIssuanceGuard(
+            sha256=issued_state.sha256,
+            seed=issued_state.seed,
+            zero_based_epoch=issued_state.zero_based_epoch,
+            example_count=issued_state.example_count,
+            batch_count=issued_state.batch_count,
+            session_token=issued_state.session_token,
+            update_authority_payloads=issued_state.update_authority_payloads,
+            ordered_batch_tokens=issued_state.ordered_batch_tokens,
+            ordered_receipt_tokens=issued_state.ordered_receipt_tokens,
+            ordered_optimizer_transition_tokens=(
+                issued_state.ordered_optimizer_transition_tokens
             ),
-            ordered_batch_tokens=snapshot.ordered_batch_tokens,
-            ordered_receipt_tokens=snapshot.ordered_receipt_tokens,
-            route_marker=snapshot.route_marker,
+            ordered_optimizer_transitions=(issued_state.ordered_optimizer_transitions),
+            ordered_trace_consumptions=issued_state.ordered_trace_consumptions,
+            route_marker=issued_state.route_marker,
         )
     return result
 
@@ -1057,7 +1836,7 @@ def _completed_training_update_snapshot(
 ) -> _CompletedTrainingUpdateSnapshot:
     """Return the immutable exact receipt snapshot for trusted evidence code."""
 
-    return _issued_receipt_state(receipt).snapshot
+    return dataclass_replace(_issued_receipt_state(receipt).snapshot)
 
 
 def _completed_training_update_token(receipt: CompletedTrainingUpdate) -> object:
@@ -1071,7 +1850,7 @@ def _completed_training_population_snapshot(
 ) -> _CompletedTrainingPopulationSnapshot:
     """Return ordered update/token snapshots for trusted history code."""
 
-    return _issued_population_state(population).snapshot
+    return dataclass_replace(_issued_population_state(population).snapshot)
 
 
 def _verify_epoch_backing(state: _EpochState, *, full: bool) -> None:
@@ -1091,6 +1870,65 @@ def _verify_epoch_backing(state: _EpochState, *, full: bool) -> None:
             raise Experiment002TrainingPopulationError(
                 "registered epoch preprocessor binding changed"
             )
+
+
+def _verify_epoch_hashers(
+    epoch: RegisteredTrainingEpoch,
+    state: _EpochState,
+) -> None:
+    with _ISSUED_EPOCHS_LOCK:
+        mirror_hasher = _EPOCH_HASH_MIRRORS.get(epoch)
+    if mirror_hasher is None:
+        raise Experiment002TrainingPopulationError(
+            "training population digest mirror is missing"
+        )
+    first = state.hasher.hexdigest()
+    mirror = mirror_hasher.hexdigest()
+    if (
+        not _is_sha256(first)
+        or not _is_sha256(mirror)
+        or not hmac.compare_digest(first, mirror)
+        or first != state.hasher.hexdigest()
+        or mirror != mirror_hasher.hexdigest()
+    ):
+        raise Experiment002TrainingPopulationError(
+            "training population digest differs from its independent mirror"
+        )
+
+
+def _sync_epoch_lifecycle(
+    epoch: RegisteredTrainingEpoch,
+    state: _EpochState,
+) -> None:
+    lifecycle = _EpochLifecycleGuard(
+        phase=state.phase,
+        cursor=state.cursor,
+        batch_index=state.batch_index,
+        current_batch=state.current_batch,
+        pending_verifications=state.pending_verifications,
+        ready_receipt=state.ready_receipt,
+        finished=state.finished,
+    )
+    with _ISSUED_EPOCHS_LOCK:
+        _EPOCH_LIFECYCLES[epoch] = lifecycle
+
+
+def _terminal_fail_epoch_state(
+    epoch: RegisteredTrainingEpoch,
+    state: _EpochState,
+) -> None:
+    state.phase = "FAILED"
+    if state.route_marker is _REGISTERED_EPOCH_MARKER:
+        transition = state.active_transition
+        if transition is not None:
+            with suppress(BaseException):
+                _fail_optimizer_transition(transition)
+        authority = state.executor_authority
+        if authority is not None:
+            with suppress(BaseException):
+                _fail_registered_executor_session(authority)
+    with suppress(BaseException):
+        _sync_epoch_lifecycle(epoch, state)
 
 
 def _verify_registered_source_state(state: _IssuedSourceState) -> None:
@@ -1538,6 +2376,86 @@ def _require_phase(state: _EpochState, expected: TrainingState) -> None:
         )
 
 
+def _require_epoch_call_authority(state: _EpochState) -> None:
+    if state.route_marker is _REGISTERED_EPOCH_MARKER and (
+        type(state.executor_authority) is not RegisteredExecutorSessionAuthority
+        or state.active_executor_authority is not state.executor_authority
+        or type(state.executor_session_token) is not object
+    ):
+        raise Experiment002TrainingPopulationError(
+            "registered epoch operations are owned by the exact executor"
+        )
+    if state.route_marker is _REGISTERED_EPOCH_MARKER:
+        assert state.executor_authority is not None
+        executor = _executor_session_snapshot(state.executor_authority)
+        if (
+            executor.session_token is not state.executor_session_token
+            or executor.seed != state.seed
+        ):
+            raise Experiment002TrainingPopulationError(
+                "registered epoch executor binding changed"
+            )
+
+
+def _require_transition_matches_batch(
+    state: _EpochState,
+    batch: _IssuedBatchState,
+    transition: _OptimizerTransitionSnapshot,
+    *,
+    learning_rate: float,
+    batch_mean_training_loss: np.float32,
+    returned_preclip_l2_norm: np.float32,
+) -> None:
+    if (
+        transition.executor_session_token is not state.executor_session_token
+        or transition.epoch_session_token is not state.session_token
+        or transition.batch_token is not batch.batch_token
+        or transition.seed != state.seed
+        or transition.zero_based_epoch != state.zero_based_epoch
+        or transition.zero_based_global_update != batch.global_update
+        or transition.batch_size != batch.label_indices.shape[0]
+        or transition.learning_rate_bytes != struct.pack("<d", learning_rate)
+        or transition.batch_mean_training_loss_bytes
+        != struct.pack("<f", batch_mean_training_loss)
+        or transition.returned_preclip_l2_norm_bytes
+        != struct.pack("<f", returned_preclip_l2_norm)
+    ):
+        raise Experiment002TrainingPopulationError(
+            "optimizer transition does not match the pending training batch"
+        )
+
+
+def _require_consumption_matches_receipt(
+    state: _EpochState,
+    receipt: _IssuedReceiptState,
+    transition: RegisteredOptimizerTransition,
+    consumption: TraceConsumedTransition,
+) -> None:
+    transition_snapshot = _transition_snapshot(
+        transition, required_phase="TRACE_CONSUMED"
+    )
+    consumption_snapshot = _trace_consumption_snapshot(consumption, required_used=False)
+    if (
+        receipt.optimizer_transition is not transition
+        or receipt.optimizer_transition_token
+        is not transition_snapshot.transition_token
+        or consumption_snapshot.executor_session_token
+        is not state.executor_session_token
+        or consumption_snapshot.epoch_session_token is not state.session_token
+        or consumption_snapshot.batch_token is not receipt.batch_token
+        or consumption_snapshot.transition_token
+        is not receipt.optimizer_transition_token
+        or consumption_snapshot.receipt_token is not receipt.receipt_token
+        or consumption_snapshot.zero_based_global_update
+        != receipt.snapshot.zero_based_global_update
+        or consumption_snapshot.trace_record_index
+        != receipt.snapshot.zero_based_global_update
+    ):
+        raise Experiment002TrainingPopulationError(
+            "trace consumption does not match the completed update receipt"
+        )
+
+
 def _require_registered_context(seed: int, zero_based_epoch: int) -> None:
     _require_uint32(seed, "seed")
     _require_uint32(zero_based_epoch, "zero_based_epoch")
@@ -1574,6 +2492,8 @@ def _issued_source_state(source: RegisteredTrainingInputSource) -> _IssuedSource
     with _ISSUED_SOURCES_LOCK:
         try:
             state = _ISSUED_SOURCES[source]
+            guard = _SOURCE_GUARDS[source]
+            context_guard = _SOURCE_CONTEXT_GUARDS[source]
         except KeyError as error:
             raise Experiment002TrainingPopulationError(
                 "training input source was not issued by this module"
@@ -1589,6 +2509,22 @@ def _issued_source_state(source: RegisteredTrainingInputSource) -> _IssuedSource
         raise Experiment002TrainingPopulationError(
             "training input source issuer state is invalid"
         )
+    if (
+        type(guard) is not _SourceIssuanceGuard
+        or state.corpus is not guard.corpus
+        or state.cache is not guard.cache
+        or state.normalization is not guard.normalization
+        or state.preprocessor is not guard.preprocessor
+        or state.corpus_snapshot != guard.corpus_snapshot
+        or state.cache_snapshot != guard.cache_snapshot
+        or state.normalization_contents != guard.normalization_contents
+        or state.marker is not guard.marker
+        or type(context_guard) is not frozenset
+        or frozenset(state.begun_contexts) != context_guard
+    ):
+        raise Experiment002TrainingPopulationError(
+            "training input source differs from issuance guard"
+        )
     return state
 
 
@@ -1598,6 +2534,10 @@ def _issued_epoch_state(epoch: RegisteredTrainingEpoch) -> _EpochState:
     with _ISSUED_EPOCHS_LOCK:
         try:
             state = _ISSUED_EPOCHS[epoch]
+            guard = _EPOCH_GUARDS[epoch]
+            accepted_guard = _EPOCH_ACCEPTED_GUARDS[epoch]
+            mirror_hasher = _EPOCH_HASH_MIRRORS[epoch]
+            lifecycle = _EPOCH_LIFECYCLES[epoch]
         except KeyError as error:
             raise Experiment002TrainingPopulationError(
                 "training epoch was not issued by this module"
@@ -1610,6 +2550,21 @@ def _issued_epoch_state(epoch: RegisteredTrainingEpoch) -> _EpochState:
         or type(state.examples) is not tuple
         or type(state.example_snapshots) is not tuple
         or type(state.session_token) is not object
+        or (
+            state.route_marker is _REGISTERED_EPOCH_MARKER
+            and type(state.executor_authority) is not RegisteredExecutorSessionAuthority
+        )
+        or (
+            state.route_marker is _REGISTERED_EPOCH_MARKER
+            and type(state.executor_session_token) is not object
+        )
+        or (
+            state.route_marker is None
+            and (
+                state.executor_authority is not None
+                or state.executor_session_token is not None
+            )
+        )
         or type(state.phase) is not str
         or state.phase not in {"OPEN", "BATCH_PENDING", "READY", "COMPLETE", "FAILED"}
         or type(state.cursor) is not int
@@ -1623,10 +2578,54 @@ def _issued_epoch_state(epoch: RegisteredTrainingEpoch) -> _EpochState:
         )
         or len(state.accepted_updates) != len(state.accepted_update_authorities)
         or type(state.finished) is not bool
+        or (
+            state.active_executor_authority is not None
+            and type(state.active_executor_authority)
+            is not RegisteredExecutorSessionAuthority
+        )
+        or (
+            state.active_transition is not None
+            and type(state.active_transition) is not RegisteredOptimizerTransition
+        )
+        or (
+            state.active_consumption is not None
+            and type(state.active_consumption) is not TraceConsumedTransition
+        )
+        or state.active_verification_phase not in {None, "PRE", "POST"}
         or type(state.lock) is not _RLOCK_TYPE
     ):
         raise Experiment002TrainingPopulationError(
             "training epoch issuer state is invalid"
+        )
+    if (
+        type(guard) is not _EpochIssuanceGuard
+        or state.seed != guard.seed
+        or state.zero_based_epoch != guard.zero_based_epoch
+        or state.layout != guard.layout
+        or state.examples != guard.examples
+        or state.example_snapshots != guard.example_snapshots
+        or state.preprocessor is not guard.preprocessor
+        or state.source is not guard.source
+        or state.route_marker is not guard.route_marker
+        or state.session_token is not guard.session_token
+        or state.executor_authority is not guard.executor_authority
+        or state.executor_session_token is not guard.executor_session_token
+        or state.hasher is not guard.hasher
+        or type(accepted_guard) is not tuple
+        or tuple(state.accepted_update_authorities) != accepted_guard
+        or not callable(getattr(mirror_hasher, "update", None))
+        or not callable(getattr(mirror_hasher, "hexdigest", None))
+        or type(lifecycle) is not _EpochLifecycleGuard
+        or state.phase != lifecycle.phase
+        or state.cursor != lifecycle.cursor
+        or state.batch_index != lifecycle.batch_index
+        or state.current_batch is not lifecycle.current_batch
+        or state.pending_verifications != lifecycle.pending_verifications
+        or state.ready_receipt is not lifecycle.ready_receipt
+        or state.finished is not lifecycle.finished
+    ):
+        raise Experiment002TrainingPopulationError(
+            "training epoch differs from issuance guard"
         )
     return state
 
@@ -1637,6 +2636,7 @@ def _issued_batch_state(batch: MaterializedTrainingBatch) -> _IssuedBatchState:
     with _ISSUED_BATCHES_LOCK:
         try:
             state = _ISSUED_BATCHES[batch]
+            guard = _BATCH_GUARDS[batch]
         except KeyError as error:
             raise Experiment002TrainingPopulationError(
                 "training batch is not live or was not issued by this module"
@@ -1658,6 +2658,23 @@ def _issued_batch_state(batch: MaterializedTrainingBatch) -> _IssuedBatchState:
         raise Experiment002TrainingPopulationError(
             "training batch issuer state is invalid"
         )
+    if (
+        type(guard) is not _BatchIssuanceGuard
+        or state.session_token is not guard.session_token
+        or state.batch_token is not guard.batch_token
+        or state.batch_index != guard.batch_index
+        or state.global_update != guard.global_update
+        or state.first_example != guard.first_example
+        or state.examples != guard.examples
+        or state.example_snapshots != guard.example_snapshots
+        or state.model_inputs is not guard.model_inputs
+        or state.label_indices is not guard.label_indices
+        or state.model_inputs_sha256 != guard.model_inputs_sha256
+        or state.label_indices_sha256 != guard.label_indices_sha256
+    ):
+        raise Experiment002TrainingPopulationError(
+            "training batch differs from issuance guard"
+        )
     return state
 
 
@@ -1667,11 +2684,12 @@ def _issued_receipt_state(receipt: CompletedTrainingUpdate) -> _IssuedReceiptSta
     with _ISSUED_RECEIPTS_LOCK:
         try:
             state = _ISSUED_RECEIPTS[receipt]
+            guard = _RECEIPT_GUARDS[receipt]
         except KeyError as error:
             raise Experiment002TrainingPopulationError(
                 "completed update was not issued by this module"
             ) from error
-    _validate_receipt_state(state)
+    _validate_receipt_state(state, receipt=receipt, guard=guard)
     return state
 
 
@@ -1683,6 +2701,7 @@ def _issued_population_state(
     with _ISSUED_POPULATIONS_LOCK:
         try:
             state = _ISSUED_POPULATIONS[population]
+            guard = _POPULATION_GUARDS[population]
         except KeyError as error:
             raise Experiment002TrainingPopulationError(
                 "completed population was not issued by this module"
@@ -1701,6 +2720,9 @@ def _issued_population_state(
         )
         or type(state.ordered_batch_tokens) is not tuple
         or type(state.ordered_receipt_tokens) is not tuple
+        or type(state.ordered_optimizer_transition_tokens) is not tuple
+        or type(state.ordered_optimizer_transitions) is not tuple
+        or type(state.ordered_trace_consumptions) is not tuple
         or (
             state.route_marker is not None
             and state.route_marker is not _REGISTERED_EPOCH_MARKER
@@ -1720,6 +2742,10 @@ def _issued_population_state(
         or snapshot.session_token is not state.session_token
         or snapshot.ordered_batch_tokens != state.ordered_batch_tokens
         or snapshot.ordered_receipt_tokens != state.ordered_receipt_tokens
+        or snapshot.ordered_optimizer_transition_tokens
+        != state.ordered_optimizer_transition_tokens
+        or snapshot.ordered_optimizer_transitions != state.ordered_optimizer_transitions
+        or snapshot.ordered_trace_consumptions != state.ordered_trace_consumptions
         or snapshot.route_marker is not state.route_marker
         or tuple(_frame_update_snapshot(item) for item in snapshot.updates)
         != state.update_authority_payloads
@@ -1727,16 +2753,53 @@ def _issued_population_state(
         raise Experiment002TrainingPopulationError(
             "completed population differs from issuer authority"
         )
+    if (
+        type(guard) is not _PopulationIssuanceGuard
+        or state.sha256 != guard.sha256
+        or state.seed != guard.seed
+        or state.zero_based_epoch != guard.zero_based_epoch
+        or state.example_count != guard.example_count
+        or state.batch_count != guard.batch_count
+        or state.session_token is not guard.session_token
+        or state.update_authority_payloads != guard.update_authority_payloads
+        or state.ordered_batch_tokens != guard.ordered_batch_tokens
+        or state.ordered_receipt_tokens != guard.ordered_receipt_tokens
+        or state.ordered_optimizer_transition_tokens
+        != guard.ordered_optimizer_transition_tokens
+        or state.ordered_optimizer_transitions != guard.ordered_optimizer_transitions
+        or state.ordered_trace_consumptions != guard.ordered_trace_consumptions
+        or state.route_marker is not guard.route_marker
+    ):
+        raise Experiment002TrainingPopulationError(
+            "completed population differs from issuance guard"
+        )
     return state
 
 
-def _validate_receipt_state(state: _IssuedReceiptState) -> None:
+def _validate_receipt_state(
+    state: _IssuedReceiptState,
+    *,
+    receipt: CompletedTrainingUpdate | None = None,
+    guard: _ReceiptIssuanceGuard | None = None,
+) -> None:
     if (
         type(state) is not _IssuedReceiptState
         or type(state.authority_payload) is not bytes
         or type(state.session_token) is not object
         or type(state.batch_token) is not object
         or type(state.receipt_token) is not object
+        or (
+            state.optimizer_transition_token is not None
+            and type(state.optimizer_transition_token) is not object
+        )
+        or (
+            state.optimizer_transition is not None
+            and type(state.optimizer_transition) is not RegisteredOptimizerTransition
+        )
+        or (
+            (state.optimizer_transition_token is None)
+            != (state.optimizer_transition is None)
+        )
         or type(state.accepted) is not bool
     ):
         raise Experiment002TrainingPopulationError(
@@ -1747,11 +2810,35 @@ def _validate_receipt_state(state: _IssuedReceiptState) -> None:
         state.snapshot.session_token is not state.session_token
         or state.snapshot.batch_token is not state.batch_token
         or state.snapshot.receipt_token is not state.receipt_token
+        or state.snapshot.optimizer_transition_token
+        is not state.optimizer_transition_token
         or _frame_update_snapshot(state.snapshot) != state.authority_payload
     ):
         raise Experiment002TrainingPopulationError(
             "completed update differs from issuer authority"
         )
+    if guard is not None and (
+        type(guard) is not _ReceiptIssuanceGuard
+        or state.authority_payload != guard.authority_payload
+        or state.session_token is not guard.session_token
+        or state.batch_token is not guard.batch_token
+        or state.receipt_token is not guard.receipt_token
+        or state.optimizer_transition_token is not guard.optimizer_transition_token
+        or state.optimizer_transition is not guard.optimizer_transition
+    ):
+        raise Experiment002TrainingPopulationError(
+            "completed update differs from issuance guard"
+        )
+    if receipt is not None and state.accepted is not (receipt in _ACCEPTED_RECEIPTS):
+        raise Experiment002TrainingPopulationError(
+            "completed update acceptance differs from append-only authority"
+        )
+    if state.optimizer_transition is not None:
+        transition = _transition_snapshot(state.optimizer_transition)
+        if transition.transition_token is not state.optimizer_transition_token:
+            raise Experiment002TrainingPopulationError(
+                "completed update transition authority differs"
+            )
 
 
 def _frame_update_snapshot(snapshot: _CompletedTrainingUpdateSnapshot) -> bytes:
@@ -1777,6 +2864,7 @@ def _copy_update_snapshot(
         session_token=snapshot.session_token,
         batch_token=snapshot.batch_token,
         receipt_token=snapshot.receipt_token,
+        optimizer_transition_token=snapshot.optimizer_transition_token,
         seed=snapshot.seed,
         zero_based_epoch=snapshot.zero_based_epoch,
         batch_index=snapshot.batch_index,
@@ -1795,16 +2883,50 @@ def _update_matches_accepted_authority(
     snapshot: _CompletedTrainingUpdateSnapshot,
     authority: _AcceptedUpdateAuthority,
 ) -> bool:
-    return (
+    basic_match = (
         type(authority) is _AcceptedUpdateAuthority
         and type(authority.payload) is bytes
         and type(authority.session_token) is object
         and type(authority.batch_token) is object
         and type(authority.receipt_token) is object
+        and (
+            authority.optimizer_transition_token is None
+            or type(authority.optimizer_transition_token) is object
+        )
         and _frame_update_snapshot(snapshot) == authority.payload
         and snapshot.session_token is authority.session_token
         and snapshot.batch_token is authority.batch_token
         and snapshot.receipt_token is authority.receipt_token
+        and snapshot.optimizer_transition_token is authority.optimizer_transition_token
+    )
+    if not basic_match:
+        return False
+    if authority.optimizer_transition_token is None:
+        return (
+            authority.optimizer_transition is None
+            and authority.trace_consumption is None
+            and authority.trace_consumption_token is None
+        )
+    if (
+        type(authority.optimizer_transition) is not RegisteredOptimizerTransition
+        or type(authority.trace_consumption) is not TraceConsumedTransition
+        or type(authority.trace_consumption_token) is not object
+    ):
+        return False
+    transition = _transition_snapshot(
+        authority.optimizer_transition, required_phase="POPULATION_ACCEPTED"
+    )
+    consumption = _trace_consumption_snapshot(
+        authority.trace_consumption, required_used=True
+    )
+    return (
+        transition.transition_token is authority.optimizer_transition_token
+        and consumption.transition_token is authority.optimizer_transition_token
+        and consumption.consumption_token is authority.trace_consumption_token
+        and consumption.receipt_token is authority.receipt_token
+        and consumption.batch_token is authority.batch_token
+        and consumption.zero_based_global_update == snapshot.zero_based_global_update
+        and consumption.trace_record_index == snapshot.zero_based_global_update
     )
 
 
@@ -1814,6 +2936,10 @@ def _validate_update_snapshot(snapshot: _CompletedTrainingUpdateSnapshot) -> Non
         or type(snapshot.session_token) is not object
         or type(snapshot.batch_token) is not object
         or type(snapshot.receipt_token) is not object
+        or (
+            snapshot.optimizer_transition_token is not None
+            and type(snapshot.optimizer_transition_token) is not object
+        )
         or type(snapshot.seed) is not int
         or type(snapshot.zero_based_epoch) is not int
         or type(snapshot.batch_index) is not int
@@ -1861,6 +2987,9 @@ def _validate_population_snapshot(
         or type(snapshot.updates) is not tuple
         or type(snapshot.ordered_batch_tokens) is not tuple
         or type(snapshot.ordered_receipt_tokens) is not tuple
+        or type(snapshot.ordered_optimizer_transition_tokens) is not tuple
+        or type(snapshot.ordered_optimizer_transitions) is not tuple
+        or type(snapshot.ordered_trace_consumptions) is not tuple
         or (
             snapshot.route_marker is not None
             and snapshot.route_marker is not _REGISTERED_EPOCH_MARKER
@@ -1868,6 +2997,27 @@ def _validate_population_snapshot(
         or len(snapshot.updates) != snapshot.batch_count
         or len(snapshot.ordered_batch_tokens) != snapshot.batch_count
         or len(snapshot.ordered_receipt_tokens) != snapshot.batch_count
+        or (
+            snapshot.route_marker is _REGISTERED_EPOCH_MARKER
+            and len(snapshot.ordered_optimizer_transition_tokens)
+            != snapshot.batch_count
+        )
+        or (
+            snapshot.route_marker is _REGISTERED_EPOCH_MARKER
+            and len(snapshot.ordered_optimizer_transitions) != snapshot.batch_count
+        )
+        or (
+            snapshot.route_marker is _REGISTERED_EPOCH_MARKER
+            and len(snapshot.ordered_trace_consumptions) != snapshot.batch_count
+        )
+        or (
+            snapshot.route_marker is None
+            and (
+                snapshot.ordered_optimizer_transition_tokens
+                or snapshot.ordered_optimizer_transitions
+                or snapshot.ordered_trace_consumptions
+            )
+        )
     ):
         raise Experiment002TrainingPopulationError(
             "completed population snapshot is invalid"
@@ -1884,10 +3034,36 @@ def _validate_population_snapshot(
             or update.batch_index != batch_index
             or update.batch_token is not snapshot.ordered_batch_tokens[batch_index]
             or update.receipt_token is not snapshot.ordered_receipt_tokens[batch_index]
+            or (
+                snapshot.route_marker is _REGISTERED_EPOCH_MARKER
+                and update.optimizer_transition_token
+                is not snapshot.ordered_optimizer_transition_tokens[batch_index]
+            )
         ):
             raise Experiment002TrainingPopulationError(
                 "completed population update ordering differs"
             )
+        if snapshot.route_marker is _REGISTERED_EPOCH_MARKER:
+            transition = snapshot.ordered_optimizer_transitions[batch_index]
+            consumption = snapshot.ordered_trace_consumptions[batch_index]
+            transition_snapshot = _transition_snapshot(
+                transition, required_phase="POPULATION_ACCEPTED"
+            )
+            consumption_snapshot = _trace_consumption_snapshot(
+                consumption, required_used=True
+            )
+            if (
+                transition_snapshot.transition_token
+                is not update.optimizer_transition_token
+                or consumption_snapshot.transition_token
+                is not update.optimizer_transition_token
+                or consumption_snapshot.receipt_token is not update.receipt_token
+                or consumption_snapshot.trace_record_index
+                != update.zero_based_global_update
+            ):
+                raise Experiment002TrainingPopulationError(
+                    "completed population transition authority differs"
+                )
         total_examples += update.batch_size
     if (
         total_examples != snapshot.example_count
@@ -1895,6 +3071,13 @@ def _validate_population_snapshot(
         != snapshot.batch_count
         or len({id(token) for token in snapshot.ordered_receipt_tokens})
         != snapshot.batch_count
+        or (
+            snapshot.route_marker is _REGISTERED_EPOCH_MARKER
+            and len(
+                {id(token) for token in snapshot.ordered_optimizer_transition_tokens}
+            )
+            != snapshot.batch_count
+        )
     ):
         raise Experiment002TrainingPopulationError(
             "completed population token or example counts differ"

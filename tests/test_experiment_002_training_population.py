@@ -8,6 +8,7 @@ import pickle
 import struct
 import weakref
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -20,6 +21,12 @@ from falsewake.experiment_002_data import (
     CommandSource,
 )
 from falsewake.experiment_002_pcm_cache import _IndexEntry
+from falsewake.experiment_002_training_bridge import (
+    RegisteredExecutorSessionAuthority,
+    RegisteredOptimizerTransition,
+    TraceConsumedTransition,
+    _issue_registered_executor_session,
+)
 from falsewake.experiment_002_training_population import (
     CompletedTrainingPopulation,
     CompletedTrainingUpdate,
@@ -512,7 +519,7 @@ def test_issuer_only_values_reject_forgery_copy_and_pickle() -> None:
     with pytest.raises(Experiment002TrainingPopulationError, match="not issued"):
         _ = forged_epoch.state
     forged_source = object.__new__(RegisteredTrainingInputSource)
-    with pytest.raises(Experiment002TrainingPopulationError, match="not issued"):
+    with pytest.raises(Experiment002TrainingPopulationError, match="exact executor"):
         forged_source.begin_epoch(seed=20_260_719, zero_based_epoch=0)
     assert layout.batch_count == 1
 
@@ -706,12 +713,20 @@ def test_public_bind_and_begin_are_stubbed_before_full_plan_or_materialization(
         return sentinel
 
     monkeypatch.setattr(training, "build_training_epoch", fake_build)
-    monkeypatch.setattr(training, "_begin_training_epoch", fake_begin)
+    monkeypatch.setattr(training, "_construct_training_epoch", fake_begin)
 
     source = training.bind_registered_training_inputs(
         cast(Any, corpus), cast(Any, cache), cast(Any, normalization)
     )
-    observed = source.begin_epoch(seed=20_260_719, zero_based_epoch=0)
+    with pytest.raises(Experiment002TrainingPopulationError, match="exact executor"):
+        source.begin_epoch(seed=20_260_719, zero_based_epoch=0)
+    executor_authority = _issue_registered_executor_session(20_260_719)
+    observed = training._begin_registered_epoch_for_executor(
+        source,
+        executor_authority=executor_authority,
+        seed=20_260_719,
+        zero_based_epoch=0,
+    )
 
     assert observed is sentinel
     source_state = training._issued_source_state(source)
@@ -723,7 +738,15 @@ def test_public_bind_and_begin_are_stubbed_before_full_plan_or_materialization(
     assert not any(item[0] == "materialize" for item in calls)
 
     with pytest.raises(Experiment002TrainingPopulationError, match="already begun"):
-        source.begin_epoch(seed=20_260_719, zero_based_epoch=0)
+        training._begin_registered_epoch_for_executor(
+            source,
+            executor_authority=executor_authority,
+            seed=20_260_719,
+            zero_based_epoch=0,
+        )
+    source_state.begun_contexts.clear()
+    with pytest.raises(Experiment002TrainingPopulationError, match="issuance guard"):
+        training._issued_source_state(source)
 
 
 def test_public_binder_rejects_nonexact_types_without_touching_inputs() -> None:
@@ -731,3 +754,312 @@ def test_public_binder_rejects_nonexact_types_without_touching_inputs() -> None:
         training.bind_registered_training_inputs(
             cast(Any, object()), cast(Any, object()), cast(Any, object())
         )
+
+
+def test_generic_tiny_epoch_seam_has_no_registered_arguments() -> None:
+    import inspect
+
+    parameters = inspect.signature(training._begin_training_epoch).parameters
+    assert "source" not in parameters
+    assert "route_marker" not in parameters
+    assert "executor_authority" not in parameters
+    assert "construction_authority" not in parameters
+
+
+def test_batch_guard_rejects_coherent_bytes_and_digest_rewrite() -> None:
+    epoch, _, _ = _epoch((_example(0),))
+    batch = epoch.next_batch(0)
+    batch_state = training._ISSUED_BATCHES[batch]
+    batch_state.model_inputs.setflags(write=True)
+    batch_state.model_inputs[0, 0, 0] += np.float32(1.0)
+    batch_state.model_inputs.setflags(write=False)
+    object.__setattr__(
+        batch_state,
+        "model_inputs_sha256",
+        training._array_sha256(batch_state.model_inputs),
+    )
+    with pytest.raises(Experiment002TrainingPopulationError, match="issuance guard"):
+        _ = batch.model_inputs
+
+
+def test_epoch_guards_reject_lifecycle_and_plan_rewrites() -> None:
+    lifecycle_epoch, _, _ = _epoch((_example(0),))
+    lifecycle_epoch.next_batch(0)
+    lifecycle_state = training._ISSUED_EPOCHS[lifecycle_epoch]
+    lifecycle_state.pending_verifications = 2
+    with pytest.raises(Experiment002TrainingPopulationError, match="issuance guard"):
+        _ = lifecycle_epoch.state
+
+    plan_epoch, _, _ = _epoch((_example(1),))
+    plan_state = training._ISSUED_EPOCHS[plan_epoch]
+    replacement = (_example(2),)
+    plan_state.examples = replacement
+    plan_state.example_snapshots = training._snapshot_plan(replacement)
+    with pytest.raises(Experiment002TrainingPopulationError, match="issuance guard"):
+        _ = plan_epoch.state
+
+
+def test_population_terminal_failure_survives_lifecycle_sync_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    epoch, layout, _ = _epoch((_example(0),))
+    batch = epoch.next_batch(0)
+    epoch.verify_pending_batch(batch, global_update=0)
+    epoch.verify_pending_batch(batch, global_update=0)
+    receipt = epoch.complete_update(
+        batch,
+        learning_rate=0.1,
+        batch_mean_training_loss=np.float32(0.5),
+        returned_preclip_l2_norm=np.float32(1.0),
+    )
+    state = training._ISSUED_EPOCHS[epoch]
+    executor_authority = object.__new__(RegisteredExecutorSessionAuthority)
+    transition = object.__new__(RegisteredOptimizerTransition)
+    consumption = object.__new__(TraceConsumedTransition)
+    state.route_marker = training._REGISTERED_EPOCH_MARKER
+    state.executor_authority = executor_authority
+    state.executor_session_token = object()
+    state.active_executor_authority = executor_authority
+    state.active_transition = transition
+    state.active_consumption = consumption
+
+    class _FailingList(list[training._CompletedTrainingUpdateSnapshot]):
+        def append(self, item: training._CompletedTrainingUpdateSnapshot) -> None:
+            del item
+            raise RuntimeError("injected post-bridge failure")
+
+    state.accepted_updates = _FailingList()
+    bridge_commits = 0
+    transition_failures = 0
+    session_failures = 0
+
+    monkeypatch.setattr(training, "_issued_epoch_state", lambda candidate: state)
+    monkeypatch.setattr(training, "_require_epoch_call_authority", lambda value: None)
+    monkeypatch.setattr(
+        training,
+        "_verify_pending_batch",
+        lambda epoch_state, candidate: training._ISSUED_BATCHES[candidate],
+    )
+    monkeypatch.setattr(
+        training,
+        "_require_consumption_matches_receipt",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        training,
+        "_trace_consumption_snapshot",
+        lambda *args, **kwargs: SimpleNamespace(
+            consumption_token=object(),
+        ),
+    )
+
+    def accept_bridge(*args: object, **kwargs: object) -> None:
+        nonlocal bridge_commits
+        del args, kwargs
+        bridge_commits += 1
+
+    def fail_transition(candidate: object) -> None:
+        nonlocal transition_failures
+        assert candidate is transition
+        transition_failures += 1
+
+    def fail_session(candidate: object) -> None:
+        nonlocal session_failures
+        assert candidate is executor_authority
+        session_failures += 1
+
+    def fail_lifecycle(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise RuntimeError("persistent lifecycle registry failure")
+
+    monkeypatch.setattr(training, "_accept_trace_consumed_transition", accept_bridge)
+    monkeypatch.setattr(training, "_fail_optimizer_transition", fail_transition)
+    monkeypatch.setattr(training, "_fail_registered_executor_session", fail_session)
+    monkeypatch.setattr(training, "_sync_epoch_lifecycle", fail_lifecycle)
+
+    with pytest.raises(RuntimeError, match="post-bridge"):
+        epoch.accept_completed_update(receipt)
+    assert layout.batch_count == 1
+    assert bridge_commits == 1
+    assert transition_failures == 1
+    assert session_failures == 1
+    assert state.phase == "FAILED"
+
+
+def test_population_does_not_adopt_or_fail_foreign_transition_or_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor_authority = object.__new__(RegisteredExecutorSessionAuthority)
+    foreign_transition = object.__new__(RegisteredOptimizerTransition)
+    foreign_consumption = object.__new__(TraceConsumedTransition)
+    foreign_executor_token = object()
+    local_transition_failures: list[RegisteredOptimizerTransition] = []
+    session_failures = 0
+
+    def fail_transition(candidate: object) -> None:
+        assert type(candidate) is RegisteredOptimizerTransition
+        assert candidate is not foreign_transition
+        local_transition_failures.append(candidate)
+
+    def fail_session(candidate: object) -> None:
+        nonlocal session_failures
+        assert candidate is executor_authority
+        session_failures += 1
+
+    monkeypatch.setattr(training, "_fail_optimizer_transition", fail_transition)
+    monkeypatch.setattr(training, "_fail_registered_executor_session", fail_session)
+
+    complete_epoch, _, _ = _epoch((_example(0),))
+    complete_batch = complete_epoch.next_batch(0)
+    complete_epoch.verify_pending_batch(complete_batch, global_update=0)
+    complete_epoch.verify_pending_batch(complete_batch, global_update=0)
+    complete_state = training._ISSUED_EPOCHS[complete_epoch]
+    complete_state.route_marker = training._REGISTERED_EPOCH_MARKER
+    complete_state.executor_authority = executor_authority
+    complete_state.executor_session_token = object()
+    complete_batch_state = training._ISSUED_BATCHES[complete_batch]
+    foreign_snapshot = SimpleNamespace(
+        executor_session_token=foreign_executor_token,
+        epoch_session_token=object(),
+        batch_token=object(),
+        transition_token=object(),
+        seed=complete_state.seed,
+        zero_based_epoch=0,
+        zero_based_global_update=0,
+        batch_size=complete_batch_state.label_indices.shape[0],
+        learning_rate=0.1,
+        batch_mean_training_loss=np.float32(0.5),
+        returned_preclip_l2_norm=np.float32(1.0),
+    )
+    monkeypatch.setattr(
+        training,
+        "_require_executor_epoch",
+        lambda *args, **kwargs: complete_state,
+    )
+    monkeypatch.setattr(
+        training, "_transition_snapshot", lambda *args, **kwargs: foreign_snapshot
+    )
+    with pytest.raises(Experiment002TrainingPopulationError, match="does not belong"):
+        training._executor_complete_update(
+            complete_epoch,
+            executor_authority,
+            complete_batch,
+            foreign_transition,
+        )
+    assert local_transition_failures == []
+    assert session_failures == 1
+    assert complete_state.phase == "FAILED"
+
+    receipt_states: dict[CompletedTrainingUpdate, SimpleNamespace] = {}
+    transition_snapshots: dict[RegisteredOptimizerTransition, SimpleNamespace] = {}
+    current_state: list[training._EpochState] = []
+
+    def accept_context(
+        ordinal: int,
+    ) -> tuple[
+        RegisteredTrainingEpoch,
+        CompletedTrainingUpdate,
+        training._EpochState,
+        RegisteredOptimizerTransition,
+    ]:
+        epoch, _, _ = _epoch((_example(ordinal),))
+        batch = epoch.next_batch(0)
+        epoch.verify_pending_batch(batch, global_update=0)
+        epoch.verify_pending_batch(batch, global_update=0)
+        receipt = epoch.complete_update(
+            batch,
+            learning_rate=0.1,
+            batch_mean_training_loss=np.float32(0.5),
+            returned_preclip_l2_norm=np.float32(1.0),
+        )
+        state = training._ISSUED_EPOCHS[epoch]
+        state.route_marker = training._REGISTERED_EPOCH_MARKER
+        state.executor_authority = executor_authority
+        state.executor_session_token = object()
+        local_transition = object.__new__(RegisteredOptimizerTransition)
+        transition_token = object()
+        batch_token = object()
+        receipt_states[receipt] = SimpleNamespace(
+            optimizer_transition=local_transition,
+            optimizer_transition_token=transition_token,
+            session_token=state.session_token,
+            batch_token=batch_token,
+            receipt_token=object(),
+            snapshot=SimpleNamespace(
+                session_token=state.session_token,
+                batch_token=batch_token,
+                zero_based_global_update=0,
+            ),
+        )
+        transition_snapshots[local_transition] = SimpleNamespace(
+            executor_session_token=state.executor_session_token,
+            epoch_session_token=state.session_token,
+            batch_token=batch_token,
+            transition_token=transition_token,
+        )
+        return epoch, receipt, state, local_transition
+
+    first_epoch, first_receipt, first_state, first_local_transition = accept_context(1)
+    current_state.append(first_state)
+    monkeypatch.setattr(
+        training,
+        "_require_executor_epoch",
+        lambda *args, **kwargs: current_state[0],
+    )
+    monkeypatch.setattr(
+        training,
+        "_issued_receipt_state",
+        lambda candidate: receipt_states[candidate],
+    )
+    monkeypatch.setattr(
+        training,
+        "_transition_snapshot",
+        lambda candidate, **kwargs: transition_snapshots[candidate],
+    )
+    monkeypatch.setattr(
+        training,
+        "_trace_consumption_snapshot",
+        lambda *args, **kwargs: SimpleNamespace(
+            executor_session_token=foreign_executor_token,
+            epoch_session_token=object(),
+            batch_token=object(),
+            transition_token=object(),
+            receipt_token=object(),
+            zero_based_global_update=0,
+        ),
+    )
+    with pytest.raises(Experiment002TrainingPopulationError, match="does not belong"):
+        training._executor_accept_completed_update(
+            first_epoch,
+            executor_authority,
+            first_receipt,
+            foreign_transition,
+            foreign_consumption,
+        )
+    assert local_transition_failures == [first_local_transition]
+    assert session_failures == 2
+    assert first_state.phase == "FAILED"
+    assert first_state.active_transition is None
+
+    second_epoch, second_receipt, second_state, second_local_transition = (
+        accept_context(2)
+    )
+    current_state[0] = second_state
+    foreign_receipt = object.__new__(CompletedTrainingUpdate)
+    with pytest.raises(Experiment002TrainingPopulationError, match="does not belong"):
+        training._executor_accept_completed_update(
+            second_epoch,
+            executor_authority,
+            foreign_receipt,
+            foreign_transition,
+            foreign_consumption,
+        )
+    assert second_receipt is second_state.ready_receipt
+    assert local_transition_failures == [
+        first_local_transition,
+        second_local_transition,
+    ]
+    assert foreign_transition not in local_transition_failures
+    assert session_failures == 3
+    assert second_state.phase == "FAILED"
+    assert second_state.active_transition is None

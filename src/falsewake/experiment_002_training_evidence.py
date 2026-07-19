@@ -7,12 +7,13 @@ must consume the matching issuer-only completed-update receipt.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import math
 import struct
 import threading
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, NoReturn
 
 import numpy as np
@@ -20,6 +21,21 @@ import torch
 from torch import Tensor, nn
 
 from falsewake.causal_kws import CausalKWS
+from falsewake.experiment_002_training_bridge import (
+    RegisteredOptimizerTransition,
+    TraceConsumedTransition,
+    _fail_optimizer_transition,
+    _mark_transition_trace_consumed,
+    _trace_consumption_snapshot,
+    _transition_snapshot,
+)
+from falsewake.experiment_002_training_population import (
+    CompletedTrainingPopulation,
+    CompletedTrainingUpdate,
+    _completed_training_population_snapshot,
+    _completed_training_update_snapshot,
+    verify_completed_registered_training_population,
+)
 
 REGISTERED_SEEDS: Final = (20_260_719, 20_260_720, 20_260_721)
 EPOCH_COUNT: Final = 30
@@ -596,6 +612,40 @@ def _validate_update_trace_route_marker(route_marker: object | None) -> None:
         )
 
 
+def _trace_layout_payload(layout: _TraceLayout) -> bytes:
+    _validate_trace_layout(layout)
+    return struct.pack(
+        "<IIIIIIddd",
+        layout.epochs,
+        layout.updates_per_epoch,
+        layout.population_count,
+        layout.batch_size,
+        layout.last_batch_size,
+        layout.warmup_updates,
+        layout.warmup_start_lr,
+        layout.maximum_lr,
+        layout.minimum_lr,
+    )
+
+
+def _frame_trace_accumulator_authority(
+    seed: int,
+    layout: _TraceLayout,
+    route_marker: object | None,
+    trace_session_token: object,
+) -> bytes:
+    _require_uint32(seed, "seed")
+    _validate_update_trace_route_marker(route_marker)
+    if type(trace_session_token) is not object:
+        raise TypeError("trace_session_token must be an exact object")
+    return struct.pack(
+        "<IBQ",
+        seed,
+        int(route_marker is _UPDATE_TRACE_ROUTE_MARKER),
+        id(trace_session_token),
+    ) + _trace_layout_payload(layout)
+
+
 @dataclass(frozen=True, slots=True)
 class _UpdateRecord:
     global_update: int
@@ -604,6 +654,13 @@ class _UpdateRecord:
     batch_mean_training_loss: np.float32
     returned_preclip_l2_norm: np.float32
     framed: bytes
+    receipt: CompletedTrainingUpdate | None = None
+    receipt_token: object | None = None
+    optimizer_transition_token: object | None = None
+    optimizer_transition: RegisteredOptimizerTransition | None = None
+    trace_session_token: object | None = None
+    trace_consumption_token: object | None = None
+    trace_consumption: TraceConsumedTransition | None = None
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -674,6 +731,7 @@ class _IssuedEpochTraceState:
     training_cross_entropy: np.float64
     layout: _TraceLayout
     route_marker: object | None
+    trace_session_token: object | None
 
 
 _ISSUED_EPOCH_TRACES: weakref.WeakKeyDictionary[
@@ -736,12 +794,47 @@ class _IssuedCompleteTraceState:
     sha256: str
     layout: _TraceLayout
     route_marker: object | None
+    trace_session_token: object | None
 
 
 _ISSUED_COMPLETE_TRACES: weakref.WeakKeyDictionary[
     CompleteUpdateTraceEvidence, _IssuedCompleteTraceState
 ] = weakref.WeakKeyDictionary()
 _ISSUED_COMPLETE_TRACES_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True, slots=True)
+class _TraceAccumulatorAuthority:
+    seed: int
+    layout: _TraceLayout
+    route_marker: object | None
+    trace_session_token: object
+    authority_payload: bytes
+
+
+@dataclass(slots=True)
+class _TraceAccumulatorState:
+    authority: _TraceAccumulatorAuthority
+    failed: bool = False
+
+
+type _TraceAccumulatorIssuanceGuard = tuple[
+    int,
+    int,
+    bytes,
+    object | None,
+    object,
+    bytes,
+]
+
+_TRACE_ACCUMULATOR_AUTHORITIES: weakref.WeakKeyDictionary[
+    object, _TraceAccumulatorState
+] = weakref.WeakKeyDictionary()
+_TRACE_ACCUMULATOR_ISSUANCE_GUARDS: weakref.WeakKeyDictionary[
+    object, _TraceAccumulatorIssuanceGuard
+] = weakref.WeakKeyDictionary()
+_FAILED_TRACE_ACCUMULATORS: weakref.WeakSet[object] = weakref.WeakSet()
+_TRACE_ACCUMULATOR_AUTHORITIES_LOCK = threading.Lock()
 
 
 class UpdateTraceAccumulator:
@@ -759,7 +852,10 @@ class UpdateTraceAccumulator:
         "_records",
         "_epochs",
         "_complete",
+        "_trace_session_token",
+        "_failed",
         "_lock",
+        "__weakref__",
     )
 
     def __init__(self, seed: int) -> None:
@@ -798,7 +894,33 @@ class UpdateTraceAccumulator:
         self._records: list[_UpdateRecord] = []
         self._epochs: list[EpochUpdateTraceEvidence] = []
         self._complete: CompleteUpdateTraceEvidence | None = None
+        self._trace_session_token = object()
+        self._failed = False
         self._lock = threading.Lock()
+        authority = _TraceAccumulatorAuthority(
+            seed=seed,
+            layout=replace(layout),
+            route_marker=route_marker,
+            trace_session_token=self._trace_session_token,
+            authority_payload=_frame_trace_accumulator_authority(
+                seed,
+                layout,
+                route_marker,
+                self._trace_session_token,
+            ),
+        )
+        with _TRACE_ACCUMULATOR_AUTHORITIES_LOCK:
+            _TRACE_ACCUMULATOR_AUTHORITIES[self] = _TraceAccumulatorState(
+                authority=authority
+            )
+            _TRACE_ACCUMULATOR_ISSUANCE_GUARDS[self] = (
+                seed,
+                id(layout),
+                _trace_layout_payload(layout),
+                route_marker,
+                self._trace_session_token,
+                authority.authority_payload,
+            )
 
     @property
     def seed(self) -> int:
@@ -822,126 +944,487 @@ class UpdateTraceAccumulator:
         batch_mean_training_loss: np.float32,
         returned_preclip_l2_norm: np.float32,
     ) -> None:
-        """Append one exact update after checking order, schedule, and scalars."""
+        """Append one synthetic update after validating its supplied scalars.
+
+        Registered traces are receipt-derived and can only be advanced by the
+        exact executor through :meth:`_consume_registered_update`.
+        """
 
         with self._lock:
-            if self._complete is not None:
+            trace_state = self._authority_locked()
+            if trace_state.authority.route_marker is _UPDATE_TRACE_ROUTE_MARKER:
+                self._mark_failed_locked()
                 raise Experiment002TrainingEvidenceError(
-                    "cannot append after the complete trace was issued"
+                    "registered traces reject the raw scalar record_update route"
                 )
-            expected_update = len(self._records)
-            if expected_update >= self._layout.total_updates:
-                raise Experiment002TrainingEvidenceError(
-                    "the update trace already contains every expected update"
-                )
-            if expected_update == (len(self._epochs) + 1) * (
-                self._layout.updates_per_epoch
-            ):
-                raise Experiment002TrainingEvidenceError(
-                    "finish_epoch must be called before the next update"
-                )
-            _require_uint32(global_update, "global_update")
-            if global_update != expected_update:
-                raise Experiment002TrainingEvidenceError(
-                    "global_update differs from the next ordered update"
-                )
-            expected_batch_size = _batch_size_for_update(global_update, self._layout)
-            if type(batch_size) is not int:
-                raise TypeError("batch_size must be an integer")
-            if batch_size != expected_batch_size:
-                raise Experiment002TrainingEvidenceError(
-                    "batch_size differs from the registered batch layout"
-                )
-            expected_learning_rate = _learning_rate_for_update(
-                global_update, self._layout
-            )
-            if type(learning_rate) is not float:
-                raise TypeError("learning_rate must be a Python float")
-            if not math.isfinite(learning_rate) or struct.pack(
-                "<d", learning_rate
-            ) != struct.pack("<d", expected_learning_rate):
-                raise Experiment002TrainingEvidenceError(
-                    "learning_rate differs from the exact registered schedule"
-                )
-            _require_float32_scalar(
-                batch_mean_training_loss, "batch_mean_training_loss"
-            )
-            _require_float32_scalar(
-                returned_preclip_l2_norm, "returned_preclip_l2_norm"
-            )
-            framed = struct.pack(
-                "<IIdff",
+            self._require_live_locked()
+            record = self._prepare_record_locked(
                 global_update,
                 batch_size,
                 learning_rate,
                 batch_mean_training_loss,
                 returned_preclip_l2_norm,
             )
-            self._records.append(
-                _UpdateRecord(
-                    global_update=global_update,
-                    batch_size=batch_size,
-                    learning_rate=learning_rate,
-                    batch_mean_training_loss=np.float32(batch_mean_training_loss),
-                    returned_preclip_l2_norm=np.float32(returned_preclip_l2_norm),
-                    framed=framed,
-                )
-            )
+            self._records.append(record)
 
-    def finish_epoch(self) -> EpochUpdateTraceEvidence:
-        """Issue evidence after exactly one further complete epoch."""
+    def _consume_registered_update(
+        self,
+        receipt: CompletedTrainingUpdate,
+        transition: RegisteredOptimizerTransition,
+    ) -> TraceConsumedTransition:
+        """Consume one exact receipt/transition pair into a registered trace."""
 
         with self._lock:
-            if self._complete is not None:
-                raise Experiment002TrainingEvidenceError(
-                    "the complete trace was already issued"
+            claimed_transition = False
+            try:
+                self._require_registered_live_locked()
+                if type(receipt) is not CompletedTrainingUpdate:
+                    raise TypeError("receipt must be a CompletedTrainingUpdate")
+                if type(transition) is not RegisteredOptimizerTransition:
+                    raise TypeError(
+                        "transition must be a RegisteredOptimizerTransition"
+                    )
+                if receipt.accepted:
+                    raise Experiment002TrainingEvidenceError(
+                        "trace consumption must precede population acceptance"
+                    )
+                receipt_snapshot = _completed_training_update_snapshot(receipt)
+                transition_snapshot = _transition_snapshot(
+                    transition, required_phase="ISSUED"
                 )
-            epoch = len(self._epochs)
-            if epoch >= self._layout.epochs:
-                raise Experiment002TrainingEvidenceError(
-                    "every epoch trace was already issued"
+                expected_update = len(self._records)
+                if (
+                    receipt_snapshot.seed != self._seed
+                    or receipt_snapshot.zero_based_epoch != len(self._epochs)
+                    or receipt_snapshot.batch_index
+                    != expected_update % self._layout.updates_per_epoch
+                    or receipt_snapshot.zero_based_global_update != expected_update
+                    or receipt_snapshot.session_token
+                    is not transition_snapshot.epoch_session_token
+                    or receipt_snapshot.batch_token
+                    is not transition_snapshot.batch_token
+                    or receipt_snapshot.optimizer_transition_token
+                    is not transition_snapshot.transition_token
+                    or receipt_snapshot.seed != transition_snapshot.seed
+                    or receipt_snapshot.zero_based_epoch
+                    != transition_snapshot.zero_based_epoch
+                    or receipt_snapshot.zero_based_global_update
+                    != transition_snapshot.zero_based_global_update
+                    or receipt_snapshot.batch_size != transition_snapshot.batch_size
+                    or receipt_snapshot.learning_rate_bytes
+                    != transition_snapshot.learning_rate_bytes
+                    or receipt_snapshot.batch_mean_training_loss_bytes
+                    != transition_snapshot.batch_mean_training_loss_bytes
+                    or receipt_snapshot.returned_preclip_l2_norm_bytes
+                    != transition_snapshot.returned_preclip_l2_norm_bytes
+                ):
+                    raise Experiment002TrainingEvidenceError(
+                        "completed update receipt differs from its optimizer transition"
+                    )
+                record = self._prepare_record_locked(
+                    receipt_snapshot.zero_based_global_update,
+                    receipt_snapshot.batch_size,
+                    receipt_snapshot.learning_rate,
+                    receipt_snapshot.batch_mean_training_loss,
+                    receipt_snapshot.returned_preclip_l2_norm,
+                    receipt=receipt,
+                    receipt_token=receipt_snapshot.receipt_token,
+                    optimizer_transition_token=(
+                        receipt_snapshot.optimizer_transition_token
+                    ),
+                    optimizer_transition=transition,
                 )
-            expected_update_count = (epoch + 1) * self._layout.updates_per_epoch
-            if len(self._records) != expected_update_count:
-                raise Experiment002TrainingEvidenceError(
-                    "finish_epoch requires exactly one complete pending epoch"
+                consumption = _mark_transition_trace_consumed(
+                    transition,
+                    receipt_token=receipt_snapshot.receipt_token,
+                    trace_session_token=self._trace_session_token,
+                    trace_record_index=expected_update,
                 )
-            start = epoch * self._layout.updates_per_epoch
-            records = tuple(self._records[start:expected_update_count])
-            evidence = _issue_epoch_trace(
-                self._seed,
-                epoch,
-                records,
-                layout=self._layout,
-                route_marker=self._route_marker,
+                claimed_transition = True
+                consumed_transition_snapshot = _transition_snapshot(
+                    transition, required_phase="TRACE_CONSUMED"
+                )
+                consumption_snapshot = _trace_consumption_snapshot(
+                    consumption, required_used=False
+                )
+                receipt_snapshot_after = _completed_training_update_snapshot(receipt)
+                if (
+                    receipt.accepted
+                    or receipt_snapshot_after != receipt_snapshot
+                    or consumed_transition_snapshot != transition_snapshot
+                    or consumption_snapshot.receipt_token
+                    is not receipt_snapshot.receipt_token
+                    or consumption_snapshot.trace_session_token
+                    is not self._trace_session_token
+                    or consumption_snapshot.transition_token
+                    is not receipt_snapshot.optimizer_transition_token
+                    or consumption_snapshot.zero_based_global_update != expected_update
+                    or consumption_snapshot.trace_record_index != expected_update
+                ):
+                    raise Experiment002TrainingEvidenceError(
+                        "trace consumption differs from receipt authority"
+                    )
+                record = replace(
+                    record,
+                    trace_session_token=self._trace_session_token,
+                    trace_consumption_token=consumption_snapshot.consumption_token,
+                    trace_consumption=consumption,
+                )
+                self._records.append(record)
+                return consumption
+            except BaseException:
+                self._mark_failed_locked()
+                if claimed_transition:
+                    with contextlib.suppress(BaseException):
+                        _fail_optimizer_transition(transition)
+                raise
+
+    def _prepare_record_locked(
+        self,
+        global_update: int,
+        batch_size: int,
+        learning_rate: float,
+        batch_mean_training_loss: np.float32,
+        returned_preclip_l2_norm: np.float32,
+        *,
+        receipt: CompletedTrainingUpdate | None = None,
+        receipt_token: object | None = None,
+        optimizer_transition_token: object | None = None,
+        optimizer_transition: RegisteredOptimizerTransition | None = None,
+    ) -> _UpdateRecord:
+        if self._complete is not None:
+            raise Experiment002TrainingEvidenceError(
+                "cannot append after the complete trace was issued"
             )
-            self._epochs.append(evidence)
-            return evidence
+        expected_update = len(self._records)
+        if expected_update >= self._layout.total_updates:
+            raise Experiment002TrainingEvidenceError(
+                "the update trace already contains every expected update"
+            )
+        if expected_update == (len(self._epochs) + 1) * (
+            self._layout.updates_per_epoch
+        ):
+            raise Experiment002TrainingEvidenceError(
+                "finish_epoch must be called before the next update"
+            )
+        _require_uint32(global_update, "global_update")
+        if global_update != expected_update:
+            raise Experiment002TrainingEvidenceError(
+                "global_update differs from the next ordered update"
+            )
+        expected_batch_size = _batch_size_for_update(global_update, self._layout)
+        if type(batch_size) is not int:
+            raise TypeError("batch_size must be an integer")
+        if batch_size != expected_batch_size:
+            raise Experiment002TrainingEvidenceError(
+                "batch_size differs from the registered batch layout"
+            )
+        expected_learning_rate = _learning_rate_for_update(global_update, self._layout)
+        if type(learning_rate) is not float:
+            raise TypeError("learning_rate must be a Python float")
+        if not math.isfinite(learning_rate) or struct.pack(
+            "<d", learning_rate
+        ) != struct.pack("<d", expected_learning_rate):
+            raise Experiment002TrainingEvidenceError(
+                "learning_rate differs from the exact registered schedule"
+            )
+        _require_float32_scalar(batch_mean_training_loss, "batch_mean_training_loss")
+        _require_float32_scalar(returned_preclip_l2_norm, "returned_preclip_l2_norm")
+        if (
+            (receipt is None) != (receipt_token is None)
+            or (receipt is None) != (optimizer_transition_token is None)
+            or (receipt is None) != (optimizer_transition is None)
+        ):
+            raise Experiment002TrainingEvidenceError(
+                "registered update authority must be supplied together"
+            )
+        if receipt is not None and (
+            type(receipt) is not CompletedTrainingUpdate
+            or type(receipt_token) is not object
+            or type(optimizer_transition_token) is not object
+            or type(optimizer_transition) is not RegisteredOptimizerTransition
+        ):
+            raise TypeError("registered update authority has invalid exact types")
+        framed = struct.pack(
+            "<IIdff",
+            global_update,
+            batch_size,
+            learning_rate,
+            batch_mean_training_loss,
+            returned_preclip_l2_norm,
+        )
+        return _UpdateRecord(
+            global_update=global_update,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            batch_mean_training_loss=np.float32(batch_mean_training_loss),
+            returned_preclip_l2_norm=np.float32(returned_preclip_l2_norm),
+            framed=framed,
+            receipt=receipt,
+            receipt_token=receipt_token,
+            optimizer_transition_token=optimizer_transition_token,
+            optimizer_transition=optimizer_transition,
+        )
+
+    def finish_epoch(self) -> EpochUpdateTraceEvidence:
+        """Issue one synthetic epoch trace after its complete update slice."""
+
+        with self._lock:
+            trace_state = self._authority_locked()
+            if trace_state.authority.route_marker is _UPDATE_TRACE_ROUTE_MARKER:
+                self._mark_failed_locked()
+                raise Experiment002TrainingEvidenceError(
+                    "registered traces require receipt-bound population finalization"
+                )
+            self._require_live_locked()
+            return self._finish_epoch_locked()
+
+    def _finish_registered_epoch(
+        self,
+        population: CompletedTrainingPopulation,
+    ) -> EpochUpdateTraceEvidence:
+        """Finalize one registered epoch after exact population acceptance."""
+
+        with self._lock:
+            try:
+                self._require_registered_live_locked()
+                if type(population) is not CompletedTrainingPopulation:
+                    raise TypeError("population must be a CompletedTrainingPopulation")
+                epoch = len(self._epochs)
+                verify_completed_registered_training_population(
+                    population,
+                    seed=self._seed,
+                    zero_based_epoch=epoch,
+                )
+                population_snapshot = _completed_training_population_snapshot(
+                    population
+                )
+                expected_update_count = (epoch + 1) * self._layout.updates_per_epoch
+                if len(self._records) != expected_update_count:
+                    raise Experiment002TrainingEvidenceError(
+                        "registered epoch trace has an incomplete update slice"
+                    )
+                start = epoch * self._layout.updates_per_epoch
+                records = tuple(self._records[start:expected_update_count])
+                if (
+                    len(population_snapshot.ordered_receipt_tokens) != len(records)
+                    or len(population_snapshot.ordered_optimizer_transition_tokens)
+                    != len(records)
+                    or len(population_snapshot.ordered_optimizer_transitions)
+                    != len(records)
+                    or len(population_snapshot.ordered_trace_consumptions)
+                    != len(records)
+                ):
+                    raise Experiment002TrainingEvidenceError(
+                        "population authority count differs from the trace"
+                    )
+                for offset, record in enumerate(records):
+                    transition = record.optimizer_transition
+                    if type(transition) is not RegisteredOptimizerTransition:
+                        raise Experiment002TrainingEvidenceError(
+                            "registered trace record lost its optimizer transition"
+                        )
+                    transition_snapshot = _transition_snapshot(
+                        transition, required_phase="POPULATION_ACCEPTED"
+                    )
+                    consumption = record.trace_consumption
+                    if type(consumption) is not TraceConsumedTransition:
+                        raise Experiment002TrainingEvidenceError(
+                            "registered trace record lost its trace consumption"
+                        )
+                    consumption_snapshot = _trace_consumption_snapshot(
+                        consumption, required_used=True
+                    )
+                    if (
+                        record.receipt_token
+                        is not population_snapshot.ordered_receipt_tokens[offset]
+                        or record.optimizer_transition_token
+                        is not population_snapshot.ordered_optimizer_transition_tokens[
+                            offset
+                        ]
+                        or transition
+                        is not population_snapshot.ordered_optimizer_transitions[offset]
+                        or consumption
+                        is not population_snapshot.ordered_trace_consumptions[offset]
+                        or transition_snapshot.transition_token
+                        is not record.optimizer_transition_token
+                        or transition_snapshot.zero_based_global_update
+                        != start + offset
+                        or consumption_snapshot.receipt_token
+                        is not record.receipt_token
+                        or consumption_snapshot.trace_session_token
+                        is not self._trace_session_token
+                        or consumption_snapshot.consumption_token
+                        is not record.trace_consumption_token
+                        or consumption_snapshot.transition_token
+                        is not record.optimizer_transition_token
+                        or consumption_snapshot.zero_based_global_update
+                        != start + offset
+                        or consumption_snapshot.trace_record_index != start + offset
+                    ):
+                        raise Experiment002TrainingEvidenceError(
+                            "population receipt/transition order differs from trace"
+                        )
+                return self._finish_epoch_locked()
+            except BaseException:
+                self._mark_failed_locked()
+                raise
+
+    def _finish_epoch_locked(self) -> EpochUpdateTraceEvidence:
+        if self._complete is not None:
+            raise Experiment002TrainingEvidenceError(
+                "the complete trace was already issued"
+            )
+        epoch = len(self._epochs)
+        if epoch >= self._layout.epochs:
+            raise Experiment002TrainingEvidenceError(
+                "every epoch trace was already issued"
+            )
+        expected_update_count = (epoch + 1) * self._layout.updates_per_epoch
+        if len(self._records) != expected_update_count:
+            raise Experiment002TrainingEvidenceError(
+                "finish_epoch requires exactly one complete pending epoch"
+            )
+        start = epoch * self._layout.updates_per_epoch
+        records = tuple(self._records[start:expected_update_count])
+        evidence = _issue_epoch_trace(
+            self._seed,
+            epoch,
+            records,
+            layout=self._layout,
+            route_marker=self._route_marker,
+        )
+        self._epochs.append(evidence)
+        return evidence
 
     def finish(self) -> CompleteUpdateTraceEvidence:
         """Issue evidence after all epochs and all updates were completed."""
 
         with self._lock:
-            if self._complete is not None:
-                raise Experiment002TrainingEvidenceError(
-                    "the complete trace was already issued"
+            try:
+                self._require_live_locked()
+                if self._complete is not None:
+                    raise Experiment002TrainingEvidenceError(
+                        "the complete trace was already issued"
+                    )
+                if (
+                    len(self._records) != self._layout.total_updates
+                    or len(self._epochs) != self._layout.epochs
+                ):
+                    raise Experiment002TrainingEvidenceError(
+                        "finish requires every update and every epoch evidence"
+                    )
+                evidence = _issue_complete_trace(
+                    self._seed,
+                    tuple(self._records),
+                    tuple(self._epochs),
+                    layout=self._layout,
+                    route_marker=self._route_marker,
                 )
-            if (
-                len(self._records) != self._layout.total_updates
-                or len(self._epochs) != self._layout.epochs
-            ):
-                raise Experiment002TrainingEvidenceError(
-                    "finish requires every update and every epoch evidence"
-                )
-            evidence = _issue_complete_trace(
-                self._seed,
-                tuple(self._records),
-                tuple(self._epochs),
-                layout=self._layout,
-                route_marker=self._route_marker,
+                self._complete = evidence
+                return evidence
+            except BaseException:
+                try:
+                    trace_state = self._authority_locked()
+                except BaseException:
+                    self._mark_failed_locked()
+                    raise
+                if trace_state.authority.route_marker is _UPDATE_TRACE_ROUTE_MARKER:
+                    self._mark_failed_locked()
+                raise
+
+    def _require_live_locked(self) -> None:
+        trace_state = self._authority_locked()
+        if trace_state.failed:
+            raise Experiment002TrainingEvidenceError(
+                "the registered update trace is terminally failed"
             )
-            self._complete = evidence
-            return evidence
+
+    def _require_registered_live_locked(self) -> None:
+        trace_state = self._authority_locked()
+        if trace_state.authority.route_marker is not _UPDATE_TRACE_ROUTE_MARKER:
+            raise Experiment002TrainingEvidenceError(
+                "registered receipt operations require the registered trace route"
+            )
+        if trace_state.failed:
+            raise Experiment002TrainingEvidenceError(
+                "the registered update trace is terminally failed"
+            )
+
+    def _authority_locked(self) -> _TraceAccumulatorState:
+        with _TRACE_ACCUMULATOR_AUTHORITIES_LOCK:
+            trace_state = _TRACE_ACCUMULATOR_AUTHORITIES.get(self)
+            issuance_guard = _TRACE_ACCUMULATOR_ISSUANCE_GUARDS.get(self)
+            terminal = self in _FAILED_TRACE_ACCUMULATORS
+        authority = (
+            trace_state.authority
+            if type(trace_state) is _TraceAccumulatorState
+            else None
+        )
+        intact = (
+            type(trace_state) is _TraceAccumulatorState
+            and type(authority) is _TraceAccumulatorAuthority
+            and type(issuance_guard) is tuple
+            and len(issuance_guard) == 6
+            and type(issuance_guard[0]) is int
+            and type(issuance_guard[1]) is int
+            and type(issuance_guard[2]) is bytes
+            and (
+                issuance_guard[3] is None
+                or issuance_guard[3] is _UPDATE_TRACE_ROUTE_MARKER
+            )
+            and type(issuance_guard[4]) is object
+            and type(issuance_guard[5]) is bytes
+            and type(authority.seed) is int
+            and authority.seed == issuance_guard[0]
+            and type(authority.layout) is _TraceLayout
+            and type(self._layout) is _TraceLayout
+            and id(self._layout) == issuance_guard[1]
+            and _trace_layout_payload(authority.layout) == issuance_guard[2]
+            and _trace_layout_payload(self._layout) == issuance_guard[2]
+            and (
+                authority.route_marker is None
+                or authority.route_marker is _UPDATE_TRACE_ROUTE_MARKER
+            )
+            and authority.route_marker is issuance_guard[3]
+            and type(authority.trace_session_token) is object
+            and authority.trace_session_token is issuance_guard[4]
+            and type(authority.authority_payload) is bytes
+            and authority.authority_payload == issuance_guard[5]
+            and authority.authority_payload
+            == _frame_trace_accumulator_authority(
+                authority.seed,
+                authority.layout,
+                authority.route_marker,
+                authority.trace_session_token,
+            )
+            and type(trace_state.failed) is bool
+            and type(self._seed) is int
+            and self._seed == authority.seed
+            and self._layout == authority.layout
+            and self._route_marker is authority.route_marker
+            and self._trace_session_token is authority.trace_session_token
+            and type(self._failed) is bool
+            and self._failed == trace_state.failed
+            and self._failed is terminal
+            and type(self._records) is list
+            and type(self._epochs) is list
+        )
+        if not intact:
+            self._mark_failed_locked()
+            raise Experiment002TrainingEvidenceError(
+                "update trace accumulator authority changed"
+            )
+        assert type(trace_state) is _TraceAccumulatorState
+        return trace_state
+
+    def _mark_failed_locked(self) -> None:
+        with _TRACE_ACCUMULATOR_AUTHORITIES_LOCK:
+            trace_state = _TRACE_ACCUMULATOR_AUTHORITIES.get(self)
+            if type(trace_state) is _TraceAccumulatorState:
+                trace_state.failed = True
+            _FAILED_TRACE_ACCUMULATORS.add(self)
+        self._failed = True
 
     def __copy__(self) -> NoReturn:
         raise TypeError("an update trace accumulator cannot be copied")
@@ -952,6 +1435,20 @@ class UpdateTraceAccumulator:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("an update trace accumulator cannot be serialized")
+
+
+def _fail_registered_trace(accumulator: UpdateTraceAccumulator) -> None:
+    """Terminally invalidate a registered trace after an executor exception."""
+
+    if type(accumulator) is not UpdateTraceAccumulator:
+        raise TypeError("accumulator must be an UpdateTraceAccumulator")
+    with accumulator._lock:
+        trace_state = accumulator._authority_locked()
+        if trace_state.authority.route_marker is not _UPDATE_TRACE_ROUTE_MARKER:
+            raise Experiment002TrainingEvidenceError(
+                "only a registered trace can be terminally failed"
+            )
+        accumulator._mark_failed_locked()
 
 
 def registered_learning_rate(global_update: int) -> float:
@@ -1034,6 +1531,8 @@ def _issue_epoch_trace(
 ) -> EpochUpdateTraceEvidence:
     _validate_update_trace_route_marker(route_marker)
     _validate_epoch_records(seed, zero_based_epoch, records, layout)
+    _validate_record_authority_route(records, route_marker)
+    trace_session_token = _record_trace_session_token(records, route_marker)
     framed_payload = _frame_epoch_trace(seed, zero_based_epoch, records)
     sha256 = hashlib.sha256(EPOCH_UPDATE_TRACE_DOMAIN + framed_payload).hexdigest()
     training_cross_entropy = _training_cross_entropy(records, layout.population_count)
@@ -1054,6 +1553,7 @@ def _issue_epoch_trace(
         training_cross_entropy=np.float64(training_cross_entropy),
         layout=layout,
         route_marker=route_marker,
+        trace_session_token=trace_session_token,
     )
     with _ISSUED_EPOCH_TRACES_LOCK:
         _ISSUED_EPOCH_TRACES[result] = state
@@ -1075,6 +1575,9 @@ def _issue_complete_trace(
         raise Experiment002TrainingEvidenceError(
             "complete trace has an invalid record or epoch count"
         )
+    _validate_complete_records(records, layout)
+    _validate_record_authority_route(records, route_marker)
+    trace_session_token = _record_trace_session_token(records, route_marker)
     for epoch_index, epoch in enumerate(epochs):
         epoch_state = _issued_epoch_trace_state(epoch)
         if (
@@ -1082,6 +1585,7 @@ def _issue_complete_trace(
             or epoch_state.zero_based_epoch != epoch_index
             or epoch_state.layout != layout
             or epoch_state.route_marker is not route_marker
+            or epoch_state.trace_session_token is not trace_session_token
         ):
             raise Experiment002TrainingEvidenceError(
                 "complete trace contains mismatched epoch evidence"
@@ -1092,7 +1596,6 @@ def _issue_complete_trace(
             raise Experiment002TrainingEvidenceError(
                 "complete trace records differ from epoch evidence"
             )
-    _validate_complete_records(records, layout)
     framed_payload = _frame_complete_trace(seed, records)
     sha256 = hashlib.sha256(COMPLETE_UPDATE_TRACE_DOMAIN + framed_payload).hexdigest()
     result = object.__new__(CompleteUpdateTraceEvidence)
@@ -1108,6 +1611,7 @@ def _issue_complete_trace(
         sha256=sha256,
         layout=layout,
         route_marker=route_marker,
+        trace_session_token=trace_session_token,
     )
     with _ISSUED_COMPLETE_TRACES_LOCK:
         _ISSUED_COMPLETE_TRACES[result] = complete_state
@@ -1195,6 +1699,31 @@ def _validate_record(
     _require_float32_scalar(record.returned_preclip_l2_norm, "returned_preclip_l2_norm")
     if type(record.framed) is not bytes:
         raise TypeError("record framing must be bytes")
+    authority_values = (
+        record.receipt,
+        record.receipt_token,
+        record.optimizer_transition_token,
+        record.optimizer_transition,
+        record.trace_session_token,
+        record.trace_consumption_token,
+        record.trace_consumption,
+    )
+    if any(value is None for value in authority_values) and not all(
+        value is None for value in authority_values
+    ):
+        raise Experiment002TrainingEvidenceError(
+            "record update authority is incomplete"
+        )
+    if record.receipt is not None and (
+        type(record.receipt) is not CompletedTrainingUpdate
+        or type(record.receipt_token) is not object
+        or type(record.optimizer_transition_token) is not object
+        or type(record.optimizer_transition) is not RegisteredOptimizerTransition
+        or type(record.trace_session_token) is not object
+        or type(record.trace_consumption_token) is not object
+        or type(record.trace_consumption) is not TraceConsumedTransition
+    ):
+        raise TypeError("record update authority has invalid exact types")
     expected_batch_size = _batch_size_for_update(expected_global_update, layout)
     expected_learning_rate = _learning_rate_for_update(expected_global_update, layout)
     expected_framed = struct.pack(
@@ -1217,6 +1746,94 @@ def _validate_record(
         )
 
 
+def _validate_record_authority_route(
+    records: tuple[_UpdateRecord, ...],
+    route_marker: object | None,
+) -> None:
+    _validate_update_trace_route_marker(route_marker)
+    for record in records:
+        has_authority = record.receipt_token is not None
+        if route_marker is _UPDATE_TRACE_ROUTE_MARKER:
+            if not has_authority:
+                raise Experiment002TrainingEvidenceError(
+                    "registered trace record lacks receipt/transition authority"
+                )
+            transition = record.optimizer_transition
+            if type(transition) is not RegisteredOptimizerTransition:
+                raise TypeError(
+                    "registered trace record has an invalid optimizer transition"
+                )
+            transition_snapshot = _transition_snapshot(
+                transition, required_phase="POPULATION_ACCEPTED"
+            )
+            receipt = record.receipt
+            if type(receipt) is not CompletedTrainingUpdate:
+                raise TypeError(
+                    "registered trace record has an invalid completed receipt"
+                )
+            assert receipt is not None
+            receipt_snapshot = _completed_training_update_snapshot(receipt)
+            consumption = record.trace_consumption
+            if type(consumption) is not TraceConsumedTransition:
+                raise TypeError(
+                    "registered trace record has an invalid trace consumption"
+                )
+            consumption_snapshot = _trace_consumption_snapshot(
+                consumption, required_used=True
+            )
+            if (
+                not receipt.accepted
+                or receipt_snapshot.receipt_token is not record.receipt_token
+                or receipt_snapshot.optimizer_transition_token
+                is not record.optimizer_transition_token
+                or receipt_snapshot.zero_based_global_update != record.global_update
+                or receipt_snapshot.batch_size != record.batch_size
+                or receipt_snapshot.learning_rate_bytes
+                != struct.pack("<d", record.learning_rate)
+                or receipt_snapshot.batch_mean_training_loss_bytes
+                != struct.pack("<f", record.batch_mean_training_loss)
+                or receipt_snapshot.returned_preclip_l2_norm_bytes
+                != struct.pack("<f", record.returned_preclip_l2_norm)
+                or transition_snapshot.transition_token
+                is not record.optimizer_transition_token
+                or transition_snapshot.zero_based_global_update != record.global_update
+                or consumption_snapshot.receipt_token is not record.receipt_token
+                or consumption_snapshot.trace_session_token
+                is not record.trace_session_token
+                or consumption_snapshot.consumption_token
+                is not record.trace_consumption_token
+                or consumption_snapshot.transition_token
+                is not record.optimizer_transition_token
+                or consumption_snapshot.zero_based_global_update != record.global_update
+                or consumption_snapshot.trace_record_index != record.global_update
+            ):
+                raise Experiment002TrainingEvidenceError(
+                    "registered trace record differs from transition authority"
+                )
+        elif has_authority:
+            raise Experiment002TrainingEvidenceError(
+                "synthetic trace records cannot retain registered authority"
+            )
+
+
+def _record_trace_session_token(
+    records: tuple[_UpdateRecord, ...],
+    route_marker: object | None,
+) -> object | None:
+    if route_marker is not _UPDATE_TRACE_ROUTE_MARKER:
+        return None
+    if not records or type(records[0].trace_session_token) is not object:
+        raise Experiment002TrainingEvidenceError(
+            "registered trace lacks a trace session authority"
+        )
+    token = records[0].trace_session_token
+    if any(record.trace_session_token is not token for record in records):
+        raise Experiment002TrainingEvidenceError(
+            "registered trace spans multiple trace sessions"
+        )
+    return token
+
+
 def _validate_issued_epoch_trace_state(state: _IssuedEpochTraceState) -> None:
     if type(state) is not _IssuedEpochTraceState:
         raise TypeError("issued epoch trace state has an invalid type")
@@ -1225,6 +1842,13 @@ def _validate_issued_epoch_trace_state(state: _IssuedEpochTraceState) -> None:
     _validate_epoch_records(
         state.seed, state.zero_based_epoch, state.records, state.layout
     )
+    _validate_record_authority_route(state.records, state.route_marker)
+    if state.trace_session_token is not _record_trace_session_token(
+        state.records, state.route_marker
+    ):
+        raise Experiment002TrainingEvidenceError(
+            "issued epoch trace session authority changed"
+        )
     if type(state.framed_payload) is not bytes:
         raise TypeError("issued epoch trace framing must be bytes")
     if type(state.sha256) is not str:
@@ -1244,6 +1868,13 @@ def _validate_issued_complete_trace_state(state: _IssuedCompleteTraceState) -> N
     _validate_update_trace_route_marker(state.route_marker)
     _require_uint32(state.seed, "seed")
     _validate_complete_records(state.records, state.layout)
+    _validate_record_authority_route(state.records, state.route_marker)
+    if state.trace_session_token is not _record_trace_session_token(
+        state.records, state.route_marker
+    ):
+        raise Experiment002TrainingEvidenceError(
+            "issued complete trace session authority changed"
+        )
     if type(state.epochs) is not tuple or len(state.epochs) != state.layout.epochs:
         raise Experiment002TrainingEvidenceError(
             "issued complete trace epochs are invalid"
@@ -1327,6 +1958,7 @@ def _issued_complete_trace_state(
             or epoch_state.records != state.records[start:end]
             or epoch_state.layout != state.layout
             or epoch_state.route_marker is not state.route_marker
+            or epoch_state.trace_session_token is not state.trace_session_token
         ):
             raise Experiment002TrainingEvidenceError(
                 "complete update trace epoch capability changed"
