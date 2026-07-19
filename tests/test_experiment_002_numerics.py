@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import numpy as np
 import pytest
@@ -24,6 +24,12 @@ DOC_PATH = Path("docs/experiment-002.md")
 SEED = 20_260_719
 
 
+class DrawIdentity(TypedDict):
+    seed: int
+    epoch: int
+    identity: bytes
+
+
 def _config() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
 
@@ -40,7 +46,7 @@ def _float32_bits(value: np.float32) -> str:
 def _rms_float64(waveform: np.ndarray[Any, Any]) -> np.float64:
     squares = np.square(waveform, dtype=np.float64)
     total = np.sum(squares, dtype=np.float64)
-    return np.sqrt(total / np.float64(16_000))
+    return np.float64(np.sqrt(total / np.float64(16_000)))
 
 
 def _mix_at_snr(
@@ -167,7 +173,7 @@ def test_streaming_frontend_is_the_only_experiment_002_feature_authority() -> No
 def test_registered_command_pipeline_matches_every_numeric_golden() -> None:
     golden = _config()["golden_vectors"]["command"]
     identity = encode_command_identity("yes/alice_nohash_0.wav")
-    common = {"seed": SEED, "epoch": 0, "identity": identity}
+    common: DrawIdentity = {"seed": SEED, "epoch": 0, "identity": identity}
 
     sample_index = np.arange(15_997, dtype=np.int64)
     command_pcm16 = (((sample_index * 7_919 + 12_345) % 65_536) - 32_768).astype(
@@ -379,7 +385,11 @@ def test_edge_draw_goldens_fix_false_and_zero_width_control_flow() -> None:
     silence_identity = encode_window_identity(
         "_background_noise_/pink_noise.wav", 12_345
     )
-    silence_common = {"seed": SEED, "epoch": 0, "identity": silence_identity}
+    silence_common: DrawIdentity = {
+        "seed": SEED,
+        "epoch": 0,
+        "identity": silence_identity,
+    }
     silence_gain = uniform_real(
         **silence_common,
         domain="silence-gain-db",
@@ -414,7 +424,11 @@ def test_edge_draw_goldens_fix_false_and_zero_width_control_flow() -> None:
     ) == (44, 7, 27, 3)
 
     zero_identity = encode_command_identity("yes/golden_nohash_54.wav")
-    zero_common = {"seed": SEED, "epoch": 0, "identity": zero_identity}
+    zero_common: DrawIdentity = {
+        "seed": SEED,
+        "epoch": 0,
+        "identity": zero_identity,
+    }
     zero_time_width = uniform_integer(
         **zero_common, domain="command-time-width", bound=11
     )
@@ -441,7 +455,11 @@ def test_edge_draw_goldens_fix_false_and_zero_width_control_flow() -> None:
     )
 
     false_identity = encode_command_identity("yes/golden_nohash_0.wav")
-    false_common = {"seed": SEED, "epoch": 0, "identity": false_identity}
+    false_common: DrawIdentity = {
+        "seed": SEED,
+        "epoch": 0,
+        "identity": false_identity,
+    }
     false_draw = uniform_real(
         **false_common,
         domain="command-noise-apply",
