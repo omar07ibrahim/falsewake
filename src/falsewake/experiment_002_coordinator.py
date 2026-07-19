@@ -274,6 +274,16 @@ type _RegisteredParentChildResult = tuple[
     int,
     _VerifiedChildResultSnapshot,
 ]
+type _RegisteredSeedTrainingResults = tuple[
+    _RegisteredParentChildResult,
+    _RegisteredParentChildResult,
+    _RegisteredParentChildResult,
+]
+type _RegisteredSeedSelection = tuple[
+    _RegisteredSeedTrainingResults,
+    int,
+    _RegisteredParentChildResult,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2412,6 +2422,76 @@ _verified_child_result_snapshot_frame = _make_verified_child_result_snapshot_fra
 del _make_verified_child_result_snapshot_frame
 
 
+type _ParentChildResultFramer = Callable[[object], _RegisteredParentChildResult]
+
+
+def _make_registered_parent_child_result_frame() -> _ParentChildResultFramer:
+    exact_type = type
+    type_cast = cast
+    tuple_type = tuple
+    int_type = int
+    length = len
+    process_id = os.getpid
+    snapshot_frame = _verified_child_result_snapshot_frame
+    error_type = Experiment002CoordinatorError
+
+    def registered_parent_child_result_frame(
+        value: object,
+        /,
+    ) -> _RegisteredParentChildResult:
+        if exact_type(value) is not tuple_type:
+            raise error_type(
+                "registered parent child result has an invalid exact shape"
+            )
+        fields = type_cast("tuple[object, ...]", value)
+        if length(fields) != 6:
+            raise error_type(
+                "registered parent child result has an invalid exact shape"
+            )
+        pid = fields[0]
+        cpu_ids = fields[1]
+        elapsed_nanoseconds = fields[2]
+        maximum_rss_bytes = fields[3]
+        output_and_scratch_bytes = fields[4]
+        if (
+            exact_type(pid) is not int_type
+            or type_cast(int, pid) < 1
+            or type_cast(int, pid) == process_id()
+            or exact_type(cpu_ids) is not tuple_type
+            or length(type_cast("tuple[object, ...]", cpu_ids)) != 2
+            or exact_type(type_cast("tuple[object, ...]", cpu_ids)[0]) is not int_type
+            or exact_type(type_cast("tuple[object, ...]", cpu_ids)[1]) is not int_type
+            or type_cast(int, type_cast("tuple[object, ...]", cpu_ids)[0]) < 0
+            or type_cast(int, type_cast("tuple[object, ...]", cpu_ids)[0])
+            >= type_cast(int, type_cast("tuple[object, ...]", cpu_ids)[1])
+            or exact_type(elapsed_nanoseconds) is not int_type
+            or type_cast(int, elapsed_nanoseconds) < 0
+            or exact_type(maximum_rss_bytes) is not int_type
+            or type_cast(int, maximum_rss_bytes) < 0
+            or exact_type(output_and_scratch_bytes) is not int_type
+            or type_cast(int, output_and_scratch_bytes) < 0
+        ):
+            raise error_type(
+                "registered parent child result fields have invalid exact values"
+            )
+        typed_cpu_ids = type_cast("tuple[int, int]", cpu_ids)
+        snapshot = snapshot_frame(fields[5])
+        return (
+            type_cast(int, pid),
+            (typed_cpu_ids[0], typed_cpu_ids[1]),
+            type_cast(int, elapsed_nanoseconds),
+            type_cast(int, maximum_rss_bytes),
+            type_cast(int, output_and_scratch_bytes),
+            snapshot,
+        )
+
+    return registered_parent_child_result_frame
+
+
+_registered_parent_child_result_frame = _make_registered_parent_child_result_frame()
+del _make_registered_parent_child_result_frame
+
+
 type _ParentInputDescriptorGuard = Callable[[], None]
 type _RegistrationBindingFramer = Callable[[object], _RegistrationBindingFrame]
 type _CoordinatorParentAuthority = tuple[
@@ -3078,6 +3158,294 @@ def _run_one_registered_parent_child(
 
 
 del _bind_registered_parent_input_snapshot_authority
+
+
+type _RegisteredSeedSelectionRoute = Callable[
+    [VerifiedRunRegistration, tuple[int, int], int],
+    _RegisteredSeedSelection,
+]
+
+
+def _make_registered_seed_selection() -> _RegisteredSeedSelectionRoute:
+    """Bind the exact parent routes and one-attempt selection state."""
+
+    module_globals = globals()
+    exact_type = type
+    type_cast = cast
+    tuple_type = tuple
+    int_type = int
+    length = len
+    any_value = any
+    enumerate_values = enumerate
+    error_type = Experiment002CoordinatorError
+    base_exception_type = BaseException
+    registration_type = VerifiedRunRegistration
+    registered_seed_authority = REGISTERED_SEEDS
+    registered_seeds = (
+        registered_seed_authority[0],
+        registered_seed_authority[1],
+        registered_seed_authority[2],
+    )
+    seed_role = _SEED_ROLE
+    rerun_role = _RERUN_ROLE
+    run_one = cast(FunctionType, _run_one_registered_parent_child)
+    make_assignment = cast(FunctionType, _assignment)
+    registration_verifier = cast(FunctionType, verify_verified_run_registration)
+    snapshot_frame = cast(FunctionType, _verified_child_result_snapshot_frame)
+    result_frame = cast(FunctionType, _registered_parent_child_result_frame)
+    route_names = (
+        "_run_one_registered_parent_child",
+        "_assignment",
+        "verify_verified_run_registration",
+        "_verified_child_result_snapshot_frame",
+        "_registered_parent_child_result_frame",
+    )
+    routes = (
+        run_one,
+        make_assignment,
+        registration_verifier,
+        snapshot_frame,
+        result_frame,
+    )
+    if any(exact_type(route) is not FunctionType for route in routes):
+        raise RuntimeError("registered seed-selection routes are unavailable")
+    parse_float_hex = float.fromhex
+    rerun_match_indices = (7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20)
+
+    def verify_registration(registration: VerifiedRunRegistration, /) -> None:
+        verification = registration_verifier(registration)
+        if verification is not None:
+            raise error_type("run-registration verifier returned an unexpected value")
+
+    def better_result(
+        challenger: _RegisteredParentChildResult,
+        incumbent: _RegisteredParentChildResult,
+        /,
+    ) -> bool:
+        challenger_snapshot = challenger[5]
+        incumbent_snapshot = incumbent[5]
+        challenger_cross_product = challenger_snapshot[17] * incumbent_snapshot[18]
+        incumbent_cross_product = incumbent_snapshot[17] * challenger_snapshot[18]
+        if challenger_cross_product != incumbent_cross_product:
+            return challenger_cross_product > incumbent_cross_product
+        challenger_cross_entropy = parse_float_hex(challenger_snapshot[19])
+        incumbent_cross_entropy = parse_float_hex(incumbent_snapshot[19])
+        if challenger_cross_entropy != incumbent_cross_entropy:
+            return challenger_cross_entropy < incumbent_cross_entropy
+        if challenger_snapshot[16] != incumbent_snapshot[16]:
+            return challenger_snapshot[16] < incumbent_snapshot[16]
+        return challenger_snapshot[2] < incumbent_snapshot[2]
+
+    require_function_integrity = _require_recursive_function_integrity_unchanged
+    function_integrity = _capture_recursive_function_integrity(
+        (
+            *routes,
+            cast(FunctionType, verify_registration),
+            cast(FunctionType, better_result),
+        )
+    )
+
+    def require_routes_unchanged() -> None:
+        if (
+            any_value(
+                module_globals.get(name) is not routes[index]
+                for index, name in enumerate_values(route_names)
+            )
+            or module_globals.get("VerifiedRunRegistration") is not registration_type
+            or module_globals.get("REGISTERED_SEEDS") is not registered_seed_authority
+            or module_globals.get("_SEED_ROLE") is not seed_role
+            or module_globals.get("_RERUN_ROLE") is not rerun_role
+        ):
+            raise error_type("registered seed-selection routes changed")
+        require_function_integrity(function_integrity)
+
+    def run_registered_seed_selection(
+        registration: VerifiedRunRegistration,
+        cpu_ids: tuple[int, int],
+        source_bundle_fd: int,
+        /,
+    ) -> _RegisteredSeedSelection:
+        if exact_type(registration) is not registration_type:
+            raise TypeError("registration must be an exact VerifiedRunRegistration")
+        try:
+            if exact_type(cpu_ids) is not tuple_type:
+                raise error_type("registered seed-selection CPU IDs are invalid")
+            cpu_fields = type_cast("tuple[object, ...]", cpu_ids)
+            if (
+                length(cpu_fields) != 2
+                or exact_type(cpu_fields[0]) is not int_type
+                or exact_type(cpu_fields[1]) is not int_type
+                or type_cast(int, cpu_fields[0]) < 0
+                or type_cast(int, cpu_fields[0]) >= type_cast(int, cpu_fields[1])
+            ):
+                raise error_type("registered seed-selection CPU IDs are invalid")
+            if exact_type(source_bundle_fd) is not int_type or source_bundle_fd < 0:
+                raise error_type(
+                    "registered seed-selection source descriptor is invalid"
+                )
+            require_routes_unchanged()
+            verify_registration(registration)
+            require_routes_unchanged()
+
+            training_values: list[_RegisteredParentChildResult] = []
+            registration_frame: tuple[str, str, str, str] | None = None
+            for ordinal, seed in enumerate_values(registered_seeds):
+                require_routes_unchanged()
+                verify_registration(registration)
+                require_routes_unchanged()
+                assignment = make_assignment(seed_role, seed)
+                require_routes_unchanged()
+                result = result_frame(
+                    run_one(registration, assignment, cpu_ids, source_bundle_fd)
+                )
+                require_routes_unchanged()
+                snapshot = snapshot_frame(result[5])
+                if snapshot != result[5] or result[1] != cpu_ids:
+                    raise error_type(
+                        "registered training result changed or used different CPU IDs"
+                    )
+                current_registration_frame = snapshot[3:7]
+                if registration_frame is None:
+                    registration_frame = current_registration_frame
+                if current_registration_frame != registration_frame or snapshot[:3] != (
+                    seed_role,
+                    ordinal,
+                    seed,
+                ):
+                    raise error_type(
+                        "registered training result has a mismatched assignment binding"
+                    )
+                training_values.append(
+                    (result[0], result[1], result[2], result[3], result[4], snapshot)
+                )
+                require_routes_unchanged()
+                verify_registration(registration)
+                require_routes_unchanged()
+
+            if length(training_values) != 3 or registration_frame is None:
+                raise error_type(
+                    "registered seed selection did not produce three results"
+                )
+            training = (
+                training_values[0],
+                training_values[1],
+                training_values[2],
+            )
+            selected_ordinal = 0
+            for ordinal in (1, 2):
+                if better_result(training[ordinal], training[selected_ordinal]):
+                    selected_ordinal = ordinal
+            selected_seed = training[selected_ordinal][5][2]
+
+            require_routes_unchanged()
+            verify_registration(registration)
+            require_routes_unchanged()
+            rerun_assignment = make_assignment(rerun_role, selected_seed)
+            require_routes_unchanged()
+            rerun = result_frame(
+                run_one(registration, rerun_assignment, cpu_ids, source_bundle_fd)
+            )
+            require_routes_unchanged()
+            rerun_snapshot = snapshot_frame(rerun[5])
+            selected_snapshot = training[selected_ordinal][5]
+            if (
+                rerun_snapshot != rerun[5]
+                or rerun[1] != cpu_ids
+                or rerun_snapshot[:3] != (rerun_role, 3, selected_seed)
+                or rerun_snapshot[3:7] != registration_frame
+                or any_value(
+                    rerun_snapshot[index] != selected_snapshot[index]
+                    for index in rerun_match_indices
+                )
+            ):
+                raise error_type(
+                    "selected-seed rerun differs from its registered training result"
+                )
+            detached_rerun = (
+                rerun[0],
+                rerun[1],
+                rerun[2],
+                rerun[3],
+                rerun[4],
+                rerun_snapshot,
+            )
+            require_routes_unchanged()
+            verify_registration(registration)
+            require_routes_unchanged()
+            return training, selected_ordinal, detached_rerun
+        except base_exception_type as primary:
+            try:
+                require_routes_unchanged()
+            except base_exception_type:
+                raise error_type(
+                    "registered seed selection failed after its routes changed"
+                ) from primary
+            raise
+
+    return run_registered_seed_selection
+
+
+def _bind_registered_seed_selection_integrity(
+    implementation: FunctionType,
+    /,
+) -> _RegisteredSeedSelectionRoute:
+    if type(implementation) is not FunctionType:
+        raise RuntimeError("registered seed-selection implementation is unavailable")
+    require_integrity = _require_recursive_function_integrity_unchanged
+    integrity_frame = _capture_recursive_function_integrity(implementation)
+    exact_type = type
+    registration_type = VerifiedRunRegistration
+    error_type = Experiment002CoordinatorError
+    base_exception_type = BaseException
+    attempted_registrations: weakref.WeakSet[VerifiedRunRegistration] = (
+        weakref.WeakSet()
+    )
+    selection_lock = threading.Lock()
+    selection_state = [False]
+
+    def run_registered_seed_selection(
+        registration: VerifiedRunRegistration,
+        cpu_ids: tuple[int, int],
+        source_bundle_fd: int,
+        /,
+    ) -> _RegisteredSeedSelection:
+        if exact_type(registration) is not registration_type:
+            raise TypeError("registration must be an exact VerifiedRunRegistration")
+        with selection_lock:
+            if registration in attempted_registrations:
+                raise error_type("registered seed selection was already attempted")
+            attempted_registrations.add(registration)
+            if selection_state[0]:
+                raise error_type(
+                    "another registered seed selection is already in flight"
+                )
+            selection_state[0] = True
+        try:
+            require_integrity(integrity_frame)
+            result = implementation(registration, cpu_ids, source_bundle_fd)
+        except base_exception_type as primary:
+            try:
+                require_integrity(integrity_frame)
+            except base_exception_type:
+                raise error_type(
+                    "registered seed selection failed after its authority changed"
+                ) from primary
+            raise
+        else:
+            require_integrity(integrity_frame)
+            return cast(_RegisteredSeedSelection, result)
+        finally:
+            with selection_lock:
+                selection_state[0] = False
+
+    return run_registered_seed_selection
+
+
+_run_registered_seed_selection = _bind_registered_seed_selection_integrity(
+    cast(FunctionType, _make_registered_seed_selection())
+)
+del _make_registered_seed_selection
+del _bind_registered_seed_selection_integrity
 
 
 def _make_guarded_registered_seed_child() -> Callable[[VerifiedRunRegistration], None]:

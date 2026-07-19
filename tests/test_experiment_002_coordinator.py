@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import threading
 import warnings
 import weakref
 from collections.abc import Callable
@@ -587,6 +588,105 @@ def _synthetic_supervised_result(
         output_and_scratch_bytes=output_and_scratch_bytes,
         verified_child_result=child_result,
     )
+
+
+type _SelectionMetric = tuple[int, int, int, float]
+type _SnapshotMutation = Callable[[list[object]], None]
+
+
+def _selection_metrics(
+    *values: _SelectionMetric,
+) -> dict[int, _SelectionMetric]:
+    metrics = values or ((7, 3, 4, 0.5),) * 3
+    assert len(metrics) == 3
+    return dict(zip(coordinator.REGISTERED_SEEDS, metrics, strict=True))
+
+
+def _install_selection_snapshot_behavior(
+    harness: _SyntheticParentHarness,
+    metrics: dict[int, _SelectionMetric],
+    *,
+    rerun_mutation: _SnapshotMutation | None = None,
+) -> None:
+    base_snapshot = harness.snapshot_behavior[0]
+
+    def selection_snapshot(result: object, /) -> object:
+        fields = list(cast(tuple[object, ...], base_snapshot(result)))
+        binding = cast(Any, result)._binding
+        epoch, numerator, denominator, cross_entropy = metrics[binding.seed]
+        fields[16:20] = (
+            epoch,
+            numerator,
+            denominator,
+            cross_entropy.hex(),
+        )
+        if binding.role == coordinator._RERUN_ROLE and rerun_mutation is not None:
+            rerun_mutation(fields)
+        return tuple(fields)
+
+    harness.snapshot_behavior[0] = selection_snapshot
+
+
+def _issue_additional_synthetic_registration() -> coordinator.VerifiedRunRegistration:
+    authority._ISSUANCE_COMPLETE = False
+    snapshot = authority._RepositorySnapshot(
+        repository_root=PROJECT_ROOT,
+        head_commit=TEST_BINDING.head_commit,
+        implementation_commit=TEST_BINDING.implementation_commit,
+        registration_sha256=TEST_BINDING.registration_sha256,
+        source_bundle_sha256=TEST_BINDING.source_bundle_sha256,
+        source_paths=("src/falsewake/experiment_002_run_authority.py",),
+    )
+    return authority._issue_controlled_snapshot_for_tests(snapshot)
+
+
+def _mutate_required_rerun_snapshot_field(
+    fields: list[object],
+    index: int,
+) -> None:
+    if index in {7, 8, 9}:
+        history_bytes = b'{"rerun-history":true}'
+        if index == 8:
+            history_bytes += b"x"
+        fields[7:10] = (
+            history_bytes,
+            len(history_bytes),
+            hashlib.sha256(
+                b"falsewake-exp002-history-v1\0" + history_bytes
+            ).hexdigest(),
+        )
+    elif index in {10, 11, 12}:
+        safetensors_bytes = b"rerun-safetensors"
+        if index == 11:
+            safetensors_bytes += b"x"
+        fields[10:13] = (
+            safetensors_bytes,
+            len(safetensors_bytes),
+            hashlib.sha256(safetensors_bytes).hexdigest(),
+        )
+    elif index == 16:
+        fields[16] = 6
+    elif index == 17:
+        fields[17] = 1
+    elif index == 18:
+        fields[18] = 5
+    elif index == 19:
+        fields[19] = (0.25).hex()
+    elif index == 20:
+        fields[20] = "6" * 64
+    else:
+        raise AssertionError(f"unsupported rerun field: {index}")
+
+
+def _registered_seed_selection_implementation() -> FunctionType:
+    closure = dict(
+        zip(
+            coordinator._run_registered_seed_selection.__code__.co_freevars,
+            coordinator._run_registered_seed_selection.__closure__ or (),
+            strict=True,
+        )
+    )
+    return cast(FunctionType, closure["implementation"].cell_contents)
 
 
 def _ticket(
@@ -4349,3 +4449,778 @@ def test_guarded_child_route_source_preserves_the_security_order() -> None:
     assert positions == sorted(positions)
     assert source.count("_claim_and_verify_child_process_guard()") == 1
     assert source.count("_send_packet_prepared(channel, acknowledgement)") == 1
+
+
+def test_registered_seed_selection_surface_is_exact_and_factory_is_deleted() -> None:
+    signature = inspect.signature(coordinator._run_registered_seed_selection)
+    parameters = list(signature.parameters.values())
+    assert [parameter.name for parameter in parameters] == [
+        "registration",
+        "cpu_ids",
+        "source_bundle_fd",
+    ]
+    assert all(
+        parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+        and parameter.default is inspect.Parameter.empty
+        for parameter in parameters
+    )
+    assert coordinator._run_registered_seed_selection.__defaults__ is None
+    assert coordinator._run_registered_seed_selection.__kwdefaults__ is None
+    assert signature.return_annotation in {
+        coordinator._RegisteredSeedSelection,
+        "_RegisteredSeedSelection",
+    }
+    assert not hasattr(coordinator, "_make_registered_seed_selection")
+    assert not hasattr(coordinator, "_bind_registered_seed_selection_integrity")
+    implementation = _registered_seed_selection_implementation()
+    closure = dict(
+        zip(
+            implementation.__code__.co_freevars,
+            implementation.__closure__ or (),
+            strict=True,
+        )
+    )
+    assert (
+        closure["run_one"].cell_contents is coordinator._run_one_registered_parent_child
+    )
+    assert closure["make_assignment"].cell_contents is coordinator._assignment
+    verify_registration = cast(
+        FunctionType, closure["verify_registration"].cell_contents
+    )
+    verify_closure = dict(
+        zip(
+            verify_registration.__code__.co_freevars,
+            verify_registration.__closure__ or (),
+            strict=True,
+        )
+    )
+    assert (
+        verify_closure["registration_verifier"].cell_contents
+        is cast(Any, coordinator).verify_verified_run_registration
+    )
+    assert (
+        closure["snapshot_frame"].cell_contents
+        is coordinator._verified_child_result_snapshot_frame
+    )
+    assert (
+        closure["result_frame"].cell_contents
+        is coordinator._registered_parent_child_result_frame
+    )
+
+
+def test_registered_seed_selection_happy_trace_is_exact_detached_and_borrows_fd(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, _selection_metrics())
+    cpu_ids = (2, 7)
+    bundle_path = tmp_path / "selection-borrowed-bundle"
+    bundle_path.write_bytes(b"synthetic sealed bytes")
+    source_bundle_fd = os.open(bundle_path, os.O_RDONLY | os.O_CLOEXEC)
+    os.lseek(source_bundle_fd, 5, os.SEEK_SET)
+    before = (
+        os.fstat(source_bundle_fd),
+        os.lseek(source_bundle_fd, 0, os.SEEK_CUR),
+        os.get_inheritable(source_bundle_fd),
+    )
+    try:
+        selection = coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            cpu_ids,
+            source_bundle_fd,
+        )
+        after = (
+            os.fstat(source_bundle_fd),
+            os.lseek(source_bundle_fd, 0, os.SEEK_CUR),
+            os.get_inheritable(source_bundle_fd),
+        )
+    finally:
+        os.close(source_bundle_fd)
+
+    assert before == after
+    assert type(selection) is tuple
+    training, selected_ordinal, rerun = selection
+    assert type(training) is tuple
+    assert len(training) == 3
+    assert selected_ordinal == 0
+    registration_frame = (
+        TEST_BINDING.head_commit,
+        TEST_BINDING.implementation_commit,
+        TEST_BINDING.registration_sha256,
+        TEST_BINDING.source_bundle_sha256,
+    )
+    assert harness.binding_frames == [
+        (
+            coordinator._SEED_ROLE,
+            0,
+            coordinator.REGISTERED_SEEDS[0],
+            *registration_frame,
+        ),
+        (
+            coordinator._SEED_ROLE,
+            1,
+            coordinator.REGISTERED_SEEDS[1],
+            *registration_frame,
+        ),
+        (
+            coordinator._SEED_ROLE,
+            2,
+            coordinator.REGISTERED_SEEDS[2],
+            *registration_frame,
+        ),
+        (
+            coordinator._RERUN_ROLE,
+            3,
+            coordinator.REGISTERED_SEEDS[0],
+            *registration_frame,
+        ),
+    ]
+    assert len(harness.calls) == 4
+    assert all(
+        call[0] == cpu_ids and call[2] == source_bundle_fd for call in harness.calls
+    )
+    assert [result[5][:3] for result in training] == [
+        (coordinator._SEED_ROLE, 0, coordinator.REGISTERED_SEEDS[0]),
+        (coordinator._SEED_ROLE, 1, coordinator.REGISTERED_SEEDS[1]),
+        (coordinator._SEED_ROLE, 2, coordinator.REGISTERED_SEEDS[2]),
+    ]
+    assert rerun[5][:3] == (
+        coordinator._RERUN_ROLE,
+        3,
+        training[selected_ordinal][5][2],
+    )
+    for result in (*training, rerun):
+        assert type(result) is tuple
+        assert len(result) == 6
+        assert type(result[1]) is tuple
+        assert type(result[5]) is tuple
+        assert len(result[5]) == 21
+        assert not any(
+            type(value)
+            in {
+                harness.verified_result_type,
+                harness.supervised_result_type,
+                harness.binding_type,
+            }
+            for value in result
+        )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            cpu_ids,
+            source_bundle_fd,
+        )
+    assert len(harness.calls) == 4
+
+
+@pytest.mark.parametrize(
+    ("metrics", "expected_ordinal"),
+    [
+        (
+            _selection_metrics((7, 3, 4, 0.1), (7, 4, 5, 0.9), (7, 2, 3, 0.01)),
+            1,
+        ),
+        (
+            _selection_metrics((7, 3, 4, 0.5), (7, 3, 4, 0.4), (7, 3, 4, 0.2)),
+            2,
+        ),
+        (
+            _selection_metrics((6, 3, 4, 0.5), (2, 3, 4, 0.5), (4, 3, 4, 0.5)),
+            1,
+        ),
+        (
+            _selection_metrics((7, 3, 4, 0.5), (7, 3, 4, 0.5), (7, 3, 4, 0.5)),
+            0,
+        ),
+    ],
+    ids=("f1-cross-product", "cross-entropy", "epoch", "seed"),
+)
+def test_registered_seed_selection_applies_each_exact_rank_tiebreak(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    metrics: dict[int, _SelectionMetric],
+    expected_ordinal: int,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, metrics)
+    training, selected_ordinal, rerun = coordinator._run_registered_seed_selection(
+        synthetic_registration,
+        (2, 7),
+        91,
+    )
+    assert selected_ordinal == expected_ordinal
+    assert rerun[5][2] == training[selected_ordinal][5][2]
+
+
+@pytest.mark.parametrize(
+    "ordered_metrics",
+    tuple(
+        itertools.permutations(
+            (
+                (7, 4, 5, 0.9),
+                (2, 3, 4, 0.1),
+                (1, 2, 3, 0.01),
+            )
+        )
+    ),
+)
+def test_registered_seed_selection_ranking_is_metric_order_independent(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    ordered_metrics: tuple[_SelectionMetric, _SelectionMetric, _SelectionMetric],
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    metrics = _selection_metrics(*ordered_metrics)
+    _install_selection_snapshot_behavior(harness, metrics)
+    _training, selected_ordinal, rerun = coordinator._run_registered_seed_selection(
+        synthetic_registration,
+        (2, 7),
+        91,
+    )
+    expected_seed = coordinator.REGISTERED_SEEDS[ordered_metrics.index((7, 4, 5, 0.9))]
+    assert selected_ordinal == coordinator.REGISTERED_SEEDS.index(expected_seed)
+    assert rerun[5][2] == expected_seed
+
+
+def test_selected_seed_rerun_allows_envelope_and_resource_differences(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+
+    def mutate_envelope(fields: list[object]) -> None:
+        envelope_bytes = b'{"rerun-envelope":"different"}'
+        fields[13:16] = (
+            envelope_bytes,
+            len(envelope_bytes),
+            hashlib.sha256(
+                b"falsewake-exp002-child-result-envelope-v1\0" + envelope_bytes
+            ).hexdigest(),
+        )
+
+    _install_selection_snapshot_behavior(
+        harness,
+        _selection_metrics(),
+        rerun_mutation=mutate_envelope,
+    )
+    base_behavior = harness.behavior[0]
+
+    def resource_behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        result = base_behavior(cpu_ids, activation, source_bundle_fd, binding)
+        if cast(Any, binding).role == coordinator._RERUN_ROLE:
+            return replace(
+                cast(Any, result),
+                elapsed_nanoseconds=101,
+                maximum_rss_bytes=102,
+                output_and_scratch_bytes=103,
+            )
+        return result
+
+    harness.behavior[0] = resource_behavior
+    training, selected_ordinal, rerun = coordinator._run_registered_seed_selection(
+        synthetic_registration,
+        (2, 7),
+        91,
+    )
+    selected = training[selected_ordinal]
+    assert rerun[2:5] == (101, 102, 103)
+    assert rerun[2:5] != selected[2:5]
+    assert rerun[5][13:16] != selected[5][13:16]
+    assert all(
+        rerun[5][index] == selected[5][index]
+        for index in (7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20)
+    )
+
+
+@pytest.mark.parametrize(
+    "index",
+    (7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20),
+)
+def test_selected_seed_rerun_rejects_each_required_field_mismatch(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    index: int,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(
+        harness,
+        _selection_metrics(),
+        rerun_mutation=lambda fields: _mutate_required_rerun_snapshot_field(
+            fields,
+            index,
+        ),
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="selected-seed rerun differs",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert len(harness.calls) == 4
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    ("result-type", "snapshot-shape", "snapshot-type", "snapshot-binding"),
+)
+def test_registered_seed_selection_rejects_invalid_child_return_contracts(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    if invalid == "result-type":
+        base_behavior = harness.behavior[0]
+
+        def invalid_result(
+            cpu_ids: tuple[int, int],
+            activation: _SyntheticActivation,
+            source_bundle_fd: int,
+            binding: object,
+        ) -> object:
+            base_behavior(cpu_ids, activation, source_bundle_fd, binding)
+            return object()
+
+        harness.behavior[0] = invalid_result
+    else:
+        base_snapshot = harness.snapshot_behavior[0]
+
+        def invalid_snapshot(result: object, /) -> object:
+            fields = list(cast(tuple[object, ...], base_snapshot(result)))
+            if invalid == "snapshot-shape":
+                return tuple(fields[:-1])
+            if invalid == "snapshot-type":
+                fields[16] = True
+            else:
+                fields[2] = coordinator.REGISTERED_SEEDS[1]
+            return tuple(fields)
+
+        harness.snapshot_behavior[0] = invalid_snapshot
+
+    with pytest.raises(coordinator.Experiment002CoordinatorError):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert len(harness.calls) == 1
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert len(harness.calls) == 1
+
+
+@pytest.mark.parametrize("failure_call", (0, 1, 2, 3))
+def test_registered_seed_selection_failure_stops_later_calls_burns_and_borrows_fd(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure_call: int,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, _selection_metrics())
+    base_behavior = harness.behavior[0]
+
+    def fail_selected_call(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        if len(harness.calls) - 1 == failure_call:
+            raise RuntimeError(f"synthetic selection failure {failure_call}")
+        return base_behavior(cpu_ids, activation, source_bundle_fd, binding)
+
+    harness.behavior[0] = fail_selected_call
+    bundle_path = tmp_path / f"selection-failure-{failure_call}"
+    bundle_path.write_bytes(b"synthetic sealed bytes")
+    source_bundle_fd = os.open(bundle_path, os.O_RDONLY | os.O_CLOEXEC)
+    os.lseek(source_bundle_fd, 5, os.SEEK_SET)
+    before = (
+        os.fstat(source_bundle_fd),
+        os.lseek(source_bundle_fd, 0, os.SEEK_CUR),
+        os.get_inheritable(source_bundle_fd),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="synthetic selection failure"):
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                source_bundle_fd,
+            )
+        assert len(harness.calls) == failure_call + 1
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="already attempted",
+        ):
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                source_bundle_fd,
+            )
+        after = (
+            os.fstat(source_bundle_fd),
+            os.lseek(source_bundle_fd, 0, os.SEEK_CUR),
+            os.get_inheritable(source_bundle_fd),
+        )
+    finally:
+        os.close(source_bundle_fd)
+    assert before == after
+    assert len(harness.calls) == failure_call + 1
+
+
+def test_registered_seed_selection_burns_before_argument_validation(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="CPU IDs",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            cast(Any, (True, 7)),
+            91,
+        )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert harness.calls == []
+
+
+def test_registered_seed_selection_is_global_single_flight_and_fresh_can_follow(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concurrent_registration = _issue_additional_synthetic_registration()
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, _selection_metrics())
+    base_behavior = harness.behavior[0]
+    entered = threading.Event()
+    release = threading.Event()
+    primary_results: list[coordinator._RegisteredSeedSelection] = []
+    primary_errors: list[BaseException] = []
+    blocked_once = False
+
+    def blocking_behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        nonlocal blocked_once
+        if not blocked_once:
+            blocked_once = True
+            entered.set()
+            if not release.wait(5.0):
+                raise AssertionError("selection concurrency release timed out")
+        return base_behavior(cpu_ids, activation, source_bundle_fd, binding)
+
+    harness.behavior[0] = blocking_behavior
+
+    def run_primary() -> None:
+        try:
+            primary_results.append(
+                coordinator._run_registered_seed_selection(
+                    synthetic_registration,
+                    (2, 7),
+                    91,
+                )
+            )
+        except BaseException as error:
+            primary_errors.append(error)
+
+    thread = threading.Thread(target=run_primary)
+    thread.start()
+    assert entered.wait(5.0)
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="already attempted",
+        ):
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                91,
+            )
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="already in flight",
+        ):
+            coordinator._run_registered_seed_selection(
+                concurrent_registration,
+                (2, 7),
+                91,
+            )
+    finally:
+        release.set()
+        thread.join(10.0)
+    assert not thread.is_alive()
+    assert primary_errors == []
+    assert len(primary_results) == 1
+    assert len(harness.calls) == 4
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            concurrent_registration,
+            (2, 7),
+            91,
+        )
+
+    fresh_registration = _issue_additional_synthetic_registration()
+    fresh_harness = _install_synthetic_parent_execution(
+        monkeypatch,
+        fresh_registration,
+    )
+    _install_selection_snapshot_behavior(fresh_harness, _selection_metrics())
+    fresh_selection = coordinator._run_registered_seed_selection(
+        fresh_registration,
+        (2, 7),
+        91,
+    )
+    assert type(fresh_selection) is tuple
+    assert len(fresh_harness.calls) == 4
+
+
+@pytest.mark.parametrize(
+    "route_name",
+    (
+        "_run_one_registered_parent_child",
+        "_assignment",
+        "verify_verified_run_registration",
+        "_verified_child_result_snapshot_frame",
+        "_registered_parent_child_result_frame",
+    ),
+)
+def test_registered_seed_selection_rejects_pre_call_global_route_replacement(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    route_name: str,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    original = getattr(coordinator, route_name)
+    replacement_calls: list[tuple[object, ...]] = []
+
+    def replacement(*args: object, **kwargs: object) -> object:
+        replacement_calls.append((*args, kwargs))
+        return object()
+
+    monkeypatch.setattr(coordinator, route_name, replacement)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="routes changed",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert replacement_calls == []
+    assert harness.calls == []
+    monkeypatch.setattr(coordinator, route_name, original)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert harness.calls == []
+
+
+@pytest.mark.parametrize("tamper", ("code", "defaults", "closure"))
+def test_registered_seed_selection_rejects_mid_call_dynamic_authority_mutation(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, _selection_metrics())
+    implementation = _registered_seed_selection_implementation()
+    closure = dict(
+        zip(
+            implementation.__code__.co_freevars,
+            implementation.__closure__ or (),
+            strict=True,
+        )
+    )
+    better_result = cast(FunctionType, closure["better_result"].cell_contents)
+    verify_registration = cast(
+        FunctionType,
+        closure["verify_registration"].cell_contents,
+    )
+    rerun_indices_cell = closure["rerun_match_indices"]
+    better_code = better_result.__code__
+    verifier_defaults = verify_registration.__defaults__
+    rerun_indices = rerun_indices_cell.cell_contents
+    base_behavior = harness.behavior[0]
+    mutated = False
+
+    def tampering_behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        nonlocal mutated
+        result = base_behavior(cpu_ids, activation, source_bundle_fd, binding)
+        if not mutated:
+            mutated = True
+            if tamper == "code":
+                better_result.__code__ = better_code.replace(co_name="forged_rank")
+            elif tamper == "defaults":
+                verify_registration.__defaults__ = (None,)
+            else:
+                rerun_indices_cell.cell_contents = ()
+        return result
+
+    harness.behavior[0] = tampering_behavior
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="authority changed|routes changed|closure content changed",
+        ):
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                91,
+            )
+    finally:
+        better_result.__code__ = better_code
+        verify_registration.__defaults__ = verifier_defaults
+        rerun_indices_cell.cell_contents = rerun_indices
+    assert mutated
+    assert 1 <= len(harness.calls) <= 4
+
+
+def test_registered_seed_selection_burns_before_pre_call_integrity_failure(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    implementation = _registered_seed_selection_implementation()
+    closure = dict(
+        zip(
+            implementation.__code__.co_freevars,
+            implementation.__closure__ or (),
+            strict=True,
+        )
+    )
+    better_result = cast(FunctionType, closure["better_result"].cell_contents)
+    original_code = better_result.__code__
+    better_result.__code__ = original_code.replace(co_name="forged_pre_call_rank")
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="authority changed",
+        ):
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                91,
+            )
+    finally:
+        better_result.__code__ = original_code
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="already attempted",
+    ):
+        coordinator._run_registered_seed_selection(
+            synthetic_registration,
+            (2, 7),
+            91,
+        )
+    assert harness.calls == []
+
+
+def test_registered_seed_selection_rejects_inherited_registration_before_child(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    _install_selection_snapshot_behavior(harness, _selection_metrics())
+    pid = _fork()
+    if pid == 0:
+        try:
+            coordinator._run_registered_seed_selection(
+                synthetic_registration,
+                (2, 7),
+                91,
+            )
+        except authority.Experiment002RunAuthorityError:
+            os._exit(0)
+        except BaseException:
+            os._exit(92)
+        os._exit(93)
+    _wait_success(pid)
+    assert harness.calls == []
+    selection = coordinator._run_registered_seed_selection(
+        synthetic_registration,
+        (2, 7),
+        91,
+    )
+    assert type(selection) is tuple
+    assert len(harness.calls) == 4
+
+
+def test_registered_seed_selection_source_has_no_extra_resource_or_import_routes() -> (
+    None
+):
+    source = inspect.getsource(_registered_seed_selection_implementation())
+    assert "run_one(" in source
+    assert "selected_seed = training[selected_ordinal][5][2]" in source
+    assert "rerun_match_indices" in source
+    for forbidden in (
+        "import_module",
+        "os.close",
+        "os.dup",
+        "os.lseek",
+        "cleanup",
+        "retry",
+    ):
+        assert forbidden not in source
+
+
+def test_public_parent_terminal_ast_remains_reverify_then_raise() -> None:
+    source = textwrap.dedent(inspect.getsource(coordinator.run_registered_experiment))
+    function = cast(ast.FunctionDef, ast.parse(source).body[0])
+    executable_body = function.body[1:]
+    assert len(executable_body) == 2
+    verification = cast(ast.Expr, executable_body[0])
+    assert isinstance(verification.value, ast.Call)
+    assert isinstance(verification.value.func, ast.Name)
+    assert verification.value.func.id == "_require_registration"
+    terminal = cast(ast.Raise, executable_body[1])
+    assert isinstance(terminal.exc, ast.Call)
+    assert isinstance(terminal.exc.func, ast.Name)
+    assert terminal.exc.func.id == "Experiment002CoordinatorError"
