@@ -44,16 +44,19 @@ class PCMSourceIdentity:
         _validate_sha256(self.sha256)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class VerifiedPCM16LE:
-    """An immutable raw PCM payload decoded from one verified WAV snapshot."""
+    """An immutable PCM payload issued only by ``SpeechCommandsPCMLoader``."""
 
     path: str
     sample_count: int
     sha256: str
     payload: bytes
 
-    def __post_init__(self) -> None:
+    def __init__(self) -> None:
+        raise TypeError("VerifiedPCM16LE snapshots are created by the PCM loader")
+
+    def _validate(self) -> None:
         _canonical_parts(self.path)
         _validate_sample_count(self.sample_count)
         _validate_sha256(self.sha256)
@@ -165,7 +168,7 @@ class SpeechCommandsPCMLoader:
                 f"source digest differs for {source.path!r}: observed={observed_sha256}"
             )
         payload = _decode_pcm_payload(contents, source)
-        return VerifiedPCM16LE(
+        return _new_verified_pcm16le(
             path=source.path,
             sample_count=source.sample_count,
             sha256=source.sha256,
@@ -309,6 +312,24 @@ def _decode_pcm_payload(contents: bytes, source: PCMSourceIdentity) -> bytes:
             f"expected={expected_payload_bytes}, read={len(payload)}"
         )
     return payload
+
+
+def _new_verified_pcm16le(
+    *,
+    path: str,
+    sample_count: int,
+    sha256: str,
+    payload: bytes,
+) -> VerifiedPCM16LE:
+    """Issue one internally validated snapshot."""
+
+    snapshot = object.__new__(VerifiedPCM16LE)
+    object.__setattr__(snapshot, "path", path)
+    object.__setattr__(snapshot, "sample_count", sample_count)
+    object.__setattr__(snapshot, "sha256", sha256)
+    object.__setattr__(snapshot, "payload", payload)
+    snapshot._validate()
+    return snapshot
 
 
 def _canonical_parts(path: str) -> tuple[str, str]:

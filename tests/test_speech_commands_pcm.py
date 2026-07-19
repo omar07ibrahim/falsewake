@@ -9,6 +9,7 @@ from typing import Literal, cast
 import numpy as np
 import pytest
 
+import falsewake.speech_commands_pcm as pcm
 from falsewake.baseline_data import ClipExample
 from falsewake.feature_matrix import extract_feature_matrix, feature_matrix_sha256
 from falsewake.features import extract_clip_features, pcm16le_to_float32
@@ -612,12 +613,14 @@ def test_loader_lifecycle_and_verified_payload_validation(tmp_path: Path) -> Non
     ):
         open_loader.load_command(cast(PCMSourceIdentity, object()))
     with pytest.raises(SpeechCommandsPCMError, match="exactly 2 bytes"):
-        VerifiedPCM16LE(
+        pcm._new_verified_pcm16le(
             path="yes/source.wav",
             sample_count=1,
             sha256="0" * 64,
             payload=b"",
         )
+    with pytest.raises(TypeError, match="PCM loader"):
+        VerifiedPCM16LE()
 
 
 def test_loader_rejects_invalid_roots(tmp_path: Path) -> None:
