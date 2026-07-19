@@ -365,6 +365,7 @@ def test_public_api_has_no_callback_or_generic_barrier_seam() -> None:
     consume = inspect.signature(history.consume_registered_evaluated_epoch)
     complete = inspect.signature(history.complete_registered_training_history)
     barrier = inspect.signature(history._consume_registered_history_barrier)
+    abort = inspect.signature(history._abort_consumed_registered_history_barrier)
     assert tuple(consume.parameters) == ("history", "evaluated_epoch")
     assert tuple(complete.parameters) == (
         "history",
@@ -372,7 +373,87 @@ def test_public_api_has_no_callback_or_generic_barrier_seam() -> None:
         "complete_update_trace",
     )
     assert tuple(barrier.parameters) == ("registration", "executor", "barrier")
+    assert tuple(abort.parameters) == ("registration", "executor", "barrier")
     assert not hasattr(history, "_build_independent_authority_truth")
+
+
+def test_exact_consumed_barrier_abort_is_local_and_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, state, _ = _counterfeit_accepted_history()
+    barrier = state.active_barrier
+    assert type(barrier) is history.RegisteredHistoryBarrier
+    barrier_state = history._issued_barrier_state(barrier)
+    history._transition_barrier(barrier, barrier_state, phase="CONSUMED")
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("abort crossed into executor/evaluator verification")
+
+    monkeypatch.setattr(history, "_registered_executor_snapshot", forbidden)
+    monkeypatch.setattr(history, "_registered_evaluated_epoch_snapshot", forbidden)
+    monkeypatch.setattr(history, "verify_registered_history_barrier", forbidden)
+    history._abort_consumed_registered_history_barrier(
+        state.registration,
+        state.executor,
+        barrier,
+    )
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert owner in history._FAILED_HISTORIES
+    assert barrier in history._FAILED_BARRIERS
+    history._abort_consumed_registered_history_barrier(
+        state.registration,
+        state.executor,
+        barrier,
+    )
+
+
+def test_consumed_barrier_abort_wrong_executor_fails_closed() -> None:
+    _, state, _ = _counterfeit_accepted_history()
+    barrier = state.active_barrier
+    assert type(barrier) is history.RegisteredHistoryBarrier
+    barrier_state = history._issued_barrier_state(barrier)
+    history._transition_barrier(barrier, barrier_state, phase="CONSUMED")
+    foreign = object.__new__(RegisteredTrainingExecutor)
+    with pytest.raises(
+        history.Experiment002RegisteredHistoryError,
+        match="abortable",
+    ):
+        history._abort_consumed_registered_history_barrier(
+            state.registration,
+            foreign,
+            barrier,
+        )
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+
+
+@pytest.mark.parametrize("pre_failed", [False, True])
+def test_attempted_barrier_abort_covers_issued_and_partial_failed_states(
+    pre_failed: bool,
+) -> None:
+    owner, state, _ = _counterfeit_accepted_history()
+    barrier = state.active_barrier
+    assert type(barrier) is history.RegisteredHistoryBarrier
+    barrier_state = history._issued_barrier_state(barrier)
+    if pre_failed:
+        history._terminal_fail_barrier(barrier, barrier_state)
+        assert state.phase == "OPEN"
+        assert barrier_state.phase == "FAILED"
+    history._abort_consumed_registered_history_barrier(
+        state.registration,
+        state.executor,
+        barrier,
+    )
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert owner in history._FAILED_HISTORIES
+    history._abort_consumed_registered_history_barrier(
+        state.registration,
+        state.executor,
+        barrier,
+    )
 
 
 def test_canonical_thirty_epoch_history_matches_frozen_json_contract() -> None:

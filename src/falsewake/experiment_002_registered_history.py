@@ -1359,6 +1359,96 @@ def _consume_registered_history_barrier(
             raise
 
 
+def _abort_consumed_registered_history_barrier(
+    registration: VerifiedRunRegistration,
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+) -> None:
+    """Terminally abort one exact consumed non-final executor barrier.
+
+    This post-consumption failure route intentionally consults no executor,
+    evaluator, or public barrier verifier.  The caller invokes it only after
+    releasing every executor and handoff lock.
+    """
+
+    if type(registration) is not VerifiedRunRegistration:
+        raise TypeError("registration must be a VerifiedRunRegistration")
+    if type(executor) is not RegisteredTrainingExecutor:
+        raise TypeError("executor must be a RegisteredTrainingExecutor")
+    if type(barrier) is not RegisteredHistoryBarrier:
+        raise TypeError("barrier must be a RegisteredHistoryBarrier")
+    with _REGISTRY_LOCK:
+        barrier_state = _BARRIERS.get(barrier)
+        barrier_guard = _BARRIER_GUARDS.get(barrier)
+        barrier_issued = barrier in _ISSUED_BARRIERS
+    if type(barrier_state) is not _BarrierState:
+        raise Experiment002RegisteredHistoryError(
+            "abort barrier has no exact issued state"
+        )
+    with _REGISTRY_LOCK:
+        history_state = _HISTORIES.get(barrier_state.history)
+        history_guard = _HISTORY_GUARDS.get(barrier_state.history)
+        history_issued = barrier_state.history in _ISSUED_HISTORIES
+    if (
+        type(history_state) is not _HistoryState
+        or type(barrier_guard) is not _BarrierGuard
+        or type(history_guard) is not _HistoryGuard
+    ):
+        _terminal_fail_barrier(barrier, barrier_state)
+        raise Experiment002RegisteredHistoryError(
+            "abort boundary has no exact history guards"
+        )
+    lock = history_guard.lock
+    with _FLOW_LOCK, lock:
+        try:
+            _require_barrier_payload_types(barrier_state, barrier_guard)
+            _require_history_payload_types(history_state, history_guard)
+            records = _history_records(history_state)
+            bound = (
+                records[barrier_state.accepted_epoch]
+                if type(barrier_state.accepted_epoch) is int
+                and 0 <= barrier_state.accepted_epoch < len(records)
+                else None
+            )
+            if (
+                not barrier_issued
+                or not history_issued
+                or barrier_state.history is not barrier_guard.history
+                or barrier_state.token is not barrier_guard.token
+                or history_state.token is not barrier_state.history_token
+                or history_state.token is not history_guard.token
+                or history_state.registration is not registration
+                or history_state.executor is not executor
+                or history_state.process_id != os.getpid()
+                or history_state.lock is not lock
+                or history_state.phase not in ("OPEN", "FAILED")
+                or barrier_state.accepted_epoch != len(records) - 1
+                or barrier_state.phase not in ("ISSUED", "CONSUMED", "FAILED")
+                or not 0 <= barrier_state.accepted_epoch < _FINAL_ZERO_BASED_EPOCH
+                or barrier_state.registration is not registration
+                or history_state.registration is not registration
+                or barrier_state.executor is not executor
+                or history_state.executor is not executor
+                or history_state.active_barrier is not barrier
+                or history_state.active_barrier_token is not barrier_state.token
+                or type(bound) is not _BoundEpochRecord
+                or bound.evaluated_epoch is not barrier_state.evaluated_epoch
+                or type(bound.evaluated_snapshot.handoff)
+                is not RegisteredExecutorEpochHandoff
+                or bound.handoff_snapshot.executor is not executor
+                or _bound_record_fingerprint(bound) != bound.authority_fingerprint
+            ):
+                raise Experiment002RegisteredHistoryError(
+                    "consumed barrier is not the exact abortable executor boundary"
+                )
+        except BaseException:
+            _terminal_fail_barrier(barrier, barrier_state)
+            _terminal_fail_history(barrier_state.history, history_state)
+            raise
+        _terminal_fail_barrier(barrier, barrier_state)
+        _terminal_fail_history(barrier_state.history, history_state)
+
+
 def _registered_history_barrier_snapshot(
     barrier: RegisteredHistoryBarrier,
 ) -> _RegisteredHistoryBarrierSnapshot:
