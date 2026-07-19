@@ -1,0 +1,64 @@
+{
+  "artifact": {
+    "byte_count": 2995776948,
+    "committed_to_git": false,
+    "mode": "0444",
+    "role": "operational_acceleration_artifact_not_a_preregistered_trust_root",
+    "sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653"
+  },
+  "budget": {
+    "observed_first_build_max_rss_bytes": 149413888,
+    "observed_first_build_wall_seconds": 42.56599565100623,
+    "output_bytes_maximum": 4294967296,
+    "peak_rss_bytes_maximum": 4294967296,
+    "wall_seconds_maximum": 7200
+  },
+  "builder": {
+    "git_commit": "0c460cd1060acc5f96c856ec4923cc885713e97e",
+    "numpy": "2.5.1",
+    "python": "3.12.3",
+    "source": "src/falsewake/experiment_002_pcm_cache.py"
+  },
+  "data_boundary": {
+    "cached_test_audio": false,
+    "retained_test_identity": false,
+    "test_command_count_only": 11005,
+    "white_noise_test_background_cached": false
+  },
+  "experiment": "002",
+  "format": {
+    "entry_bytes": 96,
+    "entry_count": 94829,
+    "header_bytes": 320,
+    "payload_alignment_bytes": 4096,
+    "payload_bytes": 2986671540,
+    "payload_offset": 9105408,
+    "role_counts": {
+      "train_backgrounds": 4,
+      "train_commands": 84843,
+      "validation_backgrounds": 1,
+      "validation_commands": 9981
+    }
+  },
+  "inputs": {
+    "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+    "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+    "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+    "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+    "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+  },
+  "schema_version": 1,
+  "verification": {
+    "background_boundary_comparisons": 10,
+    "command_endpoint_comparisons": 4,
+    "external_identity_required_to_open": true,
+    "first_build_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+    "opened_file_max_rss_bytes": 149700608,
+    "opened_file_wall_seconds": 9.345873857993865,
+    "parity_comparison_count": 14,
+    "repeat_build_elapsed_seconds": 95.68574697201257,
+    "repeat_build_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+    "repeat_byte_identity": true,
+    "secure_wav_loader_parity": true
+  }
+}
