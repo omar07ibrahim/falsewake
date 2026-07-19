@@ -922,6 +922,368 @@ def test_sealed_child_issuer_and_reverification_never_use_git_or_popen(
             authority._verify_and_issue_experiment_002_sealed_child_registration()
 
 
+def test_registered_child_snapshot_contract_rejects_spoofs() -> None:
+    fields = (
+        "manifest_path",
+        "pcm_cache_path",
+        "pcm_cache_byte_count",
+        "pcm_cache_sha256",
+        "normalization_path",
+        "normalization_byte_count",
+        "normalization_sha256",
+        "scratch_directory",
+    )
+    assert tuple(authority._RegisteredChildInputSnapshot.__dataclass_fields__) == fields
+    assert authority._RegisteredChildInputSnapshot.__slots__ == fields
+    signature = inspect.signature(authority._registered_child_input_snapshot)
+    assert tuple(signature.parameters) == ("registration",)
+    assert (
+        signature.parameters["registration"].kind is inspect.Parameter.POSITIONAL_ONLY
+    )
+
+    artifacts = cast(dict[str, Any], authority._expected_frozen_bindings()["artifacts"])
+    pcm = cast(dict[str, Any], artifacts["pcm_cache"])
+    normalization = cast(dict[str, Any], artifacts["normalization"])
+    snapshot = authority._RegisteredChildInputSnapshot(
+        manifest_path=Path("/home/ubuntu/gitcode/.t/authority-test/manifest.jsonl"),
+        pcm_cache_path=Path("/home/ubuntu/gitcode/.t/authority-test/pcm-cache.bin"),
+        pcm_cache_byte_count=cast(int, pcm["byte_count"]),
+        pcm_cache_sha256=cast(str, pcm["sha256"]),
+        normalization_path=(
+            authority._CANONICAL_REPOSITORY_ROOT / cast(str, normalization["path"])
+        ),
+        normalization_byte_count=cast(int, normalization["byte_count"]),
+        normalization_sha256=cast(str, normalization["sha256"]),
+        scratch_directory=Path("/home/ubuntu/gitcode/.t/authority-test/scratch"),
+    )
+    authority._require_registered_child_input_snapshot(snapshot)
+    assert not hasattr(snapshot, "__dict__")
+    assert not hasattr(snapshot, "archive_path")
+    assert not hasattr(snapshot, "registration_bytes")
+    assert not hasattr(snapshot, "authority_state")
+    frozen_field = "manifest_path"
+    with pytest.raises(AttributeError):
+        setattr(snapshot, frozen_field, snapshot.pcm_cache_path)
+
+    class EqualPathSubclass(PosixPath):
+        pass
+
+    class SnapshotSubclass(authority._RegisteredChildInputSnapshot):
+        pass
+
+    snapshot_subclass = SnapshotSubclass(
+        snapshot.manifest_path,
+        snapshot.pcm_cache_path,
+        snapshot.pcm_cache_byte_count,
+        snapshot.pcm_cache_sha256,
+        snapshot.normalization_path,
+        snapshot.normalization_byte_count,
+        snapshot.normalization_sha256,
+        snapshot.scratch_directory,
+    )
+    spoofed = (
+        dataclass_replace(
+            snapshot,
+            manifest_path=EqualPathSubclass(snapshot.manifest_path),
+        ),
+        dataclass_replace(
+            snapshot,
+            pcm_cache_path=EqualPathSubclass(snapshot.pcm_cache_path),
+        ),
+        dataclass_replace(
+            snapshot,
+            normalization_path=EqualPathSubclass(snapshot.normalization_path),
+        ),
+        dataclass_replace(
+            snapshot,
+            scratch_directory=EqualPathSubclass(snapshot.scratch_directory),
+        ),
+        dataclass_replace(
+            snapshot,
+            pcm_cache_byte_count=EqualIntegerSubclass(snapshot.pcm_cache_byte_count),
+        ),
+        dataclass_replace(snapshot, pcm_cache_byte_count=True),
+        dataclass_replace(
+            snapshot,
+            pcm_cache_sha256=EqualStringSubclass(snapshot.pcm_cache_sha256),
+        ),
+        dataclass_replace(
+            snapshot,
+            normalization_byte_count=EqualIntegerSubclass(
+                snapshot.normalization_byte_count
+            ),
+        ),
+        dataclass_replace(
+            snapshot,
+            normalization_sha256=EqualStringSubclass(snapshot.normalization_sha256),
+        ),
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="invalid type",
+    ):
+        authority._require_registered_child_input_snapshot(snapshot_subclass)
+    assert not authority._registered_child_input_snapshots_match(
+        snapshot, snapshot_subclass
+    )
+    for forged in spoofed:
+        with pytest.raises(authority.Experiment002RunAuthorityError):
+            authority._require_registered_child_input_snapshot(forged)
+        assert not authority._registered_child_input_snapshots_match(snapshot, forged)
+
+
+def test_registered_child_input_snapshot_uses_only_retained_sealed_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    normalization_binding = cast(
+        dict[str, Any],
+        cast(
+            dict[str, Any],
+            authority._expected_frozen_bindings()["artifacts"],
+        )["normalization"],
+    )
+    live_normalization = case.root / cast(str, normalization_binding["path"])
+    live_normalization.write_bytes(b"untrusted live normalization bytes")
+
+    original_builder = authority._registered_child_input_snapshot_from_state
+    original_reverify = authority.reverify_verified_run_registration
+    builder_calls = 0
+    reverify_calls = 0
+
+    def observed_builder(
+        state: authority._VerifiedState, /
+    ) -> authority._RegisteredChildInputSnapshot:
+        nonlocal builder_calls
+        builder_calls += 1
+        return original_builder(state)
+
+    def observed_reverify(
+        registration: authority.VerifiedRunRegistration,
+    ) -> None:
+        nonlocal reverify_calls
+        reverify_calls += 1
+        original_reverify(registration)
+
+    def forbidden_live_read(_path: Path) -> bytes:
+        raise AssertionError("registered child inputs must not read live files")
+
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        monkeypatch.setattr(
+            authority,
+            "_registered_child_input_snapshot_from_state",
+            observed_builder,
+        )
+        monkeypatch.setattr(
+            authority,
+            "reverify_verified_run_registration",
+            observed_reverify,
+        )
+        monkeypatch.setattr(Path, "read_bytes", forbidden_live_read)
+        snapshot = authority._registered_child_input_snapshot(capability)
+
+    external_inputs = cast(dict[str, Any], case.document["external_inputs"])
+    manifest = cast(dict[str, Any], external_inputs["manifest"])
+    pcm_cache = cast(dict[str, Any], external_inputs["pcm_cache"])
+    environment = cast(
+        dict[str, Any],
+        cast(dict[str, Any], case.document["invocation"])["environment"],
+    )
+    assert type(snapshot) is authority._RegisteredChildInputSnapshot
+    assert type(snapshot.manifest_path) is type(Path())
+    assert type(snapshot.pcm_cache_path) is type(Path())
+    assert type(snapshot.normalization_path) is type(Path())
+    assert type(snapshot.scratch_directory) is type(Path())
+    assert snapshot.manifest_path == Path(cast(str, manifest["path"]))
+    assert snapshot.pcm_cache_path == Path(cast(str, pcm_cache["path"]))
+    assert snapshot.pcm_cache_byte_count == pcm_cache["byte_count"]
+    assert snapshot.pcm_cache_sha256 == pcm_cache["sha256"]
+    assert snapshot.normalization_path == live_normalization
+    assert snapshot.normalization_byte_count == normalization_binding["byte_count"]
+    assert snapshot.normalization_sha256 == normalization_binding["sha256"]
+    assert snapshot.scratch_directory == Path(cast(str, environment["TMPDIR"]))
+    assert builder_calls == 2
+    assert reverify_calls == 2
+    assert capability not in authority._FAILED
+
+
+def test_registered_child_input_snapshot_rejects_parent_and_nonexact_capabilities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    repository_snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(repository_snapshot)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="sealed-child authority",
+    ):
+        authority._registered_child_input_snapshot(capability)
+    assert capability not in authority._FAILED
+
+    with pytest.raises(TypeError, match="exact VerifiedRunRegistration"):
+        authority._registered_child_input_snapshot(cast(Any, object()))
+
+    class RegistrationSubclass(authority.VerifiedRunRegistration):
+        pass
+
+    forged = object.__new__(RegistrationSubclass)
+    with pytest.raises(TypeError, match="exact VerifiedRunRegistration"):
+        authority._registered_child_input_snapshot(cast(Any, forged))
+    with pytest.raises(TypeError):
+        cast(Any, authority._registered_child_input_snapshot)(registration=capability)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["canonical_registration", "normalization", "origin_subclass"],
+)
+def test_registered_child_input_snapshot_tamper_permanently_poisons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        state = authority._ISSUED[capability]
+        guard = authority._ISSUED_GUARDS[capability]
+        if tamper == "canonical_registration":
+            document = copy.deepcopy(case.document)
+            external_inputs = cast(dict[str, Any], document["external_inputs"])
+            manifest = cast(dict[str, Any], external_inputs["manifest"])
+            manifest["path"] = "/home/ubuntu/gitcode/.t/authority-test/manifest.jsonm"
+            registration_bytes = _canonical(document)
+            registration_sha256 = hashlib.sha256(registration_bytes).hexdigest()
+            authority._ISSUED[capability] = dataclass_replace(
+                state,
+                registration_bytes=registration_bytes,
+                registration_sha256=registration_sha256,
+            )
+            authority._ISSUED_GUARDS[capability] = dataclass_replace(
+                guard,
+                registration_bytes=registration_bytes,
+                registration_sha256=registration_sha256,
+            )
+        elif tamper == "normalization":
+            frozen_blobs = tuple(
+                dataclass_replace(blob, payload=b"\0" * len(blob.payload))
+                if blob.path == "models/experiment-002-normalization.f32"
+                else blob
+                for blob in state.frozen_blobs
+            )
+            authority._ISSUED[capability] = dataclass_replace(
+                state,
+                frozen_blobs=frozen_blobs,
+            )
+        else:
+            authority._ISSUED[capability] = dataclass_replace(
+                state,
+                origin_binding=dataclass_replace(
+                    state.origin_binding,
+                    kind=EqualStringSubclass(authority._SEALED_CHILD_ORIGIN_KIND),
+                ),
+            )
+
+        with pytest.raises(authority.Experiment002RunAuthorityError):
+            authority._registered_child_input_snapshot(capability)
+        assert capability in authority._FAILED
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="not issued",
+        ):
+            authority._registered_child_input_snapshot(capability)
+
+
+def test_registered_child_input_snapshot_requires_same_state_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        original_state = authority._ISSUED[capability]
+        original_reverify = authority.reverify_verified_run_registration
+        calls = 0
+
+        def replace_identity_after_reverify(
+            registration: authority.VerifiedRunRegistration,
+        ) -> None:
+            nonlocal calls
+            original_reverify(registration)
+            calls += 1
+            if calls == 1:
+                replacement = dataclass_replace(original_state)
+                assert replacement == original_state
+                assert replacement is not original_state
+                authority._ISSUED[capability] = replacement
+
+        monkeypatch.setattr(
+            authority,
+            "reverify_verified_run_registration",
+            replace_identity_after_reverify,
+        )
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="changed before child input capture",
+        ):
+            authority._registered_child_input_snapshot(capability)
+        assert capability in authority._FAILED
+
+
+def test_registered_child_input_snapshot_rejects_double_capture_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        original_builder = authority._registered_child_input_snapshot_from_state
+        calls = 0
+
+        def mismatching_builder(
+            state: authority._VerifiedState, /
+        ) -> authority._RegisteredChildInputSnapshot:
+            nonlocal calls
+            calls += 1
+            captured = original_builder(state)
+            if calls == 2:
+                return dataclass_replace(
+                    captured,
+                    scratch_directory=Path(
+                        "/home/ubuntu/gitcode/.t/authority-test/scratch-changed"
+                    ),
+                )
+            return captured
+
+        monkeypatch.setattr(
+            authority,
+            "_registered_child_input_snapshot_from_state",
+            mismatching_builder,
+        )
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="changed across capture",
+        ):
+            authority._registered_child_input_snapshot(capability)
+        assert calls == 2
+        assert capability in authority._FAILED
+
+
 @pytest.mark.parametrize(
     "tamper",
     [

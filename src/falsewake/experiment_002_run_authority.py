@@ -388,6 +388,18 @@ class _IssuedGuard:
 
 
 @dataclass(frozen=True, slots=True)
+class _RegisteredChildInputSnapshot:
+    manifest_path: Path
+    pcm_cache_path: Path
+    pcm_cache_byte_count: int
+    pcm_cache_sha256: str
+    normalization_path: Path
+    normalization_byte_count: int
+    normalization_sha256: str
+    scratch_directory: Path
+
+
+@dataclass(frozen=True, slots=True)
 class _RegistrationDocument:
     implementation_commit: str
     import_roots: tuple[str, ...]
@@ -610,6 +622,290 @@ def reverify_verified_run_registration(
             _require_authority_process()
             _FAILED.add(registration)
         raise
+
+
+def _registered_child_input_snapshot(
+    registration: VerifiedRunRegistration, /
+) -> _RegisteredChildInputSnapshot:
+    """Return sealed, authority-owned child inputs without exposing launch state."""
+
+    _require_authority_process()
+    if type(registration) is not VerifiedRunRegistration:
+        raise TypeError("registration must be an exact VerifiedRunRegistration")
+    state = _verified_state(registration)
+    if (
+        type(state.origin_binding) is not _AuthorityOriginBinding
+        or type(state.origin_binding.kind) is not str
+        or state.origin_binding.kind != _SEALED_CHILD_ORIGIN_KIND
+    ):
+        raise Experiment002RunAuthorityError(
+            "registered child inputs require a sealed-child authority"
+        )
+
+    try:
+        reverify_verified_run_registration(registration)
+        if _verified_state(registration) is not state:
+            raise Experiment002RunAuthorityError(
+                "run-registration authority changed before child input capture"
+            )
+
+        first = _registered_child_input_snapshot_from_state(state)
+        _require_registered_child_input_snapshot(first)
+        if _verified_state(registration) is not state:
+            raise Experiment002RunAuthorityError(
+                "run-registration authority changed during child input capture"
+            )
+
+        second = _registered_child_input_snapshot_from_state(state)
+        _require_registered_child_input_snapshot(second)
+        if _verified_state(registration) is not state:
+            raise Experiment002RunAuthorityError(
+                "run-registration authority changed during child input recapture"
+            )
+        if not _registered_child_input_snapshots_match(first, second):
+            raise Experiment002RunAuthorityError(
+                "registered child inputs changed across capture"
+            )
+
+        reverify_verified_run_registration(registration)
+        if _verified_state(registration) is not state:
+            raise Experiment002RunAuthorityError(
+                "run-registration authority changed after child input capture"
+            )
+        _require_registered_child_input_snapshot(first)
+        _require_registered_child_input_snapshot(second)
+        if not _registered_child_input_snapshots_match(first, second):
+            raise Experiment002RunAuthorityError(
+                "registered child inputs changed after reverification"
+            )
+        return first
+    except BaseException:
+        with _ISSUED_LOCK:
+            _require_authority_process()
+            _FAILED.add(registration)
+        raise
+
+
+def _registered_child_input_snapshot_from_state(
+    state: _VerifiedState, /
+) -> _RegisteredChildInputSnapshot:
+    _require_verified_state_frame(state)
+    if state.origin_binding.kind != _SEALED_CHILD_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "registered child inputs require a sealed-child authority"
+        )
+
+    document = _parse_registration(state.registration_bytes)
+    if type(document) is not _RegistrationDocument:
+        raise Experiment002RunAuthorityError(
+            "retained child registration has an invalid type"
+        )
+    if (
+        type(document.raw_bytes) is not bytes
+        or document.raw_bytes != state.registration_bytes
+    ):
+        raise Experiment002RunAuthorityError("retained child registration changed")
+
+    external_inputs = _require_external_inputs(document.external_inputs)
+    manifest = _require_exact_object(
+        external_inputs["manifest"],
+        {"inventory_sha256", "path", "record_count", "sha256"},
+        "external manifest",
+    )
+    pcm_cache = _require_exact_object(
+        external_inputs["pcm_cache"],
+        {"byte_count", "path", "sha256"},
+        "external PCM cache",
+    )
+    invocation = _require_invocation_registration(document.invocation, document.runtime)
+    environment = _require_exact_object(
+        invocation["environment"],
+        {
+            "LANG",
+            "LC_ALL",
+            "MKL_DYNAMIC",
+            "MKL_NUM_THREADS",
+            "OMP_DYNAMIC",
+            "OMP_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "PYTHONDONTWRITEBYTECODE",
+            "PYTHONHASHSEED",
+            "PYTHONNOUSERSITE",
+            "TMPDIR",
+            "TZ",
+        },
+        "invocation environment",
+    )
+
+    normalization = _registered_normalization_binding(state.frozen_blobs)
+    snapshot = _RegisteredChildInputSnapshot(
+        manifest_path=_registered_external_path(manifest["path"], "manifest path"),
+        pcm_cache_path=_registered_external_path(pcm_cache["path"], "PCM cache path"),
+        pcm_cache_byte_count=cast(int, pcm_cache["byte_count"]),
+        pcm_cache_sha256=cast(str, pcm_cache["sha256"]),
+        normalization_path=normalization[0],
+        normalization_byte_count=normalization[1],
+        normalization_sha256=normalization[2],
+        scratch_directory=_registered_external_path(environment["TMPDIR"], "TMPDIR"),
+    )
+    _require_registered_child_input_snapshot(snapshot)
+    return snapshot
+
+
+def _registered_normalization_binding(
+    frozen_blobs: tuple[_FrozenBlob, ...], /
+) -> tuple[Path, int, str]:
+    _require_frozen_blob_sequence(frozen_blobs)
+    bindings = _expected_frozen_bindings()
+    artifacts = _require_exact_object(
+        bindings["artifacts"],
+        {"normalization", "normalization_report", "pcm_cache", "pcm_cache_report"},
+        "frozen artifact bindings",
+    )
+    normalization = _require_exact_object(
+        artifacts["normalization"],
+        {"byte_count", "path", "sha256"},
+        "normalization binding",
+    )
+    relative_path = _require_relative_path(normalization["path"], "normalization path")
+    byte_count = normalization["byte_count"]
+    sha256 = _require_hex(
+        normalization["sha256"], length=64, name="normalization sha256"
+    )
+    if type(byte_count) is not int or byte_count < 0:
+        raise Experiment002RunAuthorityError("normalization byte count is invalid")
+    matching = tuple(blob for blob in frozen_blobs if blob.path == relative_path)
+    if len(matching) != 1:
+        raise Experiment002RunAuthorityError(
+            "retained normalization artifact is not unique"
+        )
+    retained = matching[0]
+    if (
+        len(retained.payload) != byte_count
+        or hashlib.sha256(retained.payload).hexdigest() != sha256
+    ):
+        raise Experiment002RunAuthorityError("retained normalization artifact changed")
+    if type(_CANONICAL_REPOSITORY_ROOT) is not _PATH_TYPE:
+        raise Experiment002RunAuthorityError(
+            "canonical repository root has an invalid type"
+        )
+    path = _CANONICAL_REPOSITORY_ROOT / relative_path
+    if type(path) is not _PATH_TYPE:
+        raise Experiment002RunAuthorityError(
+            "normalization path has an invalid pathlib type"
+        )
+    return path, byte_count, sha256
+
+
+def _registered_external_path(value: object, name: str, /) -> Path:
+    registered = _require_external_path(value, name)
+    path = Path(registered)
+    if type(path) is not _PATH_TYPE or path.as_posix() != registered:
+        raise Experiment002RunAuthorityError(
+            f"{name} did not produce an exact registered pathlib path"
+        )
+    return path
+
+
+def _require_registered_child_input_snapshot(
+    snapshot: _RegisteredChildInputSnapshot, /
+) -> None:
+    if type(snapshot) is not _RegisteredChildInputSnapshot:
+        raise Experiment002RunAuthorityError(
+            "registered child input snapshot has an invalid type"
+        )
+    path_fields = (
+        (snapshot.manifest_path, "manifest path"),
+        (snapshot.pcm_cache_path, "PCM cache path"),
+        (snapshot.normalization_path, "normalization path"),
+        (snapshot.scratch_directory, "scratch directory"),
+    )
+    if any(type(path) is not _PATH_TYPE for path, _name in path_fields):
+        raise Experiment002RunAuthorityError(
+            "registered child input path has an invalid pathlib type"
+        )
+    _require_external_path(snapshot.manifest_path.as_posix(), "manifest path")
+    _require_external_path(snapshot.pcm_cache_path.as_posix(), "PCM cache path")
+    _require_external_path(snapshot.scratch_directory.as_posix(), "TMPDIR")
+
+    bindings = _expected_frozen_bindings()
+    artifacts = _require_exact_object(
+        bindings["artifacts"],
+        {"normalization", "normalization_report", "pcm_cache", "pcm_cache_report"},
+        "frozen artifact bindings",
+    )
+    expected_pcm = _require_exact_object(
+        artifacts["pcm_cache"], {"byte_count", "sha256"}, "PCM cache binding"
+    )
+    expected_normalization = _require_exact_object(
+        artifacts["normalization"],
+        {"byte_count", "path", "sha256"},
+        "normalization binding",
+    )
+    if (
+        type(snapshot.pcm_cache_byte_count) is not int
+        or type(snapshot.pcm_cache_sha256) is not str
+        or type(snapshot.normalization_byte_count) is not int
+        or type(snapshot.normalization_sha256) is not str
+    ):
+        raise Experiment002RunAuthorityError(
+            "registered child input identity has an invalid scalar type"
+        )
+    _require_exact_scalar(
+        snapshot.pcm_cache_byte_count,
+        expected_pcm["byte_count"],
+        "PCM cache byte count",
+    )
+    _require_exact_scalar(
+        snapshot.pcm_cache_sha256,
+        expected_pcm["sha256"],
+        "PCM cache sha256",
+    )
+    _require_exact_scalar(
+        snapshot.normalization_byte_count,
+        expected_normalization["byte_count"],
+        "normalization byte count",
+    )
+    _require_exact_scalar(
+        snapshot.normalization_sha256,
+        expected_normalization["sha256"],
+        "normalization sha256",
+    )
+    relative_normalization = _require_relative_path(
+        expected_normalization["path"], "normalization path"
+    )
+    if type(_CANONICAL_REPOSITORY_ROOT) is not _PATH_TYPE:
+        raise Experiment002RunAuthorityError(
+            "canonical repository root has an invalid type"
+        )
+    expected_normalization_path = _CANONICAL_REPOSITORY_ROOT / relative_normalization
+    if (
+        type(expected_normalization_path) is not _PATH_TYPE
+        or snapshot.normalization_path != expected_normalization_path
+    ):
+        raise Experiment002RunAuthorityError("registered normalization path changed")
+
+
+def _registered_child_input_snapshots_match(
+    left: _RegisteredChildInputSnapshot,
+    right: _RegisteredChildInputSnapshot,
+    /,
+) -> bool:
+    try:
+        _require_registered_child_input_snapshot(left)
+        _require_registered_child_input_snapshot(right)
+    except (TypeError, Experiment002RunAuthorityError):
+        return False
+    return (
+        left.manifest_path == right.manifest_path
+        and left.pcm_cache_path == right.pcm_cache_path
+        and left.pcm_cache_byte_count == right.pcm_cache_byte_count
+        and left.pcm_cache_sha256 == right.pcm_cache_sha256
+        and left.normalization_path == right.normalization_path
+        and left.normalization_byte_count == right.normalization_byte_count
+        and left.normalization_sha256 == right.normalization_sha256
+        and left.scratch_directory == right.scratch_directory
+    )
 
 
 def _create_sealed_experiment_002_child_bundle_fd(
