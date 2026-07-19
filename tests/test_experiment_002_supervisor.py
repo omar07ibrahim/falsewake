@@ -562,6 +562,7 @@ def test_source_uses_only_stdlib_and_fixed_child_result_authority() -> None:
         "stat",
         "threading",
         "time",
+        "types",
         "typing",
     }
     source = SOURCE_PATH.read_text(encoding="utf-8")
@@ -588,6 +589,100 @@ def test_supervise_routes_require_exact_positional_result_binding(
         child_result.ChildResultBinding,
         "ChildResultBinding",
     }
+
+
+def test_registered_supervisor_wrapper_has_exact_closure_bound_surface() -> None:
+    route = supervisor._supervise_registered_child
+    signature = inspect.signature(route)
+    parameters = tuple(signature.parameters.values())
+    assert [parameter.name for parameter in parameters] == [
+        "cpu_ids",
+        "activation_callback",
+        "source_bundle_fd",
+        "result_binding",
+    ]
+    assert all(
+        parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+        and parameter.default is inspect.Parameter.empty
+        for parameter in parameters
+    )
+    assert route.__defaults__ is None
+    assert route.__kwdefaults__ is None
+    assert route.__name__ == "_supervise_registered_child"
+    assert route.__module__ == supervisor.__name__
+    closure = {
+        name: cell.cell_contents
+        for name, cell in zip(
+            route.__code__.co_freevars,
+            route.__closure__ or (),
+            strict=True,
+        )
+    }
+    assert closure["supervise"] is supervisor._supervise_child
+    assert closure["plan"] is supervisor._REGISTERED_PLAN
+    assert closure["limits"] is supervisor._REGISTERED_LIMITS
+    assert closure["kernel"] is supervisor._REAL_KERNEL
+
+
+@pytest.mark.parametrize("mutation", ["plan", "limits", "kwdefaults"])
+def test_registered_supervisor_wrapper_rejects_mutable_authority_spoofs(
+    mutation: str,
+) -> None:
+    plan = supervisor._REGISTERED_PLAN
+    limits = supervisor._REGISTERED_LIMITS
+    keyword_defaults = supervisor._supervise_child.__kwdefaults__
+    assert keyword_defaults is not None
+    original: object
+    if mutation == "plan":
+        original = plan.runner_path
+        object.__setattr__(plan, "runner_path", "/tmp/forged-runner.py")
+    elif mutation == "limits":
+        original = limits.wall_nanoseconds
+        object.__setattr__(limits, "wall_nanoseconds", 10**30)
+    else:
+        original = keyword_defaults["plan"]
+        keyword_defaults["plan"] = object()
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="authority|plan|limits",
+        ):
+            supervisor._supervise_registered_child(
+                (0, 1),
+                lambda _channel, _pid: None,
+                -1,
+                _DEFAULT_RESULT_CASE.binding,
+            )
+    finally:
+        if mutation == "plan":
+            object.__setattr__(plan, "runner_path", original)
+        elif mutation == "limits":
+            object.__setattr__(limits, "wall_nanoseconds", original)
+        else:
+            keyword_defaults["plan"] = original
+
+
+def test_registered_supervisor_wrapper_rejects_pre_call_route_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replacement_calls: list[object] = []
+
+    def replacement(*_args: object, **_kwargs: object) -> object:
+        replacement_calls.append(object())
+        return object()
+
+    monkeypatch.setattr(supervisor, "_supervise_child", replacement)
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="executable authority changed",
+    ):
+        supervisor._supervise_registered_child(
+            (0, 1),
+            lambda _channel, _pid: None,
+            -1,
+            _DEFAULT_RESULT_CASE.binding,
+        )
+    assert replacement_calls == []
 
 
 def test_registered_production_constants_are_exact() -> None:

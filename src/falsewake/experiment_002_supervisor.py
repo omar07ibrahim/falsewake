@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from types import MemberDescriptorType
 from typing import Final, NoReturn, Protocol, cast
 
 from falsewake.experiment_002_child_result import (
@@ -3280,6 +3281,158 @@ def _supervise_child(
     if result is None:
         _fail("supervision completed without an exact child result")
     return result
+
+
+def _make_supervise_registered_child() -> Callable[..., _SupervisedChildResult]:
+    module_globals = globals()
+    exact_type = type
+    base_exception_type = BaseException
+    error_type = Experiment002SupervisorError
+    supervise = _supervise_child
+    supervise_code = supervise.__code__
+    supervise_defaults = supervise.__defaults__
+    supervise_keyword_defaults = supervise.__kwdefaults__
+    if supervise_keyword_defaults is None:
+        raise RuntimeError("registered supervisor defaults are unavailable")
+    supervise_keyword_names = tuple(sorted(supervise_keyword_defaults))
+    supervise_keyword_values = tuple(
+        supervise_keyword_defaults[name] for name in supervise_keyword_names
+    )
+    supervise_closure = supervise.__closure__
+    plan = _REGISTERED_PLAN
+    limits = _REGISTERED_LIMITS
+    kernel = _REAL_KERNEL
+    plan_type = _LaunchPlan
+    limits_type = _Limits
+    plan_field_names = (
+        "repository_root",
+        "temporary_root",
+        "scratch_root",
+        "staging_root",
+        "taskset_executable",
+        "python_executable",
+        "runner_entrypoint",
+        "runner_path",
+        "environment_items",
+    )
+    limits_field_names = (
+        "wall_nanoseconds",
+        "rss_bytes",
+        "output_bytes",
+        "poll_nanoseconds",
+    )
+    plan_namespace = plan_type.__dict__
+    limits_namespace = limits_type.__dict__
+    plan_descriptors = tuple(plan_namespace.get(name) for name in plan_field_names)
+    limits_descriptors = tuple(
+        limits_namespace.get(name) for name in limits_field_names
+    )
+    if any(
+        exact_type(descriptor) is not MemberDescriptorType
+        for descriptor in (*plan_descriptors, *limits_descriptors)
+    ):
+        raise RuntimeError("registered supervisor slot authority is unavailable")
+    typed_plan_descriptors = cast(
+        tuple[MemberDescriptorType, ...],
+        plan_descriptors,
+    )
+    typed_limits_descriptors = cast(
+        tuple[MemberDescriptorType, ...],
+        limits_descriptors,
+    )
+    plan_frame = tuple(
+        descriptor.__get__(plan, plan_type) for descriptor in typed_plan_descriptors
+    )
+    limits_frame = tuple(
+        descriptor.__get__(limits, limits_type)
+        for descriptor in typed_limits_descriptors
+    )
+
+    def require_registered_authority(
+        current_supervise: object,
+        current_plan: object,
+        current_limits: object,
+        current_kernel: object,
+        /,
+    ) -> None:
+        if (
+            current_supervise is not supervise
+            or current_plan is not plan
+            or current_limits is not limits
+            or current_kernel is not kernel
+            or module_globals.get("_supervise_child") is not supervise
+            or module_globals.get("_REGISTERED_PLAN") is not plan
+            or module_globals.get("_REGISTERED_LIMITS") is not limits
+            or module_globals.get("_REAL_KERNEL") is not kernel
+            or supervise.__code__ is not supervise_code
+            or supervise.__defaults__ is not supervise_defaults
+            or supervise.__kwdefaults__ is not supervise_keyword_defaults
+            or supervise.__closure__ is not supervise_closure
+            or tuple(sorted(supervise_keyword_defaults)) != supervise_keyword_names
+            or any(
+                supervise_keyword_defaults[name] is not supervise_keyword_values[index]
+                for index, name in enumerate(supervise_keyword_names)
+            )
+        ):
+            raise error_type("registered supervisor executable authority changed")
+        if any(
+            plan_type.__dict__.get(name) is not typed_plan_descriptors[index]
+            for index, name in enumerate(plan_field_names)
+        ) or any(
+            limits_type.__dict__.get(name) is not typed_limits_descriptors[index]
+            for index, name in enumerate(limits_field_names)
+        ):
+            raise error_type("registered supervisor class authority changed")
+        current_plan_frame = tuple(
+            descriptor.__get__(plan, plan_type) for descriptor in typed_plan_descriptors
+        )
+        current_limits_frame = tuple(
+            descriptor.__get__(limits, limits_type)
+            for descriptor in typed_limits_descriptors
+        )
+        if any(
+            current_plan_frame[index] is not plan_frame[index]
+            for index in range(len(plan_frame))
+        ) or any(
+            current_limits_frame[index] is not limits_frame[index]
+            for index in range(len(limits_frame))
+        ):
+            raise error_type("registered supervisor plan or limits changed")
+
+    def _supervise_registered_child(
+        cpu_ids: tuple[int, int],
+        activation_callback: _Activation,
+        source_bundle_fd: int,
+        result_binding: ChildResultBinding,
+        /,
+    ) -> _SupervisedChildResult:
+        require_registered_authority(supervise, plan, limits, kernel)
+        try:
+            result = supervise(
+                cpu_ids,
+                activation_callback,
+                source_bundle_fd,
+                result_binding,
+                plan=plan,
+                limits=limits,
+                kernel=kernel,
+            )
+        except base_exception_type as primary:
+            try:
+                require_registered_authority(supervise, plan, limits, kernel)
+            except base_exception_type:
+                raise error_type(
+                    "registered supervision failed after its authority changed"
+                ) from primary
+            raise
+        require_registered_authority(supervise, plan, limits, kernel)
+        return result
+
+    return _supervise_registered_child
+
+
+_supervise_registered_child = _make_supervise_registered_child()
+del _make_supervise_registered_child
 
 
 def _capture_registered_cpu_ids() -> tuple[int, int]:

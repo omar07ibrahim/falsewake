@@ -5,6 +5,7 @@ import ast
 import copy
 import errno
 import fcntl
+import hashlib
 import importlib
 import inspect
 import itertools
@@ -21,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -60,21 +61,24 @@ def isolated_coordinator_state(monkeypatch: pytest.MonkeyPatch) -> None:
 def synthetic_registration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> coordinator.VerifiedRunRegistration:
-    registration = object.__new__(coordinator.VerifiedRunRegistration)
-
-    def verify(value: coordinator.VerifiedRunRegistration) -> None:
-        if type(value) is not coordinator.VerifiedRunRegistration:
-            raise TypeError("not an exact synthetic registration")
-
-    def binding(
-        value: coordinator.VerifiedRunRegistration,
-    ) -> coordinator._RegistrationBinding:
-        verify(value)
-        return TEST_BINDING
-
-    monkeypatch.setattr(coordinator, "verify_verified_run_registration", verify)
-    monkeypatch.setattr(coordinator, "_registration_binding", binding)
-    return registration
+    monkeypatch.setattr(authority, "_ISSUED", weakref.WeakKeyDictionary())
+    monkeypatch.setattr(authority, "_ISSUED_GUARDS", weakref.WeakKeyDictionary())
+    monkeypatch.setattr(authority, "_FAILED", weakref.WeakSet())
+    monkeypatch.setattr(authority, "_ISSUANCE_COMPLETE", False)
+    monkeypatch.setattr(
+        authority,
+        "reverify_verified_run_registration",
+        lambda _registration: None,
+    )
+    snapshot = authority._RepositorySnapshot(
+        repository_root=PROJECT_ROOT,
+        head_commit=TEST_BINDING.head_commit,
+        implementation_commit=TEST_BINDING.implementation_commit,
+        registration_sha256=TEST_BINDING.registration_sha256,
+        source_bundle_sha256=TEST_BINDING.source_bundle_sha256,
+        source_paths=("src/falsewake/experiment_002_run_authority.py",),
+    )
+    return authority._issue_controlled_snapshot_for_tests(snapshot)
 
 
 type _SyntheticActivation = Callable[[socket.socket, int], None]
@@ -82,6 +86,89 @@ type _SyntheticSupervisorBehavior = Callable[
     [tuple[int, int], _SyntheticActivation, int, object],
     object,
 ]
+type _SyntheticSnapshotBehavior = Callable[[object], object]
+
+
+def _complete_synthetic_parent_activation(
+    activation: _SyntheticActivation,
+    registration: coordinator.VerifiedRunRegistration,
+    role: str,
+    seed: int,
+    activations: list[
+        tuple[
+            socket.socket,
+            coordinator.VerifiedRunRegistration,
+            str,
+            int,
+            int,
+        ]
+    ],
+    /,
+) -> int:
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    child_pid = _fork()
+    if child_pid == 0:
+        try:
+            parent.close()
+            packet, _credentials = coordinator._receive_packet(child)
+            ticket = coordinator._decode_packet(packet)
+            acknowledgement = {
+                "child_pid": ticket["child_pid"],
+                "kind": "activation_ack",
+                "nonce": ticket["nonce"],
+                "ordinal": ticket["ordinal"],
+                "parent_pid": ticket["parent_pid"],
+                "role": ticket["role"],
+                "schema_version": ticket["schema_version"],
+                "seed": ticket["seed"],
+                "status": "accepted",
+                "ticket_sha256": coordinator._ticket_sha256(packet),
+            }
+            coordinator._send_packet(
+                child,
+                coordinator._encode_packet(acknowledgement),
+            )
+            child.close()
+            os._exit(0)
+        except BaseException:
+            os._exit(91)
+    child.close()
+    try:
+        try:
+            activation(parent, child_pid)
+        except BaseException:
+            waited_pid, status = os.waitpid(child_pid, 0)
+            if (
+                waited_pid == child_pid
+                and os.WIFEXITED(status)
+                and os.WEXITSTATUS(status) == 0
+            ):
+                activations.append((parent, registration, role, seed, child_pid))
+            raise
+        activations.append((parent, registration, role, seed, child_pid))
+        _wait_success(child_pid)
+    finally:
+        parent.close()
+    return child_pid
+
+
+def _fail_synthetic_parent_activation(
+    activation: _SyntheticActivation,
+    /,
+) -> int:
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    child_pid = _fork()
+    if child_pid == 0:
+        parent.close()
+        child.close()
+        os._exit(0)
+    child.close()
+    try:
+        activation(parent, child_pid)
+    finally:
+        parent.close()
+        _wait_success(child_pid)
+    return child_pid
 
 
 @dataclass(slots=True)
@@ -92,6 +179,7 @@ class _SyntheticParentHarness:
     verified_result_type: type[Any]
     supervised_result_type: type[Any]
     behavior: list[_SyntheticSupervisorBehavior]
+    snapshot_behavior: list[_SyntheticSnapshotBehavior]
     imports: list[str]
     calls: list[tuple[tuple[int, int], _SyntheticActivation, int, object]]
     activations: list[
@@ -105,6 +193,7 @@ class _SyntheticParentHarness:
     ]
     binding_frames: list[tuple[str, int, int, str, str, str, str]]
     verification_calls: list[object]
+    snapshot_calls: list[object]
 
 
 def _set_route_identity(value: Any, name: str, module_name: str) -> None:
@@ -132,36 +221,17 @@ def _install_synthetic_parent_execution(
     ] = []
     binding_frames: list[tuple[str, int, int, str, str, str, str]] = []
     verification_calls: list[object] = []
+    snapshot_calls: list[object] = []
 
+    @dataclass(frozen=True, slots=True)
     class SyntheticChildResultBinding:
-        def __init__(
-            self,
-            *,
-            role: str,
-            ordinal: int,
-            seed: int,
-            registration_head_commit: str,
-            implementation_commit: str,
-            registration_sha256: str,
-            source_bundle_sha256: str,
-        ) -> None:
-            frame = (
-                role,
-                ordinal,
-                seed,
-                registration_head_commit,
-                implementation_commit,
-                registration_sha256,
-                source_bundle_sha256,
-            )
-            binding_frames.append(frame)
-            self.role = role
-            self.ordinal = ordinal
-            self.seed = seed
-            self.registration_head_commit = registration_head_commit
-            self.implementation_commit = implementation_commit
-            self.registration_sha256 = registration_sha256
-            self.source_bundle_sha256 = source_bundle_sha256
+        role: str
+        ordinal: int
+        seed: int
+        registration_head_commit: str
+        implementation_commit: str
+        registration_sha256: str
+        source_bundle_sha256: str
 
     _set_route_identity(
         SyntheticChildResultBinding,
@@ -227,23 +297,14 @@ def _install_synthetic_parent_execution(
         coordinator._CHILD_RESULT_MODULE,
     )
 
+    @dataclass(frozen=True, slots=True)
     class SyntheticSupervisedChildResult:
-        def __init__(
-            self,
-            *,
-            pid: int,
-            cpu_ids: tuple[int, int],
-            elapsed_nanoseconds: int,
-            maximum_rss_bytes: int,
-            output_and_scratch_bytes: int,
-            verified_child_result: object,
-        ) -> None:
-            self.pid = pid
-            self.cpu_ids = cpu_ids
-            self.elapsed_nanoseconds = elapsed_nanoseconds
-            self.maximum_rss_bytes = maximum_rss_bytes
-            self.output_and_scratch_bytes = output_and_scratch_bytes
-            self.verified_child_result = verified_child_result
+        pid: int
+        cpu_ids: tuple[int, int]
+        elapsed_nanoseconds: int
+        maximum_rss_bytes: int
+        output_and_scratch_bytes: int
+        verified_child_result: object
 
     _set_route_identity(
         SyntheticSupervisedChildResult,
@@ -271,6 +332,54 @@ def _install_synthetic_parent_execution(
         coordinator._CHILD_RESULT_MODULE,
     )
 
+    history_bytes = b'{"synthetic":true}'
+    safetensors_bytes = b"synthetic-safetensors"
+    envelope_bytes = b'{"synthetic-envelope":true}'
+
+    def default_snapshot(result: object, /) -> object:
+        if type(result) is not SyntheticVerifiedChildResult:
+            raise TypeError("not an exact synthetic verified child result")
+        binding = cast(Any, result)._binding
+        return (
+            binding.role,
+            binding.ordinal,
+            binding.seed,
+            binding.registration_head_commit,
+            binding.implementation_commit,
+            binding.registration_sha256,
+            binding.source_bundle_sha256,
+            history_bytes,
+            len(history_bytes),
+            hashlib.sha256(
+                b"falsewake-exp002-history-v1\0" + history_bytes
+            ).hexdigest(),
+            safetensors_bytes,
+            len(safetensors_bytes),
+            hashlib.sha256(safetensors_bytes).hexdigest(),
+            envelope_bytes,
+            len(envelope_bytes),
+            hashlib.sha256(
+                b"falsewake-exp002-child-result-envelope-v1\0" + envelope_bytes
+            ).hexdigest(),
+            7,
+            3,
+            4,
+            (0.5).hex(),
+            "5" * 64,
+        )
+
+    snapshot_behavior: list[_SyntheticSnapshotBehavior] = [default_snapshot]
+
+    def snapshot_verified_child_result(result: object, /) -> object:
+        snapshot_calls.append(result)
+        return snapshot_behavior[0](result)
+
+    _set_route_identity(
+        snapshot_verified_child_result,
+        coordinator._CHILD_RESULT_SNAPSHOTTER_FUNCTION,
+        coordinator._CHILD_RESULT_MODULE,
+    )
+
     def default_behavior(
         cpu_ids: tuple[int, int],
         activation: _SyntheticActivation,
@@ -279,13 +388,13 @@ def _install_synthetic_parent_execution(
     ) -> object:
         if type(binding) is not SyntheticChildResultBinding:
             raise TypeError("not an exact synthetic child-result binding")
-        child_pid = os.getpid() + 100_000
-        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        try:
-            activation(parent, child_pid)
-        finally:
-            parent.close()
-            child.close()
+        child_pid = _complete_synthetic_parent_activation(
+            activation,
+            registration,
+            binding.role,
+            binding.seed,
+            activations,
+        )
         verified = SyntheticVerifiedChildResult(binding)
         return SyntheticSupervisedChildResult(
             pid=child_pid,
@@ -298,18 +407,76 @@ def _install_synthetic_parent_execution(
 
     behavior: list[_SyntheticSupervisorBehavior] = [default_behavior]
 
+    registered_plan = object()
+    registered_limits = object()
+    real_kernel = object()
+
     def supervise_child(
         cpu_ids: tuple[int, int],
         activation: _SyntheticActivation,
         source_bundle_fd: int,
         binding: object,
         /,
+        *,
+        plan: object = registered_plan,
+        limits: object = registered_limits,
+        kernel: object = real_kernel,
     ) -> object:
+        if (
+            plan is not registered_plan
+            or limits is not registered_limits
+            or kernel is not real_kernel
+        ):
+            raise AssertionError("synthetic supervisor authority changed")
+        if type(binding) is SyntheticChildResultBinding:
+            binding_frames.append(
+                (
+                    binding.role,
+                    binding.ordinal,
+                    binding.seed,
+                    binding.registration_head_commit,
+                    binding.implementation_commit,
+                    binding.registration_sha256,
+                    binding.source_bundle_sha256,
+                )
+            )
         calls.append((cpu_ids, activation, source_bundle_fd, binding))
         return behavior[0](cpu_ids, activation, source_bundle_fd, binding)
 
     _set_route_identity(
         supervise_child,
+        coordinator._INJECTABLE_SUPERVISE_CHILD_FUNCTION,
+        coordinator._SUPERVISOR_MODULE,
+    )
+
+    def make_registered_supervisor() -> FunctionType:
+        supervise = supervise_child
+        plan = registered_plan
+        limits = registered_limits
+        kernel = real_kernel
+
+        def supervise_registered_child(
+            cpu_ids: tuple[int, int],
+            activation: _SyntheticActivation,
+            source_bundle_fd: int,
+            binding: object,
+            /,
+        ) -> object:
+            return supervise(
+                cpu_ids,
+                activation,
+                source_bundle_fd,
+                binding,
+                plan=plan,
+                limits=limits,
+                kernel=kernel,
+            )
+
+        return cast(FunctionType, supervise_registered_child)
+
+    supervise_registered_child = make_registered_supervisor()
+    _set_route_identity(
+        supervise_registered_child,
         coordinator._SUPERVISE_CHILD_FUNCTION,
         coordinator._SUPERVISOR_MODULE,
     )
@@ -335,10 +502,27 @@ def _install_synthetic_parent_execution(
         verify_verified_child_result,
     )
     setattr(
+        child_result_module,
+        coordinator._CHILD_RESULT_SNAPSHOTTER,
+        snapshot_verified_child_result,
+    )
+    setattr(
         supervisor_module,
         coordinator._SUPERVISE_CHILD_FUNCTION,
+        supervise_registered_child,
+    )
+    setattr(
+        supervisor_module,
+        coordinator._INJECTABLE_SUPERVISE_CHILD_FUNCTION,
         supervise_child,
     )
+    setattr(supervisor_module, coordinator._REGISTERED_SUPERVISOR_PLAN, registered_plan)
+    setattr(
+        supervisor_module,
+        coordinator._REGISTERED_SUPERVISOR_LIMITS,
+        registered_limits,
+    )
+    setattr(supervisor_module, coordinator._REGISTERED_SUPERVISOR_KERNEL, real_kernel)
     setattr(
         supervisor_module,
         coordinator._SUPERVISED_CHILD_RESULT_TYPE,
@@ -362,21 +546,6 @@ def _install_synthetic_parent_execution(
 
     monkeypatch.setattr(importlib, "import_module", dynamic_import)
 
-    def parent_activate_child(
-        channel: socket.socket,
-        supplied_registration: coordinator.VerifiedRunRegistration,
-        *,
-        role: str,
-        seed: int,
-        child_pid: int,
-    ) -> None:
-        if type(channel) is not socket.socket:
-            raise TypeError("synthetic activation channel is not an exact socket")
-        if supplied_registration is not registration:
-            raise AssertionError("synthetic activation registration changed")
-        activations.append((channel, supplied_registration, role, seed, child_pid))
-
-    monkeypatch.setattr(coordinator, "_parent_activate_child", parent_activate_child)
     return _SyntheticParentHarness(
         supervisor_module=supervisor_module,
         child_result_module=child_result_module,
@@ -384,11 +553,13 @@ def _install_synthetic_parent_execution(
         verified_result_type=SyntheticVerifiedChildResult,
         supervised_result_type=SyntheticSupervisedChildResult,
         behavior=behavior,
+        snapshot_behavior=snapshot_behavior,
         imports=imports,
         calls=calls,
         activations=activations,
         binding_frames=binding_frames,
         verification_calls=verification_calls,
+        snapshot_calls=snapshot_calls,
     )
 
 
@@ -490,6 +661,19 @@ def _fork() -> int:
         return os.fork()
 
 
+def _install_forked_synthetic_registration_authority() -> None:
+    synthetic_state = SimpleNamespace(
+        head_commit=TEST_BINDING.head_commit,
+        implementation_commit=TEST_BINDING.implementation_commit,
+        registration_sha256=TEST_BINDING.registration_sha256,
+        source_bundle_sha256=TEST_BINDING.source_bundle_sha256,
+    )
+    mutable_authority = cast(Any, authority)
+    mutable_authority._AUTHORITY_PROCESS_ID = os.getpid()
+    mutable_authority.reverify_verified_run_registration = lambda _registration: None
+    mutable_authority._verified_state = lambda _registration: synthetic_state
+
+
 def _fork_fixed_fd_round_trip(
     registration: coordinator.VerifiedRunRegistration,
     *,
@@ -504,6 +688,7 @@ def _fork_fixed_fd_round_trip(
     pid = _fork()
     if pid == 0:
         try:
+            _install_forked_synthetic_registration_authority()
             parent_channel.close()
             child_fd = child_channel.fileno()
             if child_fd == coordinator._CHILD_CONTROL_FD:
@@ -615,6 +800,7 @@ def _fork_guarded_route_failure(
     pid = _fork()
     if pid == 0:
         try:
+            _install_forked_synthetic_registration_authority()
             parent_channel.close()
             child_fd = child_channel.fileno()
             inheritable = stage == "inheritable"
@@ -826,7 +1012,6 @@ def test_module_imports_only_stdlib_and_run_authority() -> None:
         "errno",
         "falsewake.experiment_002_run_authority",
         "fcntl",
-        "fractions",
         "hashlib",
         "importlib",
         "json",
@@ -897,6 +1082,7 @@ def test_real_parent_execution_routes_claim_in_an_isolated_process() -> None:
             'supervise_child': routes[2].__name__,
             'binding_type': routes[4].__name__,
             'result_type': routes[5].__name__,
+            'snapshot_result': routes[8].__name__,
         }}, sort_keys=True))
         """
     )
@@ -912,6 +1098,7 @@ def test_real_parent_execution_routes_claim_in_an_isolated_process() -> None:
         "binding_type": coordinator._CHILD_RESULT_BINDING_TYPE,
         "child_result": coordinator._CHILD_RESULT_MODULE,
         "result_type": coordinator._VERIFIED_CHILD_RESULT_TYPE,
+        "snapshot_result": coordinator._CHILD_RESULT_SNAPSHOTTER_FUNCTION,
         "supervise_child": coordinator._SUPERVISE_CHILD_FUNCTION,
         "supervisor": coordinator._SUPERVISOR_MODULE,
     }
@@ -995,25 +1182,17 @@ def test_full_guarded_fd3_route_uses_real_process_guard_in_fresh_subprocess() ->
 
         sys.path.insert(0, {os.fspath(SOURCE_ROOT)!r})
         import falsewake.experiment_002_coordinator as coordinator
+        import falsewake.experiment_002_run_authority as authority
 
-        registration = object.__new__(coordinator.VerifiedRunRegistration)
-        binding = coordinator._RegistrationBinding(
+        authority.reverify_verified_run_registration = lambda _registration: None
+        synthetic_state = SimpleNamespace(
             head_commit='1' * 40,
             implementation_commit='2' * 40,
             registration_sha256='3' * 64,
             source_bundle_sha256='4' * 64,
         )
-
-        def verify_registration(value):
-            if type(value) is not coordinator.VerifiedRunRegistration:
-                raise TypeError('synthetic registration type changed')
-
-        def registration_binding(value):
-            verify_registration(value)
-            return binding
-
-        coordinator.verify_verified_run_registration = verify_registration
-        coordinator._registration_binding = registration_binding
+        authority._verified_state = lambda _registration: synthetic_state
+        registration = object.__new__(coordinator.VerifiedRunRegistration)
         parent_channel, child_channel = socket.socketpair(
             socket.AF_UNIX,
             socket.SOCK_SEQPACKET,
@@ -1021,6 +1200,7 @@ def test_full_guarded_fd3_route_uses_real_process_guard_in_fresh_subprocess() ->
         child_pid = os.fork()
         if child_pid == 0:
             try:
+                authority._AUTHORITY_PROCESS_ID = os.getpid()
                 parent_channel.close()
                 child_fd = child_channel.fileno()
                 if child_fd == coordinator._CHILD_CONTROL_FD:
@@ -1208,15 +1388,23 @@ def test_private_parent_child_happy_path_snapshots_exact_authorities_and_borrows
         elapsed_nanoseconds,
         maximum_rss_bytes,
         output_and_scratch_bytes,
-        verified_child_result,
+        verified_child_snapshot,
     ) = result
-    assert result_pid == os.getpid() + 100_000
+    assert result_pid > 0
+    assert result_pid != os.getpid()
     assert result_cpu_ids == cpu_ids
     assert elapsed_nanoseconds == 11
     assert maximum_rss_bytes == 12
     assert output_and_scratch_bytes == 13
-    assert verified_child_result.seed == assignment.seed
-    assert verified_child_result.winner_macro_f1 == Fraction(3, 4)
+    assert type(verified_child_snapshot) is tuple
+    assert len(verified_child_snapshot) == 21
+    assert verified_child_snapshot[:3] == (
+        assignment.role,
+        assignment.ordinal,
+        assignment.seed,
+    )
+    assert verified_child_snapshot[17:19] == (3, 4)
+    assert verified_child_snapshot[19] == (0.5).hex()
     assert harness.imports == [
         coordinator._SUPERVISOR_MODULE,
         coordinator._CHILD_RESULT_MODULE,
@@ -1244,10 +1432,10 @@ def test_private_parent_child_happy_path_snapshots_exact_authorities_and_borrows
         assignment.seed,
         result_pid,
     )
-    assert harness.verification_calls == [
-        verified_child_result,
-        verified_child_result,
-    ]
+    assert len(harness.snapshot_calls) == 2
+    assert harness.snapshot_calls[0] is harness.snapshot_calls[1]
+    assert harness.verification_calls == [harness.snapshot_calls[0]]
+    assert all(value is not harness.snapshot_calls[0] for value in result)
     assert (after.st_dev, after.st_ino, after.st_size) == (
         before.st_dev,
         before.st_ino,
@@ -1288,8 +1476,8 @@ def test_parent_child_uses_detached_assignment_after_caller_object_mutation(
         (2, 7),
         91,
     )
-    assert result[5].seed == coordinator.REGISTERED_SEEDS[0]
-    assert result[5].ordinal == 0
+    assert result[5][2] == coordinator.REGISTERED_SEEDS[0]
+    assert result[5][1] == 0
     assert harness.activations[0][3] == coordinator.REGISTERED_SEEDS[0]
 
 
@@ -1336,8 +1524,8 @@ def test_parent_child_input_snapshot_authority_ignores_pre_call_route_replacemen
         91,
     )
     assert result[1] == (2, 7)
-    assert result[5].seed == coordinator.REGISTERED_SEEDS[0]
-    assert result[5].ordinal == 0
+    assert result[5][2] == coordinator.REGISTERED_SEEDS[0]
+    assert result[5][1] == 0
     assert harness.calls[0][0] == (2, 7)
     assert harness.activations[0][3] == coordinator.REGISTERED_SEEDS[0]
 
@@ -1481,6 +1669,9 @@ def test_parent_child_rejects_invalid_exact_inputs_before_dynamic_import(
         "result_type_module",
         "child_binding_alias",
         "child_loader_alias",
+        "child_snapshot_type",
+        "child_snapshot_name",
+        "child_snapshot_module",
     ],
 )
 def test_parent_execution_route_claim_rejects_spoofed_exact_identities(
@@ -1531,7 +1722,7 @@ def test_parent_execution_route_claim_rejects_spoofed_exact_identities(
             coordinator._CHILD_RESULT_BINDING_TYPE,
             type("ChildResultBinding", (), {}),
         )
-    else:
+    elif tamper == "child_loader_alias":
 
         def different_loader(_path: object, _binding: object, /) -> object:
             raise AssertionError
@@ -1546,6 +1737,21 @@ def test_parent_execution_route_claim_rejects_spoofed_exact_identities(
             coordinator._CHILD_RESULT_LOADER,
             different_loader,
         )
+    elif tamper == "child_snapshot_type":
+        setattr(
+            harness.child_result_module,
+            coordinator._CHILD_RESULT_SNAPSHOTTER,
+            object(),
+        )
+    else:
+        snapshot_route = getattr(
+            harness.child_result_module,
+            coordinator._CHILD_RESULT_SNAPSHOTTER,
+        )
+        if tamper == "child_snapshot_name":
+            cast(Any, snapshot_route).__name__ = "spoofed_snapshot_route"
+        else:
+            cast(Any, snapshot_route).__module__ = "falsewake.spoofed_child_result"
 
     with pytest.raises(
         coordinator.Experiment002CoordinatorError,
@@ -1563,7 +1769,10 @@ def test_parent_execution_route_claim_rejects_spoofed_exact_identities(
     assert harness.calls == []
 
 
-@pytest.mark.parametrize("mutation", ["module_attribute", "function_metadata"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["module_attribute", "function_metadata", "snapshot_module_attribute"],
+)
 def test_parent_execution_route_mutation_during_supervision_fails_closed(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
@@ -1586,6 +1795,22 @@ def test_parent_execution_route_mutation_during_supervision_fails_closed(
             harness.supervisor_module,
             coordinator._SUPERVISE_CHILD_FUNCTION,
         )
+        if mutation == "snapshot_module_attribute":
+
+            def replacement_snapshot(_result: object, /) -> object:
+                raise AssertionError
+
+            _set_route_identity(
+                replacement_snapshot,
+                coordinator._CHILD_RESULT_SNAPSHOTTER_FUNCTION,
+                coordinator._CHILD_RESULT_MODULE,
+            )
+            setattr(
+                harness.child_result_module,
+                coordinator._CHILD_RESULT_SNAPSHOTTER,
+                replacement_snapshot,
+            )
+            return result
         if mutation == "module_attribute":
 
             def replacement(*_args: object) -> object:
@@ -1656,38 +1881,112 @@ def test_parent_execution_route_mutation_is_a_boundary_failure_on_supervisor_err
     assert type(caught.value.__cause__) is RuntimeError
 
 
-def test_child_result_binding_constructor_must_return_its_exact_dynamic_type(
+@pytest.mark.parametrize(
+    "free_variable",
+    ["verified_state", "verified_truth", "authority_values"],
+)
+def test_real_route_integrity_detects_nested_closure_cell_replacement(
+    free_variable: str,
+) -> None:
+    routes = coordinator._claim_and_verify_parent_execution_routes()
+    integrity_frame = routes[11]
+    matching_cells = [
+        cell_frame
+        for node in integrity_frame
+        for cell_frame in node[11]
+        if cell_frame[1] == free_variable
+        and cell_frame[2]
+        and type(cell_frame[3]) is FunctionType
+    ]
+    assert matching_cells
+    cell, _name, _occupied, original = matching_cells[0]
+    cell.cell_contents = lambda _value: None
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="closure content changed after claim",
+        ):
+            coordinator._require_parent_execution_routes_unchanged(routes)
+    finally:
+        cell.cell_contents = original
+    coordinator._require_parent_execution_routes_unchanged(routes)
+
+
+def test_claimed_snapshotter_and_verifier_code_replacement_fails_closed(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    harness = _install_synthetic_parent_execution(
-        monkeypatch,
-        synthetic_registration,
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    original_behavior = harness.behavior[0]
+    snapshotter = cast(
+        FunctionType,
+        getattr(harness.child_result_module, coordinator._CHILD_RESULT_SNAPSHOTTER),
     )
+    verifier = cast(
+        FunctionType,
+        getattr(harness.child_result_module, coordinator._CHILD_RESULT_VERIFIER),
+    )
+    snapshotter_code = snapshotter.__code__
+    verifier_code = verifier.__code__
 
-    class ReturningObjectBinding:
-        def __new__(cls, **_values: object) -> Any:
-            del cls
-            return object()
+    def behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        result = original_behavior(cpu_ids, activation, source_bundle_fd, binding)
+        snapshotter.__code__ = snapshotter_code.replace(co_name="forged_snapshot")
+        verifier.__code__ = verifier_code.replace(co_name="forged_verifier")
+        return result
 
-    _set_route_identity(
-        ReturningObjectBinding,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        coordinator._CHILD_RESULT_MODULE,
-    )
-    setattr(
-        harness.child_result_module,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        ReturningObjectBinding,
-    )
-    setattr(
-        harness.supervisor_module,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        ReturningObjectBinding,
-    )
+    harness.behavior[0] = behavior
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="executable route changed after claim|parent boundary changed",
+        ):
+            coordinator._run_one_registered_parent_child(
+                synthetic_registration,
+                coordinator._assignment(
+                    coordinator._SEED_ROLE,
+                    coordinator.REGISTERED_SEEDS[0],
+                ),
+                (2, 7),
+                91,
+            )
+    finally:
+        snapshotter.__code__ = snapshotter_code
+        verifier.__code__ = verifier_code
+    assert harness.snapshot_calls == []
+    assert harness.verification_calls == []
+
+
+def test_supervised_slot_descriptor_replacement_after_claim_fails_closed(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    original_behavior = harness.behavior[0]
+
+    def behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        result = original_behavior(cpu_ids, activation, source_bundle_fd, binding)
+        monkeypatch.setattr(
+            harness.supervised_result_type,
+            "elapsed_nanoseconds",
+            property(lambda _result: 0),
+        )
+        return result
+
+    harness.behavior[0] = behavior
     with pytest.raises(
         coordinator.Experiment002CoordinatorError,
-        match="binding has an invalid exact type",
+        match="dynamic class changed|parent boundary changed",
     ):
         coordinator._run_one_registered_parent_child(
             synthetic_registration,
@@ -1698,92 +1997,189 @@ def test_child_result_binding_constructor_must_return_its_exact_dynamic_type(
             (2, 7),
             91,
         )
-    assert harness.calls == []
 
 
-def test_child_result_binding_change_between_double_capture_fails_closed(
+def test_supervised_constructor_code_replacement_after_claim_fails_closed(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    harness = _install_synthetic_parent_execution(
-        monkeypatch,
-        synthetic_registration,
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    original_behavior = harness.behavior[0]
+    constructor = cast(
+        FunctionType,
+        harness.supervised_result_type.__dict__["__init__"],
     )
+    constructor_code = constructor.__code__
 
-    class UnstableBinding:
-        def __init__(
-            self,
-            *,
-            role: str,
-            ordinal: int,
-            seed: int,
-            registration_head_commit: str,
-            implementation_commit: str,
-            registration_sha256: str,
-            source_bundle_sha256: str,
-        ) -> None:
-            self._role = role
-            self._role_reads = 0
-            self.ordinal = ordinal
-            self.seed = seed
-            self.registration_head_commit = registration_head_commit
-            self.implementation_commit = implementation_commit
-            self.registration_sha256 = registration_sha256
-            self.source_bundle_sha256 = source_bundle_sha256
+    def behavior(
+        cpu_ids: tuple[int, int],
+        activation: _SyntheticActivation,
+        source_bundle_fd: int,
+        binding: object,
+    ) -> object:
+        result = original_behavior(cpu_ids, activation, source_bundle_fd, binding)
+        constructor.__code__ = constructor_code.replace(co_name="forged_init")
+        return result
 
-        @property
-        def role(self) -> str:
-            self._role_reads += 1
-            if self._role_reads == 1:
-                return self._role
-            return coordinator._RERUN_ROLE
-
-    _set_route_identity(
-        UnstableBinding,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        coordinator._CHILD_RESULT_MODULE,
-    )
-    setattr(
-        harness.child_result_module,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        UnstableBinding,
-    )
-    setattr(
-        harness.supervisor_module,
-        coordinator._CHILD_RESULT_BINDING_TYPE,
-        UnstableBinding,
-    )
-    with pytest.raises(
-        coordinator.Experiment002CoordinatorError,
-        match="binding changed during construction",
-    ):
-        coordinator._run_one_registered_parent_child(
-            synthetic_registration,
-            coordinator._assignment(
-                coordinator._SEED_ROLE,
-                coordinator.REGISTERED_SEEDS[0],
-            ),
-            (2, 7),
-            91,
-        )
-    assert harness.calls == []
+    harness.behavior[0] = behavior
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="executable route changed after claim|parent boundary changed",
+        ):
+            coordinator._run_one_registered_parent_child(
+                synthetic_registration,
+                coordinator._assignment(
+                    coordinator._SEED_ROLE,
+                    coordinator.REGISTERED_SEEDS[0],
+                ),
+                (2, 7),
+                91,
+            )
+    finally:
+        constructor.__code__ = constructor_code
 
 
 @pytest.mark.parametrize(
-    ("stable_calls", "expected_supervisor_calls"),
-    [(1, 0), (3, 1), (4, 1)],
+    "route_name",
+    [
+        "_require_registration",
+        "_registration_binding",
+        "_parent_activate_child",
+        "_verified_child_result_snapshot_frame",
+    ],
 )
-def test_registration_binding_change_at_each_parent_boundary_fails_closed(
+def test_pre_call_critical_coordinator_route_replacement_is_rejected(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
-    stable_calls: int,
-    expected_supervisor_calls: int,
+    route_name: str,
+) -> None:
+    harness = _install_synthetic_parent_execution(monkeypatch, synthetic_registration)
+    replacement_calls: list[object] = []
+
+    def replacement(*_args: object, **_kwargs: object) -> object:
+        replacement_calls.append(object())
+        return None
+
+    monkeypatch.setattr(coordinator, route_name, replacement)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="coordinator.*routes changed",
+    ):
+        coordinator._run_one_registered_parent_child(
+            synthetic_registration,
+            coordinator._assignment(
+                coordinator._SEED_ROLE,
+                coordinator.REGISTERED_SEEDS[0],
+            ),
+            (2, 7),
+            91,
+        )
+    assert replacement_calls == []
+    assert harness.calls == []
+    assert harness.activations == []
+
+
+def test_child_result_binding_constructor_is_not_an_authority_route(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = _install_synthetic_parent_execution(
         monkeypatch,
         synthetic_registration,
     )
-    changed = replace(TEST_BINDING, head_commit="a" * 40)
+
+    constructor_calls: list[object] = []
+
+    def forbidden_constructor(
+        _cls: type[object],
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        constructor_calls.append(object())
+        return object()
+
+    monkeypatch.setattr(
+        harness.binding_type,
+        "__new__",
+        staticmethod(forbidden_constructor),
+    )
+    result = coordinator._run_one_registered_parent_child(
+        synthetic_registration,
+        coordinator._assignment(
+            coordinator._SEED_ROLE,
+            coordinator.REGISTERED_SEEDS[0],
+        ),
+        (2, 7),
+        91,
+    )
+    assert result[5][:3] == (
+        coordinator._SEED_ROLE,
+        0,
+        coordinator.REGISTERED_SEEDS[0],
+    )
+    assert constructor_calls == []
+
+
+def test_child_result_binding_stable_property_spoof_is_rejected_at_claim(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(
+        monkeypatch,
+        synthetic_registration,
+    )
+
+    class PropertySpoofBinding:
+        role = property(lambda _self: coordinator._SEED_ROLE)
+        ordinal = property(lambda _self: 0)
+        seed = property(lambda _self: coordinator.REGISTERED_SEEDS[0])
+        registration_head_commit = property(lambda _self: TEST_BINDING.head_commit)
+        implementation_commit = property(
+            lambda _self: TEST_BINDING.implementation_commit
+        )
+        registration_sha256 = property(lambda _self: TEST_BINDING.registration_sha256)
+        source_bundle_sha256 = property(lambda _self: TEST_BINDING.source_bundle_sha256)
+
+    _set_route_identity(
+        PropertySpoofBinding,
+        coordinator._CHILD_RESULT_BINDING_TYPE,
+        coordinator._CHILD_RESULT_MODULE,
+    )
+    setattr(
+        harness.child_result_module,
+        coordinator._CHILD_RESULT_BINDING_TYPE,
+        PropertySpoofBinding,
+    )
+    setattr(
+        harness.supervisor_module,
+        coordinator._CHILD_RESULT_BINDING_TYPE,
+        PropertySpoofBinding,
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="slot descriptors are invalid",
+    ):
+        coordinator._run_one_registered_parent_child(
+            synthetic_registration,
+            coordinator._assignment(
+                coordinator._SEED_ROLE,
+                coordinator.REGISTERED_SEEDS[0],
+            ),
+            (2, 7),
+            91,
+        )
+    assert harness.calls == []
+
+
+def test_pre_call_registration_binding_route_replacement_is_rejected(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(
+        monkeypatch,
+        synthetic_registration,
+    )
     binding_calls = 0
 
     def registration_binding(
@@ -1792,12 +2188,13 @@ def test_registration_binding_change_at_each_parent_boundary_fails_closed(
         nonlocal binding_calls
         assert supplied is synthetic_registration
         binding_calls += 1
-        if binding_calls <= stable_calls:
-            return TEST_BINDING
-        return changed
+        return replace(TEST_BINDING, head_commit="a" * 40)
 
     monkeypatch.setattr(coordinator, "_registration_binding", registration_binding)
-    with pytest.raises(coordinator.Experiment002CoordinatorError, match="registration"):
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="coordinator.*routes changed",
+    ):
         coordinator._run_one_registered_parent_child(
             synthetic_registration,
             coordinator._assignment(
@@ -1807,7 +2204,8 @@ def test_registration_binding_change_at_each_parent_boundary_fails_closed(
             (2, 7),
             91,
         )
-    assert len(harness.calls) == expected_supervisor_calls
+    assert binding_calls == 0
+    assert harness.calls == []
 
 
 @pytest.mark.parametrize(
@@ -1824,12 +2222,6 @@ def test_parent_owned_activation_closure_requires_one_success_matching_result(
         synthetic_registration,
     )
     child_pid = os.getpid() + 100_000
-    if activation_case == "swallowed_failure":
-
-        def fail_activation(*_args: object, **_kwargs: object) -> None:
-            raise RuntimeError("synthetic activation failure")
-
-        monkeypatch.setattr(coordinator, "_parent_activate_child", fail_activation)
 
     def behavior(
         cpu_ids: tuple[int, int],
@@ -1837,21 +2229,32 @@ def test_parent_owned_activation_closure_requires_one_success_matching_result(
         _source_bundle_fd: int,
         binding: object,
     ) -> object:
-        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        try:
-            if activation_case != "missing":
-                try:
-                    activation(parent, child_pid)
-                except RuntimeError:
-                    if activation_case != "swallowed_failure":
-                        raise
-            if activation_case == "double":
+        activated_child_pid = child_pid
+        if activation_case == "swallowed_failure":
+            with pytest.raises(coordinator.Experiment002CoordinatorError):
+                activated_child_pid = _fail_synthetic_parent_activation(activation)
+        elif activation_case != "missing":
+            typed_binding = cast(Any, binding)
+            activated_child_pid = _complete_synthetic_parent_activation(
+                activation,
+                synthetic_registration,
+                typed_binding.role,
+                typed_binding.seed,
+                harness.activations,
+            )
+        if activation_case == "double":
+            parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            try:
                 with pytest.raises(coordinator.Experiment002CoordinatorError):
-                    activation(parent, child_pid)
-        finally:
-            parent.close()
-            child.close()
-        result_pid = child_pid + 1 if activation_case == "pid_mismatch" else child_pid
+                    activation(parent, activated_child_pid)
+            finally:
+                parent.close()
+                child.close()
+        result_pid = (
+            activated_child_pid + 1
+            if activation_case == "pid_mismatch"
+            else activated_child_pid
+        )
         return _synthetic_supervised_result(
             harness,
             binding,
@@ -2014,7 +2417,6 @@ def test_supervised_result_exact_type_metric_and_child_matrix_fails_closed(
         monkeypatch,
         synthetic_registration,
     )
-    child_pid = os.getpid() + 100_000
 
     def behavior(
         cpu_ids: tuple[int, int],
@@ -2022,12 +2424,14 @@ def test_supervised_result_exact_type_metric_and_child_matrix_fails_closed(
         _source_bundle_fd: int,
         binding: object,
     ) -> object:
-        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        try:
-            activation(parent, child_pid)
-        finally:
-            parent.close()
-            child.close()
+        typed_binding = cast(Any, binding)
+        child_pid = _complete_synthetic_parent_activation(
+            activation,
+            synthetic_registration,
+            typed_binding.role,
+            typed_binding.seed,
+            harness.activations,
+        )
         if result_case == "wrong_supervised_type":
             return object()
         verified: object | None = None
@@ -2128,7 +2532,7 @@ def test_verified_child_result_verifier_must_return_none(
         )
 
 
-def test_second_verifier_mutation_is_caught_by_final_result_recapture(
+def test_verifier_mutation_is_caught_between_authoritative_snapshots(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2145,15 +2549,13 @@ def test_second_verifier_mutation_is_caught_by_final_result_recapture(
         registration_sha256=TEST_BINDING.registration_sha256,
         source_bundle_sha256=TEST_BINDING.source_bundle_sha256,
     )
-    verifier_calls = 0
+    verifier_calls: list[object] = []
 
     def mutating_verifier(result: object, /) -> None:
-        nonlocal verifier_calls
         if type(result) is not harness.verified_result_type:
             raise TypeError("not an exact synthetic result")
-        verifier_calls += 1
-        if verifier_calls == 2:
-            cast(Any, result)._binding = replacement_binding
+        verifier_calls.append(result)
+        cast(Any, result)._binding = replacement_binding
 
     _set_route_identity(
         mutating_verifier,
@@ -2172,7 +2574,7 @@ def test_second_verifier_mutation_is_caught_by_final_result_recapture(
     )
     with pytest.raises(
         coordinator.Experiment002CoordinatorError,
-        match="changed after final verification",
+        match="snapshots changed across verification",
     ):
         coordinator._run_one_registered_parent_child(
             synthetic_registration,
@@ -2183,7 +2585,92 @@ def test_second_verifier_mutation_is_caught_by_final_result_recapture(
             (2, 7),
             91,
         )
-    assert verifier_calls == 2
+    assert len(verifier_calls) == 1
+
+
+def test_two_valid_but_different_authoritative_snapshots_are_rejected(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _install_synthetic_parent_execution(
+        monkeypatch,
+        synthetic_registration,
+    )
+    original_snapshot = harness.snapshot_behavior[0]
+    snapshot_calls = 0
+
+    def changing_snapshot(result: object, /) -> object:
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        snapshot = cast(tuple[object, ...], original_snapshot(result))
+        if snapshot_calls == 1:
+            return snapshot
+        fields = list(snapshot)
+        fields[16] = 8
+        return tuple(fields)
+
+    harness.snapshot_behavior[0] = changing_snapshot
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="snapshots changed across verification",
+    ):
+        coordinator._run_one_registered_parent_child(
+            synthetic_registration,
+            coordinator._assignment(
+                coordinator._SEED_ROLE,
+                coordinator.REGISTERED_SEEDS[0],
+            ),
+            (2, 7),
+            91,
+        )
+    assert snapshot_calls == 2
+    assert len(harness.verification_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "snapshot_case",
+    ["wrong_type", "wrong_shape", "wrong_field_type", "wrong_binding"],
+)
+def test_authoritative_snapshot_exact_type_shape_and_binding_fail_closed(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_case: str,
+) -> None:
+    harness = _install_synthetic_parent_execution(
+        monkeypatch,
+        synthetic_registration,
+    )
+    original_snapshot = harness.snapshot_behavior[0]
+
+    def malformed_snapshot(result: object, /) -> object:
+        snapshot = cast(tuple[object, ...], original_snapshot(result))
+        if snapshot_case == "wrong_type":
+            return list(snapshot)
+        if snapshot_case == "wrong_shape":
+            return snapshot[:-1]
+        fields = list(snapshot)
+        if snapshot_case == "wrong_field_type":
+            fields[8] = True
+        else:
+            fields[1] = 1
+            fields[2] = coordinator.REGISTERED_SEEDS[1]
+        return tuple(fields)
+
+    harness.snapshot_behavior[0] = malformed_snapshot
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="snapshot",
+    ):
+        coordinator._run_one_registered_parent_child(
+            synthetic_registration,
+            coordinator._assignment(
+                coordinator._SEED_ROLE,
+                coordinator.REGISTERED_SEEDS[0],
+            ),
+            (2, 7),
+            91,
+        )
+    assert harness.verification_calls == []
 
 
 def test_stable_post_supervision_verifier_failure_preserves_primary_error(
@@ -2272,7 +2759,7 @@ def test_post_supervision_failure_is_masked_when_parent_boundary_also_changes(
     assert type(caught.value.__cause__) is RuntimeError
 
 
-def test_verified_child_direct_identity_requires_exact_primitive_types(
+def test_authoritative_snapshot_ignores_public_identity_property_spoof(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2289,19 +2776,21 @@ def test_verified_child_direct_identity_requires_exact_primitive_types(
         "role",
         property(lambda result: StringSubclass(result.binding.role)),
     )
-    with pytest.raises(
-        coordinator.Experiment002CoordinatorError,
-        match="identity differs",
-    ):
-        coordinator._run_one_registered_parent_child(
-            synthetic_registration,
-            coordinator._assignment(
-                coordinator._SEED_ROLE,
-                coordinator.REGISTERED_SEEDS[0],
-            ),
-            (2, 7),
-            91,
-        )
+    result = coordinator._run_one_registered_parent_child(
+        synthetic_registration,
+        coordinator._assignment(
+            coordinator._SEED_ROLE,
+            coordinator.REGISTERED_SEEDS[0],
+        ),
+        (2, 7),
+        91,
+    )
+    assert result[5][:3] == (
+        coordinator._SEED_ROLE,
+        0,
+        coordinator.REGISTERED_SEEDS[0],
+    )
+    assert type(result[5][0]) is str
 
 
 @pytest.mark.parametrize(
@@ -2325,7 +2814,7 @@ def test_verified_child_direct_identity_requires_exact_primitive_types(
         "model",
     ],
 )
-def test_verified_child_rank_frame_rejects_noncanonical_values(
+def test_authoritative_snapshot_ignores_public_rank_property_spoofs(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
     property_name: str,
@@ -2340,22 +2829,19 @@ def test_verified_child_rank_frame_rejects_noncanonical_values(
         property_name,
         property(lambda _result: value),
     )
-    with pytest.raises(
-        coordinator.Experiment002CoordinatorError,
-        match="rank fields",
-    ):
-        coordinator._run_one_registered_parent_child(
-            synthetic_registration,
-            coordinator._assignment(
-                coordinator._SEED_ROLE,
-                coordinator.REGISTERED_SEEDS[0],
-            ),
-            (2, 7),
-            91,
-        )
+    result = coordinator._run_one_registered_parent_child(
+        synthetic_registration,
+        coordinator._assignment(
+            coordinator._SEED_ROLE,
+            coordinator.REGISTERED_SEEDS[0],
+        ),
+        (2, 7),
+        91,
+    )
+    assert result[5][16:] == (7, 3, 4, (0.5).hex(), "5" * 64)
 
 
-def test_verified_child_rank_mutation_between_double_capture_fails_closed(
+def test_authoritative_snapshot_never_reads_mutating_public_rank_property(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2369,22 +2855,20 @@ def test_verified_child_rank_mutation_between_double_capture_fails_closed(
         "winner_epoch",
         property(lambda _result: next(epochs)),
     )
-    with pytest.raises(
-        coordinator.Experiment002CoordinatorError,
-        match="differs from its registered assignment",
-    ):
-        coordinator._run_one_registered_parent_child(
-            synthetic_registration,
-            coordinator._assignment(
-                coordinator._SEED_ROLE,
-                coordinator.REGISTERED_SEEDS[0],
-            ),
-            (2, 7),
-            91,
-        )
+    result = coordinator._run_one_registered_parent_child(
+        synthetic_registration,
+        coordinator._assignment(
+            coordinator._SEED_ROLE,
+            coordinator.REGISTERED_SEEDS[0],
+        ),
+        (2, 7),
+        91,
+    )
+    assert result[5][16] == 7
+    assert next(epochs) == 7
 
 
-def test_supervised_metric_mutation_between_double_capture_fails_closed(
+def test_supervised_result_requires_exact_member_descriptors(
     synthetic_registration: coordinator.VerifiedRunRegistration,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2392,7 +2876,6 @@ def test_supervised_metric_mutation_between_double_capture_fails_closed(
         monkeypatch,
         synthetic_registration,
     )
-    child_pid = os.getpid() + 100_000
 
     class UnstableSupervisedResult:
         def __init__(
@@ -2425,28 +2908,9 @@ def test_supervised_metric_mutation_between_double_capture_fails_closed(
         UnstableSupervisedResult,
     )
 
-    def behavior(
-        cpu_ids: tuple[int, int],
-        activation: _SyntheticActivation,
-        _source_bundle_fd: int,
-        binding: object,
-    ) -> object:
-        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        try:
-            activation(parent, child_pid)
-        finally:
-            parent.close()
-            child.close()
-        return UnstableSupervisedResult(
-            pid=child_pid,
-            cpu_ids=cpu_ids,
-            verified_child_result=harness.verified_result_type(binding),
-        )
-
-    harness.behavior[0] = behavior
     with pytest.raises(
         coordinator.Experiment002CoordinatorError,
-        match="changed while it was snapshotted",
+        match="slot descriptors are invalid",
     ):
         coordinator._run_one_registered_parent_child(
             synthetic_registration,
@@ -2457,6 +2921,7 @@ def test_supervised_metric_mutation_between_double_capture_fails_closed(
             (2, 7),
             91,
         )
+    assert harness.calls == []
 
 
 def test_verified_child_binding_must_match_registered_assignment(
@@ -2467,20 +2932,21 @@ def test_verified_child_binding_must_match_registered_assignment(
         monkeypatch,
         synthetic_registration,
     )
-    child_pid = os.getpid() + 100_000
 
     def behavior(
         cpu_ids: tuple[int, int],
         activation: _SyntheticActivation,
         _source_bundle_fd: int,
-        _binding: object,
+        binding: object,
     ) -> object:
-        parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        try:
-            activation(parent, child_pid)
-        finally:
-            parent.close()
-            child.close()
+        typed_binding = cast(Any, binding)
+        child_pid = _complete_synthetic_parent_activation(
+            activation,
+            synthetic_registration,
+            typed_binding.role,
+            typed_binding.seed,
+            harness.activations,
+        )
         different = harness.binding_type(
             role=coordinator._SEED_ROLE,
             ordinal=1,
@@ -2521,20 +2987,21 @@ def test_registration_change_during_result_verification_fails_closed(
         monkeypatch,
         synthetic_registration,
     )
-    changed = replace(TEST_BINDING, source_bundle_sha256="a" * 64)
-    registration_changed = False
-
-    def registration_binding(
-        supplied: coordinator.VerifiedRunRegistration,
-    ) -> coordinator._RegistrationBinding:
-        assert supplied is synthetic_registration
-        return changed if registration_changed else TEST_BINDING
+    changed_state = SimpleNamespace(
+        head_commit=TEST_BINDING.head_commit,
+        implementation_commit=TEST_BINDING.implementation_commit,
+        registration_sha256=TEST_BINDING.registration_sha256,
+        source_bundle_sha256="a" * 64,
+    )
 
     def changing_verifier(result: object, /) -> None:
-        nonlocal registration_changed
         if type(result) is not harness.verified_result_type:
             raise TypeError("not an exact synthetic result")
-        registration_changed = True
+        monkeypatch.setattr(
+            authority,
+            "_verified_state",
+            lambda _registration: changed_state,
+        )
 
     _set_route_identity(
         changing_verifier,
@@ -2551,7 +3018,6 @@ def test_registration_change_during_result_verification_fails_closed(
         coordinator._CHILD_RESULT_VERIFIER,
         changing_verifier,
     )
-    monkeypatch.setattr(coordinator, "_registration_binding", registration_binding)
     with pytest.raises(coordinator.Experiment002CoordinatorError, match="registration"):
         coordinator._run_one_registered_parent_child(
             synthetic_registration,
@@ -2594,7 +3060,7 @@ def test_parent_child_helper_reuses_one_borrowed_fd_and_cpu_pair(
         after_offset = os.lseek(source_bundle_fd, 0, os.SEEK_CUR)
     finally:
         os.close(source_bundle_fd)
-    assert [result[5].seed for result in results] == list(
+    assert [result[5][2] for result in results] == list(
         coordinator.REGISTERED_SEEDS[:2]
     )
     assert len(harness.calls) == 2

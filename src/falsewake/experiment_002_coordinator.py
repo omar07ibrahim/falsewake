@@ -9,6 +9,11 @@ one kernel-credentialled ticket over Unix ``SOCK_SEQPACKET`` descriptor 3.
 Only standard-library modules and the standard-library-only run authority are
 imported here.  Numerical code is imported dynamically after a child activation
 has been verified and claimed for its single dispatch.
+
+The parent process and its loaded modules are trusted until a route claim is
+established.  The integrity frames below detect persistent mutation from claim
+through use; arbitrary pre-claim same-process reflection is privileged code
+execution outside this boundary.
 """
 
 from __future__ import annotations
@@ -28,8 +33,7 @@ import threading
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from fractions import Fraction
-from types import FunctionType, MemberDescriptorType, ModuleType
+from types import CellType, CodeType, FunctionType, MemberDescriptorType, ModuleType
 from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 from falsewake.experiment_002_run_authority import (
@@ -56,15 +60,21 @@ _PROCESS_GUARD_MODULE: Final = "falsewake.experiment_002_process_guard"
 _PROCESS_GUARD_GETTER: Final = "get_registered_child_process_guard"
 _PROCESS_GUARD_VERIFIER: Final = "verify_verified_child_process_guard"
 _SUPERVISOR_MODULE: Final = "falsewake.experiment_002_supervisor"
-_SUPERVISE_CHILD_FUNCTION: Final = "_supervise_child"
+_SUPERVISE_CHILD_FUNCTION: Final = "_supervise_registered_child"
+_INJECTABLE_SUPERVISE_CHILD_FUNCTION: Final = "_supervise_child"
+_REGISTERED_SUPERVISOR_PLAN: Final = "_REGISTERED_PLAN"
+_REGISTERED_SUPERVISOR_LIMITS: Final = "_REGISTERED_LIMITS"
+_REGISTERED_SUPERVISOR_KERNEL: Final = "_REAL_KERNEL"
 _SUPERVISED_CHILD_RESULT_TYPE: Final = "_SupervisedChildResult"
 _CHILD_RESULT_MODULE: Final = "falsewake.experiment_002_child_result"
 _CHILD_RESULT_BINDING_TYPE: Final = "ChildResultBinding"
 _VERIFIED_CHILD_RESULT_TYPE: Final = "VerifiedChildResult"
 _CHILD_RESULT_LOADER: Final = "load_registered_child_result"
 _CHILD_RESULT_VERIFIER: Final = "verify_verified_child_result"
+_CHILD_RESULT_SNAPSHOTTER: Final = "_snapshot_verified_child_result"
 _CHILD_RESULT_LOADER_FUNCTION: Final = "load_route"
 _CHILD_RESULT_VERIFIER_FUNCTION: Final = "verify_route"
+_CHILD_RESULT_SNAPSHOTTER_FUNCTION: Final = "snapshot_route"
 _SCHEMA_VERSION: Final = 1
 _FRAME_MAGIC: Final = b"FW2ACTV1"
 _FRAME_HEADER: Final = struct.Struct(">8sI")
@@ -89,13 +99,45 @@ _PHASE_COMPLETED: Final = 3
 type _ChildResultBindingFrame = tuple[str, int, int, str, str, str, str]
 type _RegisteredAssignmentFrame = tuple[str, int, int]
 type _RegistrationBindingFrame = tuple[str, str, str, str]
-type _VerifiedChildResultFrame = tuple[
+type _ClosureCellIntegrityFrame = tuple[CellType, str, bool, object]
+type _FunctionIntegrityNode = tuple[
+    FunctionType,
+    CodeType,
+    str,
+    str,
+    str,
+    tuple[object, ...] | None,
+    tuple[object, ...],
+    dict[str, Any] | None,
+    tuple[str, ...],
+    tuple[object, ...],
+    tuple[CellType, ...] | None,
+    tuple[_ClosureCellIntegrityFrame, ...],
+]
+type _FunctionIntegrityFrame = tuple[_FunctionIntegrityNode, ...]
+type _DynamicClassAuthority = tuple[
+    type[object],
+    tuple[str, ...],
+    tuple[object, ...],
+    tuple[MemberDescriptorType, ...],
+    _FunctionIntegrityFrame,
+]
+type _VerifiedChildResultSnapshot = tuple[
     str,
     int,
     int,
     str,
     str,
     str,
+    str,
+    bytes,
+    int,
+    str,
+    bytes,
+    int,
+    str,
+    bytes,
+    int,
     str,
     int,
     int,
@@ -210,41 +252,6 @@ class _ProcessGuardBinding:
     verifier: _ProcessGuardVerifier
 
 
-class _VerifiedChildResultView(Protocol):
-    @property
-    def role(self) -> str: ...
-
-    @property
-    def ordinal(self) -> int: ...
-
-    @property
-    def seed(self) -> int: ...
-
-    @property
-    def registration_head_commit(self) -> str: ...
-
-    @property
-    def implementation_commit(self) -> str: ...
-
-    @property
-    def registration_sha256(self) -> str: ...
-
-    @property
-    def source_bundle_sha256(self) -> str: ...
-
-    @property
-    def winner_epoch(self) -> int: ...
-
-    @property
-    def winner_macro_f1(self) -> Fraction: ...
-
-    @property
-    def winner_validation_cross_entropy(self) -> float: ...
-
-    @property
-    def model_tensor_sha256(self) -> str: ...
-
-
 type _ParentExecutionRoutes = tuple[
     ModuleType,
     ModuleType,
@@ -254,6 +261,10 @@ type _ParentExecutionRoutes = tuple[
     type[object],
     FunctionType,
     FunctionType,
+    FunctionType,
+    _DynamicClassAuthority,
+    _DynamicClassAuthority,
+    _FunctionIntegrityFrame,
 ]
 type _RegisteredParentChildResult = tuple[
     int,
@@ -261,7 +272,7 @@ type _RegisteredParentChildResult = tuple[
     int,
     int,
     int,
-    _VerifiedChildResultView,
+    _VerifiedChildResultSnapshot,
 ]
 
 
@@ -807,11 +818,345 @@ def _require_parent_type_identity(
     return value
 
 
+def _capture_recursive_function_integrity(
+    roots: FunctionType | tuple[FunctionType, ...],
+    /,
+) -> _FunctionIntegrityFrame:
+    if type(roots) is FunctionType:
+        pending: list[FunctionType] = [roots]
+    elif (
+        type(roots) is tuple
+        and roots
+        and all(type(route) is FunctionType for route in roots)
+    ):
+        pending = list(roots)
+    else:
+        raise Experiment002CoordinatorError(
+            "registered parent executable route has an invalid exact type"
+        )
+    seen: set[int] = set()
+    nodes: list[_FunctionIntegrityNode] = []
+    while pending:
+        function = pending.pop()
+        identity = id(function)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        code = function.__code__
+        name = function.__name__
+        qualified_name = function.__qualname__
+        module_name = function.__module__
+        defaults = function.__defaults__
+        keyword_defaults = function.__kwdefaults__
+        closure = function.__closure__
+        if (
+            type(code) is not CodeType
+            or type(name) is not str
+            or type(qualified_name) is not str
+            or type(module_name) is not str
+            or (defaults is not None and type(defaults) is not tuple)
+            or (keyword_defaults is not None and type(keyword_defaults) is not dict)
+            or (closure is not None and type(closure) is not tuple)
+        ):
+            raise Experiment002CoordinatorError(
+                "registered parent executable integrity is invalid"
+            )
+        default_items = () if defaults is None else tuple(defaults)
+        if keyword_defaults is None:
+            keyword_names: tuple[str, ...] = ()
+            keyword_values: tuple[object, ...] = ()
+        else:
+            if any(type(key) is not str for key in keyword_defaults):
+                raise Experiment002CoordinatorError(
+                    "registered parent executable keyword defaults are invalid"
+                )
+            keyword_names = tuple(sorted(keyword_defaults))
+            keyword_values = tuple(keyword_defaults[key] for key in keyword_names)
+        cell_frames: list[_ClosureCellIntegrityFrame] = []
+        if closure is not None:
+            if len(closure) != len(code.co_freevars):
+                raise Experiment002CoordinatorError(
+                    "registered parent executable closure shape is invalid"
+                )
+            for free_variable, cell in zip(code.co_freevars, closure, strict=True):
+                if type(free_variable) is not str or type(cell) is not CellType:
+                    raise Experiment002CoordinatorError(
+                        "registered parent executable closure is invalid"
+                    )
+                try:
+                    content = cell.cell_contents
+                except ValueError:
+                    cell_frames.append((cell, free_variable, False, None))
+                else:
+                    cell_frames.append((cell, free_variable, True, content))
+                    if type(content) is FunctionType:
+                        pending.append(content)
+        nodes.append(
+            (
+                function,
+                code,
+                name,
+                qualified_name,
+                module_name,
+                defaults,
+                default_items,
+                keyword_defaults,
+                keyword_names,
+                keyword_values,
+                closure,
+                tuple(cell_frames),
+            )
+        )
+    frame = tuple(nodes)
+    _require_recursive_function_integrity_unchanged(frame)
+    return frame
+
+
+def _require_recursive_function_integrity_unchanged(
+    frame: _FunctionIntegrityFrame,
+    /,
+) -> None:
+    if type(frame) is not tuple or not frame:
+        raise Experiment002CoordinatorError(
+            "registered parent executable integrity frame is invalid"
+        )
+    for node in frame:
+        if type(node) is not tuple or len(node) != 12:
+            raise Experiment002CoordinatorError(
+                "registered parent executable integrity frame is invalid"
+            )
+        (
+            function,
+            code,
+            name,
+            qualified_name,
+            module_name,
+            defaults,
+            default_items,
+            keyword_defaults,
+            keyword_names,
+            keyword_values,
+            closure,
+            cell_frames,
+        ) = node
+        if (
+            type(function) is not FunctionType
+            or function.__code__ is not code
+            or function.__name__ is not name
+            or function.__qualname__ is not qualified_name
+            or function.__module__ is not module_name
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keyword_defaults
+            or function.__closure__ is not closure
+            or type(default_items) is not tuple
+            or type(keyword_names) is not tuple
+            or type(keyword_values) is not tuple
+            or type(cell_frames) is not tuple
+        ):
+            raise Experiment002CoordinatorError(
+                "registered parent executable route changed after claim"
+            )
+        if defaults is None:
+            if default_items:
+                raise Experiment002CoordinatorError(
+                    "registered parent executable defaults changed after claim"
+                )
+        elif (
+            type(defaults) is not tuple
+            or len(defaults) != len(default_items)
+            or any(
+                defaults[index] is not default_items[index]
+                for index in range(len(default_items))
+            )
+        ):
+            raise Experiment002CoordinatorError(
+                "registered parent executable defaults changed after claim"
+            )
+        if keyword_defaults is None:
+            if keyword_names or keyword_values:
+                raise Experiment002CoordinatorError(
+                    "registered parent executable keyword defaults changed after claim"
+                )
+        elif (
+            type(keyword_defaults) is not dict
+            or len(keyword_names) != len(keyword_values)
+            or tuple(sorted(keyword_defaults)) != keyword_names
+            or any(
+                keyword_defaults[key] is not keyword_values[index]
+                for index, key in enumerate(keyword_names)
+            )
+        ):
+            raise Experiment002CoordinatorError(
+                "registered parent executable keyword defaults changed after claim"
+            )
+        if closure is None:
+            if cell_frames:
+                raise Experiment002CoordinatorError(
+                    "registered parent executable closure changed after claim"
+                )
+            continue
+        if type(closure) is not tuple or len(closure) != len(cell_frames):
+            raise Experiment002CoordinatorError(
+                "registered parent executable closure changed after claim"
+            )
+        for index, cell_frame in enumerate(cell_frames):
+            if type(cell_frame) is not tuple or len(cell_frame) != 4:
+                raise Experiment002CoordinatorError(
+                    "registered parent executable closure frame is invalid"
+                )
+            cell, free_variable, occupied, content = cell_frame
+            if (
+                type(cell) is not CellType
+                or type(free_variable) is not str
+                or type(occupied) is not bool
+                or closure[index] is not cell
+                or code.co_freevars[index] != free_variable
+            ):
+                raise Experiment002CoordinatorError(
+                    "registered parent executable closure changed after claim"
+                )
+            try:
+                current_content = cell.cell_contents
+            except ValueError:
+                if occupied:
+                    raise Experiment002CoordinatorError(
+                        "registered parent executable closure content changed "
+                        "after claim"
+                    ) from None
+            else:
+                if not occupied or current_content is not content:
+                    raise Experiment002CoordinatorError(
+                        "registered parent executable closure content changed "
+                        "after claim"
+                    )
+
+
+def _capture_dynamic_class_authority(
+    dynamic_type: type[object],
+    field_names: tuple[str, ...],
+    /,
+) -> _DynamicClassAuthority:
+    if (
+        type(dynamic_type) is not type
+        or type(field_names) is not tuple
+        or not field_names
+        or any(type(name) is not str for name in field_names)
+        or len(set(field_names)) != len(field_names)
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class authority is invalid"
+        )
+    namespace = dynamic_type.__dict__
+    names = tuple(sorted(namespace))
+    values = tuple(namespace[name] for name in names)
+    descriptors = tuple(namespace.get(name) for name in field_names)
+    if any(type(descriptor) is not MemberDescriptorType for descriptor in descriptors):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic slot descriptors are invalid"
+        )
+    authority = (
+        dynamic_type,
+        names,
+        values,
+        cast(tuple[MemberDescriptorType, ...], descriptors),
+        _capture_recursive_function_integrity(
+            tuple(value for value in values if type(value) is FunctionType)
+        ),
+    )
+    _require_dynamic_class_authority_unchanged(authority)
+    return authority
+
+
+def _require_dynamic_class_authority_unchanged(
+    authority: _DynamicClassAuthority,
+    /,
+) -> None:
+    if type(authority) is not tuple or len(authority) != 5:
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class authority frame is invalid"
+        )
+    dynamic_type, names, values, descriptors, function_integrity_frame = authority
+    if (
+        type(dynamic_type) is not type
+        or type(names) is not tuple
+        or type(values) is not tuple
+        or type(descriptors) is not tuple
+        or type(function_integrity_frame) is not tuple
+        or len(names) != len(values)
+        or any(
+            type(descriptor) is not MemberDescriptorType for descriptor in descriptors
+        )
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class authority frame is invalid"
+        )
+    namespace = dynamic_type.__dict__
+    if tuple(sorted(namespace)) != names or any(
+        namespace[name] is not values[index] for index, name in enumerate(names)
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class changed after claim"
+        )
+    _require_recursive_function_integrity_unchanged(function_integrity_frame)
+
+
+def _require_registered_supervisor_wrapper(
+    route: FunctionType,
+    supervisor_module: ModuleType,
+    /,
+) -> None:
+    code = route.__code__
+    closure = route.__closure__
+    if (
+        route.__defaults__ is not None
+        or route.__kwdefaults__ is not None
+        or type(code) is not CodeType
+        or code.co_argcount != 4
+        or code.co_posonlyargcount != 4
+        or code.co_kwonlyargcount != 0
+        or code.co_flags & 0x0C
+        or type(closure) is not tuple
+        or len(closure) != len(code.co_freevars)
+    ):
+        raise Experiment002CoordinatorError(
+            "registered supervisor wrapper has an invalid exact signature"
+        )
+    contents: dict[str, object] = {}
+    for name, cell in zip(code.co_freevars, closure, strict=True):
+        if type(name) is not str or type(cell) is not CellType:
+            raise Experiment002CoordinatorError(
+                "registered supervisor wrapper closure is invalid"
+            )
+        try:
+            contents[name] = cell.cell_contents
+        except ValueError as error:
+            raise Experiment002CoordinatorError(
+                "registered supervisor wrapper closure is empty"
+            ) from error
+    supervise = contents.get("supervise")
+    if (
+        type(supervise) is not FunctionType
+        or supervise.__name__ != _INJECTABLE_SUPERVISE_CHILD_FUNCTION
+        or supervise.__module__ != _SUPERVISOR_MODULE
+        or supervise
+        is not getattr(supervisor_module, _INJECTABLE_SUPERVISE_CHILD_FUNCTION, None)
+        or contents.get("plan")
+        is not getattr(supervisor_module, _REGISTERED_SUPERVISOR_PLAN, None)
+        or contents.get("limits")
+        is not getattr(supervisor_module, _REGISTERED_SUPERVISOR_LIMITS, None)
+        or contents.get("kernel")
+        is not getattr(supervisor_module, _REGISTERED_SUPERVISOR_KERNEL, None)
+    ):
+        raise Experiment002CoordinatorError(
+            "registered supervisor wrapper closure authority is invalid"
+        )
+
+
 def _require_parent_execution_routes_unchanged(
     routes: _ParentExecutionRoutes,
     /,
 ) -> None:
-    if type(routes) is not tuple or len(routes) != 8:
+    if type(routes) is not tuple or len(routes) != 12:
         raise Experiment002CoordinatorError(
             "registered parent execution routes have an invalid exact type"
         )
@@ -824,6 +1169,10 @@ def _require_parent_execution_routes_unchanged(
         claimed_verified_child_result_type,
         claimed_load_registered_child_result,
         claimed_verify_verified_child_result,
+        claimed_snapshot_verified_child_result,
+        supervised_child_result_authority,
+        child_result_binding_authority,
+        function_integrity_frame,
     ) = routes
     supervisor_module = _require_parent_module_identity(
         claimed_supervisor_module,
@@ -863,6 +1212,24 @@ def _require_parent_execution_routes_unchanged(
         _CHILD_RESULT_VERIFIER_FUNCTION,
         _CHILD_RESULT_MODULE,
     )
+    snapshot_verified_child_result = _require_parent_function_identity(
+        claimed_snapshot_verified_child_result,
+        _CHILD_RESULT_SNAPSHOTTER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    _require_registered_supervisor_wrapper(supervise_child, supervisor_module)
+    _require_recursive_function_integrity_unchanged(function_integrity_frame)
+    _require_dynamic_class_authority_unchanged(supervised_child_result_authority)
+    _require_dynamic_class_authority_unchanged(child_result_binding_authority)
+    if (
+        supervised_child_result_authority[0] is not supervised_child_result_type
+        or child_result_binding_authority[0] is not child_result_binding_type
+        or len(supervised_child_result_authority[3]) != 6
+        or len(child_result_binding_authority[3]) != 7
+    ):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class authorities disagree"
+        )
     if (
         getattr(supervisor_module, _SUPERVISE_CHILD_FUNCTION, None)
         is not supervise_child
@@ -876,6 +1243,8 @@ def _require_parent_execution_routes_unchanged(
         is not load_registered_child_result
         or getattr(child_result_module, _CHILD_RESULT_VERIFIER, None)
         is not verify_verified_child_result
+        or getattr(child_result_module, _CHILD_RESULT_SNAPSHOTTER, None)
+        is not snapshot_verified_child_result
         or getattr(supervisor_module, _CHILD_RESULT_BINDING_TYPE, None)
         is not child_result_binding_type
         or getattr(supervisor_module, _VERIFIED_CHILD_RESULT_TYPE, None)
@@ -899,39 +1268,86 @@ def _claim_and_verify_parent_execution_routes() -> _ParentExecutionRoutes:
         importlib.import_module(_CHILD_RESULT_MODULE),
         _CHILD_RESULT_MODULE,
     )
+    supervise_child = _require_parent_function_identity(
+        getattr(supervisor_module, _SUPERVISE_CHILD_FUNCTION, None),
+        _SUPERVISE_CHILD_FUNCTION,
+        _SUPERVISOR_MODULE,
+    )
+    supervised_child_result_type = _require_parent_type_identity(
+        getattr(supervisor_module, _SUPERVISED_CHILD_RESULT_TYPE, None),
+        _SUPERVISED_CHILD_RESULT_TYPE,
+        _SUPERVISOR_MODULE,
+    )
+    child_result_binding_type = _require_parent_type_identity(
+        getattr(child_result_module, _CHILD_RESULT_BINDING_TYPE, None),
+        _CHILD_RESULT_BINDING_TYPE,
+        _CHILD_RESULT_MODULE,
+    )
+    verified_child_result_type = _require_parent_type_identity(
+        getattr(child_result_module, _VERIFIED_CHILD_RESULT_TYPE, None),
+        _VERIFIED_CHILD_RESULT_TYPE,
+        _CHILD_RESULT_MODULE,
+    )
+    load_registered_child_result = _require_parent_function_identity(
+        getattr(child_result_module, _CHILD_RESULT_LOADER, None),
+        _CHILD_RESULT_LOADER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    verify_verified_child_result = _require_parent_function_identity(
+        getattr(child_result_module, _CHILD_RESULT_VERIFIER, None),
+        _CHILD_RESULT_VERIFIER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    snapshot_verified_child_result = _require_parent_function_identity(
+        getattr(child_result_module, _CHILD_RESULT_SNAPSHOTTER, None),
+        _CHILD_RESULT_SNAPSHOTTER_FUNCTION,
+        _CHILD_RESULT_MODULE,
+    )
+    _require_registered_supervisor_wrapper(supervise_child, supervisor_module)
+    supervised_child_result_authority = _capture_dynamic_class_authority(
+        supervised_child_result_type,
+        (
+            "pid",
+            "cpu_ids",
+            "elapsed_nanoseconds",
+            "maximum_rss_bytes",
+            "output_and_scratch_bytes",
+            "verified_child_result",
+        ),
+    )
+    child_result_binding_authority = _capture_dynamic_class_authority(
+        child_result_binding_type,
+        (
+            "role",
+            "ordinal",
+            "seed",
+            "registration_head_commit",
+            "implementation_commit",
+            "registration_sha256",
+            "source_bundle_sha256",
+        ),
+    )
+    function_integrity_frame = _capture_recursive_function_integrity(
+        (
+            supervise_child,
+            load_registered_child_result,
+            verify_verified_child_result,
+            snapshot_verified_child_result,
+        )
+    )
     routes = (
         supervisor_module,
         child_result_module,
-        _require_parent_function_identity(
-            getattr(supervisor_module, _SUPERVISE_CHILD_FUNCTION, None),
-            _SUPERVISE_CHILD_FUNCTION,
-            _SUPERVISOR_MODULE,
-        ),
-        _require_parent_type_identity(
-            getattr(supervisor_module, _SUPERVISED_CHILD_RESULT_TYPE, None),
-            _SUPERVISED_CHILD_RESULT_TYPE,
-            _SUPERVISOR_MODULE,
-        ),
-        _require_parent_type_identity(
-            getattr(child_result_module, _CHILD_RESULT_BINDING_TYPE, None),
-            _CHILD_RESULT_BINDING_TYPE,
-            _CHILD_RESULT_MODULE,
-        ),
-        _require_parent_type_identity(
-            getattr(child_result_module, _VERIFIED_CHILD_RESULT_TYPE, None),
-            _VERIFIED_CHILD_RESULT_TYPE,
-            _CHILD_RESULT_MODULE,
-        ),
-        _require_parent_function_identity(
-            getattr(child_result_module, _CHILD_RESULT_LOADER, None),
-            _CHILD_RESULT_LOADER_FUNCTION,
-            _CHILD_RESULT_MODULE,
-        ),
-        _require_parent_function_identity(
-            getattr(child_result_module, _CHILD_RESULT_VERIFIER, None),
-            _CHILD_RESULT_VERIFIER_FUNCTION,
-            _CHILD_RESULT_MODULE,
-        ),
+        supervise_child,
+        supervised_child_result_type,
+        child_result_binding_type,
+        verified_child_result_type,
+        load_registered_child_result,
+        verify_verified_child_result,
+        snapshot_verified_child_result,
+        supervised_child_result_authority,
+        child_result_binding_authority,
+        function_integrity_frame,
     )
     _require_parent_execution_routes_unchanged(routes)
     return routes
@@ -1014,19 +1430,27 @@ def _snapshot_registered_cpu_ids(cpu_ids: tuple[int, int], /) -> tuple[int, int]
 def _dynamic_child_result_binding_frame(
     binding: object,
     binding_type: type[object],
+    descriptors: tuple[MemberDescriptorType, ...],
     /,
 ) -> _ChildResultBindingFrame:
-    if type(binding) is not binding_type:
+    if (
+        type(binding) is not binding_type
+        or type(descriptors) is not tuple
+        or len(descriptors) != 7
+        or any(
+            type(descriptor) is not MemberDescriptorType for descriptor in descriptors
+        )
+    ):
         raise Experiment002CoordinatorError(
             "registered child-result binding has an invalid exact type"
         )
-    role = getattr(binding, "role", None)
-    ordinal = getattr(binding, "ordinal", None)
-    seed = getattr(binding, "seed", None)
-    registration_head_commit = getattr(binding, "registration_head_commit", None)
-    implementation_commit = getattr(binding, "implementation_commit", None)
-    registration_sha256 = getattr(binding, "registration_sha256", None)
-    source_bundle_sha256 = getattr(binding, "source_bundle_sha256", None)
+    role = descriptors[0].__get__(binding, binding_type)
+    ordinal = descriptors[1].__get__(binding, binding_type)
+    seed = descriptors[2].__get__(binding, binding_type)
+    registration_head_commit = descriptors[3].__get__(binding, binding_type)
+    implementation_commit = descriptors[4].__get__(binding, binding_type)
+    registration_sha256 = descriptors[5].__get__(binding, binding_type)
+    source_bundle_sha256 = descriptors[6].__get__(binding, binding_type)
     if (
         type(role) is not str
         or type(ordinal) is not int
@@ -1058,6 +1482,8 @@ def _build_registered_child_result_binding(
 ) -> object:
     _require_parent_execution_routes_unchanged(routes)
     child_result_binding_type = routes[4]
+    child_result_binding_authority = routes[10]
+    child_result_binding_descriptors = child_result_binding_authority[3]
     if (
         type(assignment_frame) is not tuple
         or len(assignment_frame) != 3
@@ -1077,29 +1503,30 @@ def _build_registered_child_result_binding(
         assignment_frame[1],
         *registration_frame,
     )
-    constructor = cast(Callable[..., object], child_result_binding_type)
-    binding = constructor(
-        role=expected[0],
-        ordinal=expected[1],
-        seed=expected[2],
-        registration_head_commit=expected[3],
-        implementation_commit=expected[4],
-        registration_sha256=expected[5],
-        source_bundle_sha256=expected[6],
-    )
+    _require_dynamic_class_authority_unchanged(child_result_binding_authority)
+    binding = object.__new__(child_result_binding_type)
+    for descriptor, value in zip(
+        child_result_binding_descriptors,
+        expected,
+        strict=True,
+    ):
+        descriptor.__set__(binding, value)
     first = _dynamic_child_result_binding_frame(
         binding,
         child_result_binding_type,
+        child_result_binding_descriptors,
     )
     second = _dynamic_child_result_binding_frame(
         binding,
         child_result_binding_type,
+        child_result_binding_descriptors,
     )
     if first != expected or second != first:
         raise Experiment002CoordinatorError(
             "registered child-result binding changed during construction"
         )
     _require_parent_execution_routes_unchanged(routes)
+    _require_dynamic_class_authority_unchanged(child_result_binding_authority)
     return binding
 
 
@@ -1729,16 +2156,25 @@ def _supervised_parent_child_frame(
 ) -> tuple[int, tuple[int, int], int, int, int, object]:
     supervised_child_result_type = routes[3]
     verified_child_result_type = routes[5]
+    supervised_child_result_authority = routes[9]
+    _require_dynamic_class_authority_unchanged(supervised_child_result_authority)
+    descriptors = supervised_child_result_authority[3]
     if type(result) is not supervised_child_result_type:
         raise Experiment002CoordinatorError(
             "supervisor returned an invalid exact child-result type"
         )
-    pid = getattr(result, "pid", None)
-    cpu_ids = getattr(result, "cpu_ids", None)
-    elapsed_nanoseconds = getattr(result, "elapsed_nanoseconds", None)
-    maximum_rss_bytes = getattr(result, "maximum_rss_bytes", None)
-    output_and_scratch_bytes = getattr(result, "output_and_scratch_bytes", None)
-    verified_child_result = getattr(result, "verified_child_result", None)
+    pid = descriptors[0].__get__(result, supervised_child_result_type)
+    cpu_ids = descriptors[1].__get__(result, supervised_child_result_type)
+    elapsed_nanoseconds = descriptors[2].__get__(result, supervised_child_result_type)
+    maximum_rss_bytes = descriptors[3].__get__(result, supervised_child_result_type)
+    output_and_scratch_bytes = descriptors[4].__get__(
+        result,
+        supervised_child_result_type,
+    )
+    verified_child_result = descriptors[5].__get__(
+        result,
+        supervised_child_result_type,
+    )
     if (
         type(pid) is not int
         or pid < 1
@@ -1758,6 +2194,7 @@ def _supervised_parent_child_frame(
         raise Experiment002CoordinatorError(
             "supervised child result fields have invalid exact types or values"
         )
+    _require_dynamic_class_authority_unchanged(supervised_child_result_authority)
     return (
         pid,
         cpu_ids,
@@ -1768,109 +2205,227 @@ def _supervised_parent_child_frame(
     )
 
 
-def _make_verified_child_result_identity_frame() -> Callable[
-    [object, _ParentExecutionRoutes],
-    _VerifiedChildResultFrame,
+def _make_verified_child_result_snapshot_frame() -> Callable[
+    [object],
+    _VerifiedChildResultSnapshot,
 ]:
     exact_type = type
-    read = getattr
-    fraction_type = Fraction
+    type_cast = cast
+    tuple_type = tuple
+    str_type = str
+    int_type = int
+    bytes_type = bytes
+    float_type = float
+    length = len
+    any_value = any
+    sha256 = hashlib.sha256
+    greatest_common_divisor = math.gcd
+    parse_float_hex = float.fromhex
+    format_float_hex = float.hex
     finite = math.isfinite
     sign = math.copysign
-    binding_frame_route = _dynamic_child_result_binding_frame
     lower_hex = frozenset(_LOWER_HEX)
     error_type = Experiment002CoordinatorError
+    invalid_float_errors = (ValueError, OverflowError)
+    index_range = range
+    seed_role = _SEED_ROLE
+    rerun_role = _RERUN_ROLE
+    registered_seeds = (
+        REGISTERED_SEEDS[0],
+        REGISTERED_SEEDS[1],
+        REGISTERED_SEEDS[2],
+    )
+    history_domain = b"falsewake-exp002-history-v1\0"
+    envelope_domain = b"falsewake-exp002-child-result-envelope-v1\0"
 
-    def identity_frame(
-        result: object,
-        routes: _ParentExecutionRoutes,
+    def snapshot_frame(
+        value: object,
         /,
-    ) -> _VerifiedChildResultFrame:
-        child_result_binding_type = routes[4]
-        verified_child_result_type = routes[5]
-        if exact_type(result) is not verified_child_result_type:
-            raise error_type("verified child result has an invalid exact type")
-        binding = read(result, "binding", None)
-        binding_frame = binding_frame_route(
-            binding,
-            child_result_binding_type,
-        )
-        direct_frame = (
-            read(result, "role", None),
-            read(result, "ordinal", None),
-            read(result, "seed", None),
-            read(result, "registration_head_commit", None),
-            read(result, "implementation_commit", None),
-            read(result, "registration_sha256", None),
-            read(result, "source_bundle_sha256", None),
-        )
+    ) -> _VerifiedChildResultSnapshot:
+        if exact_type(value) is not tuple_type:
+            raise error_type(
+                "verified child result snapshot has an invalid exact shape"
+            )
+        fields = type_cast("tuple[object, ...]", value)
+        if length(fields) != 21:
+            raise error_type(
+                "verified child result snapshot has an invalid exact shape"
+            )
         if (
-            exact_type(direct_frame[0]) is not str
-            or exact_type(direct_frame[1]) is not int
-            or exact_type(direct_frame[2]) is not int
-            or exact_type(direct_frame[3]) is not str
-            or exact_type(direct_frame[4]) is not str
-            or exact_type(direct_frame[5]) is not str
-            or exact_type(direct_frame[6]) is not str
-            or direct_frame != binding_frame
-        ):
-            raise error_type("verified child result identity differs from its binding")
-        winner_epoch = read(result, "winner_epoch", None)
-        winner_macro_f1 = read(result, "winner_macro_f1", None)
-        winner_validation_cross_entropy = read(
-            result,
-            "winner_validation_cross_entropy",
-            None,
-        )
-        model_tensor_sha256 = read(result, "model_tensor_sha256", None)
-        if (
-            exact_type(winner_epoch) is not int
-            or exact_type(winner_macro_f1) is not fraction_type
-            or exact_type(winner_validation_cross_entropy) is not float
-            or exact_type(model_tensor_sha256) is not str
+            exact_type(fields[0]) is not str_type
+            or exact_type(fields[1]) is not int_type
+            or exact_type(fields[2]) is not int_type
+            or any_value(
+                exact_type(fields[index]) is not str_type for index in index_range(3, 7)
+            )
+            or exact_type(fields[7]) is not bytes_type
+            or exact_type(fields[8]) is not int_type
+            or exact_type(fields[9]) is not str_type
+            or exact_type(fields[10]) is not bytes_type
+            or exact_type(fields[11]) is not int_type
+            or exact_type(fields[12]) is not str_type
+            or exact_type(fields[13]) is not bytes_type
+            or exact_type(fields[14]) is not int_type
+            or exact_type(fields[15]) is not str_type
+            or exact_type(fields[16]) is not int_type
+            or exact_type(fields[17]) is not int_type
+            or exact_type(fields[18]) is not int_type
+            or exact_type(fields[19]) is not str_type
+            or exact_type(fields[20]) is not str_type
         ):
             raise error_type(
-                "verified child result rank fields have invalid exact types or values"
+                "verified child result snapshot fields have invalid exact types"
             )
-        typed_winner_epoch = cast(int, winner_epoch)
-        typed_winner_macro_f1 = cast(Fraction, winner_macro_f1)
-        typed_winner_validation_cross_entropy = cast(
-            float,
-            winner_validation_cross_entropy,
-        )
-        typed_model_tensor_sha256 = cast(str, model_tensor_sha256)
+
+        role = type_cast(str, fields[0])
+        ordinal = type_cast(int, fields[1])
+        seed = type_cast(int, fields[2])
+        registration_head_commit = type_cast(str, fields[3])
+        implementation_commit = type_cast(str, fields[4])
+        registration_sha256 = type_cast(str, fields[5])
+        source_bundle_sha256 = type_cast(str, fields[6])
+        history_bytes = type_cast(bytes, fields[7])
+        history_byte_count = type_cast(int, fields[8])
+        history_sha256 = type_cast(str, fields[9])
+        safetensors_bytes = type_cast(bytes, fields[10])
+        safetensors_byte_count = type_cast(int, fields[11])
+        safetensors_sha256 = type_cast(str, fields[12])
+        envelope_bytes = type_cast(bytes, fields[13])
+        envelope_byte_count = type_cast(int, fields[14])
+        envelope_sha256 = type_cast(str, fields[15])
+        winner_epoch = type_cast(int, fields[16])
+        winner_macro_f1_numerator = type_cast(int, fields[17])
+        winner_macro_f1_denominator = type_cast(int, fields[18])
+        winner_validation_cross_entropy_hex = type_cast(str, fields[19])
+        model_tensor_sha256 = type_cast(str, fields[20])
+
+        if role == seed_role:
+            binding_is_registered = (
+                0 <= ordinal < length(registered_seeds)
+                and seed == registered_seeds[ordinal]
+            )
+        else:
+            binding_is_registered = (
+                role == rerun_role
+                and ordinal == length(registered_seeds)
+                and seed in registered_seeds
+            )
+        if not binding_is_registered:
+            raise error_type("verified child result snapshot binding is not registered")
+
+        def require_lower_hex(
+            digest: str,
+            expected_length: int,
+            name: str,
+        ) -> None:
+            if length(digest) != expected_length or any_value(
+                character not in lower_hex for character in digest
+            ):
+                raise error_type(
+                    f"verified child result snapshot {name} is not canonical"
+                )
+
+        require_lower_hex(registration_head_commit, 40, "registration commit")
+        require_lower_hex(implementation_commit, 40, "implementation commit")
+        require_lower_hex(registration_sha256, 64, "registration digest")
+        require_lower_hex(source_bundle_sha256, 64, "source-bundle digest")
+        require_lower_hex(history_sha256, 64, "history digest")
+        require_lower_hex(safetensors_sha256, 64, "safetensors digest")
+        require_lower_hex(envelope_sha256, 64, "envelope digest")
+        require_lower_hex(model_tensor_sha256, 64, "model-tensor digest")
         if (
-            not 0 <= typed_winner_epoch < 30
-            or not fraction_type(0, 1) <= typed_winner_macro_f1 <= fraction_type(1, 1)
-            or not finite(typed_winner_validation_cross_entropy)
-            or not typed_winner_validation_cross_entropy >= 0.0
-            or sign(1.0, typed_winner_validation_cross_entropy) < 0.0
-            or len(typed_model_tensor_sha256) != 64
-            or any(
-                character not in lower_hex for character in typed_model_tensor_sha256
+            registration_head_commit == implementation_commit
+            or history_byte_count <= 0
+            or history_byte_count != length(history_bytes)
+            or safetensors_byte_count <= 0
+            or safetensors_byte_count != length(safetensors_bytes)
+            or envelope_byte_count <= 0
+            or envelope_byte_count != length(envelope_bytes)
+            or sha256(history_domain + history_bytes).hexdigest() != history_sha256
+            or sha256(safetensors_bytes).hexdigest() != safetensors_sha256
+            or sha256(envelope_domain + envelope_bytes).hexdigest() != envelope_sha256
+        ):
+            raise error_type("verified child result snapshot bytes or digests differ")
+
+        if (
+            not 0 <= winner_epoch < 30
+            or winner_macro_f1_numerator < 0
+            or winner_macro_f1_denominator <= 0
+            or winner_macro_f1_numerator > winner_macro_f1_denominator
+            or greatest_common_divisor(
+                winner_macro_f1_numerator,
+                winner_macro_f1_denominator,
             )
+            != 1
         ):
             raise error_type(
-                "verified child result rank fields have invalid exact types or values"
+                "verified child result snapshot rank fields are not canonical"
             )
+        try:
+            winner_validation_cross_entropy = parse_float_hex(
+                winner_validation_cross_entropy_hex
+            )
+        except invalid_float_errors as error:
+            raise error_type(
+                "verified child result snapshot validation loss is invalid"
+            ) from error
+        if (
+            exact_type(winner_validation_cross_entropy) is not float_type
+            or not finite(winner_validation_cross_entropy)
+            or winner_validation_cross_entropy < 0.0
+            or sign(1.0, winner_validation_cross_entropy) < 0.0
+            or format_float_hex(winner_validation_cross_entropy)
+            != winner_validation_cross_entropy_hex
+        ):
+            raise error_type(
+                "verified child result snapshot validation loss is not canonical"
+            )
+
         return (
-            *binding_frame,
-            typed_winner_epoch,
-            typed_winner_macro_f1.numerator,
-            typed_winner_macro_f1.denominator,
-            typed_winner_validation_cross_entropy.hex(),
-            typed_model_tensor_sha256,
+            role,
+            ordinal,
+            seed,
+            registration_head_commit,
+            implementation_commit,
+            registration_sha256,
+            source_bundle_sha256,
+            history_bytes,
+            history_byte_count,
+            history_sha256,
+            safetensors_bytes,
+            safetensors_byte_count,
+            safetensors_sha256,
+            envelope_bytes,
+            envelope_byte_count,
+            envelope_sha256,
+            winner_epoch,
+            winner_macro_f1_numerator,
+            winner_macro_f1_denominator,
+            winner_validation_cross_entropy_hex,
+            model_tensor_sha256,
         )
 
-    return identity_frame
+    return snapshot_frame
 
 
-_verified_child_result_identity_frame = _make_verified_child_result_identity_frame()
-del _make_verified_child_result_identity_frame
+_verified_child_result_snapshot_frame = _make_verified_child_result_snapshot_frame()
+del _make_verified_child_result_snapshot_frame
 
 
 type _ParentInputDescriptorGuard = Callable[[], None]
 type _RegistrationBindingFramer = Callable[[object], _RegistrationBindingFrame]
+type _CoordinatorParentAuthority = tuple[
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+    FunctionType,
+]
+type _CoordinatorParentRouteGuard = Callable[[], None]
 type _ParentChildImplementation = Callable[
     [
         VerifiedRunRegistration,
@@ -1879,6 +2434,8 @@ type _ParentChildImplementation = Callable[
         int,
         _ParentInputDescriptorGuard,
         _RegistrationBindingFramer,
+        _CoordinatorParentAuthority,
+        _CoordinatorParentRouteGuard,
     ],
     _RegisteredParentChildResult,
 ]
@@ -1892,6 +2449,7 @@ def _bind_registered_parent_input_snapshot_authority(
     implementation: _ParentChildImplementation,
     /,
 ) -> _ParentChildRoute:
+    module_globals = globals()
     exact_type = type
     type_cast = cast
     assignment_type = _Assignment
@@ -1933,6 +2491,77 @@ def _bind_registered_parent_input_snapshot_authority(
         REGISTERED_SEEDS[2],
     )
     lower_hex = frozenset(_LOWER_HEX)
+    captured_require_registration = cast(FunctionType, _require_registration)
+    registration_type = VerifiedRunRegistration
+    registration_verifier = cast(FunctionType, verify_verified_run_registration)
+
+    def require_parent_registration(
+        registration: VerifiedRunRegistration,
+        /,
+    ) -> None:
+        if exact_type(registration) is not registration_type:
+            raise TypeError("registration must be an exact VerifiedRunRegistration")
+        verification = registration_verifier(registration)
+        if verification is not None:
+            raise error_type("run-registration verifier returned an unexpected value")
+
+    coordinator_route_names = (
+        "_require_registration",
+        "_registration_binding",
+        "_claim_and_verify_parent_execution_routes",
+        "_require_parent_execution_routes_unchanged",
+        "_build_registered_child_result_binding",
+        "_parent_activate_child",
+        "_supervised_parent_child_frame",
+        "_verified_child_result_snapshot_frame",
+        "_dynamic_child_result_binding_frame",
+    )
+    coordinator_global_routes = cast(
+        _CoordinatorParentAuthority,
+        (
+            captured_require_registration,
+            _registration_binding,
+            _claim_and_verify_parent_execution_routes,
+            _require_parent_execution_routes_unchanged,
+            _build_registered_child_result_binding,
+            _parent_activate_child,
+            _supervised_parent_child_frame,
+            _verified_child_result_snapshot_frame,
+            _dynamic_child_result_binding_frame,
+        ),
+    )
+    coordinator_parent_authority = cast(
+        _CoordinatorParentAuthority,
+        (require_parent_registration, *coordinator_global_routes[1:]),
+    )
+    if any(
+        exact_type(route) is not FunctionType for route in coordinator_parent_authority
+    ):
+        raise RuntimeError("coordinator parent route authority is unavailable")
+    capture_function_integrity = _capture_recursive_function_integrity
+    require_function_integrity = _require_recursive_function_integrity_unchanged
+    coordinator_function_integrity = capture_function_integrity(
+        cast(
+            tuple[FunctionType, ...],
+            (
+                *coordinator_parent_authority,
+                captured_require_registration,
+                registration_verifier,
+            ),
+        )
+    )
+
+    def require_coordinator_parent_routes_unchanged() -> None:
+        if any(
+            module_globals.get(name) is not coordinator_global_routes[index]
+            for index, name in enumerate(coordinator_route_names)
+        ) or (
+            module_globals.get("VerifiedRunRegistration") is not registration_type
+            or module_globals.get("verify_verified_run_registration")
+            is not registration_verifier
+        ):
+            raise error_type("coordinator parent execution routes changed")
+        require_function_integrity(coordinator_function_integrity)
 
     def require_input_descriptors_unchanged() -> None:
         if (
@@ -2089,6 +2718,7 @@ def _bind_registered_parent_input_snapshot_authority(
             raise error_type("source bundle descriptor has an invalid exact value")
         require_input_descriptors_unchanged()
         try:
+            require_coordinator_parent_routes_unchanged()
             result = implementation(
                 registration,
                 assignment_snapshot_frame,
@@ -2096,17 +2726,21 @@ def _bind_registered_parent_input_snapshot_authority(
                 source_bundle_fd,
                 require_input_descriptors_unchanged,
                 registration_binding_frame,
+                coordinator_parent_authority,
+                require_coordinator_parent_routes_unchanged,
             )
         except base_exception_type as primary:
             try:
                 require_input_descriptors_unchanged()
+                require_coordinator_parent_routes_unchanged()
             except base_exception_type:
                 raise error_type(
-                    "registered parent execution failed after its input "
-                    "descriptors changed"
+                    "registered parent execution failed after its input descriptors "
+                    "changed or coordinator parent execution routes changed"
                 ) from primary
             raise
         require_input_descriptors_unchanged()
+        require_coordinator_parent_routes_unchanged()
         return result
 
     return _run_one_registered_parent_child
@@ -2120,51 +2754,30 @@ def _run_one_registered_parent_child(
     source_bundle_fd: int,
     require_input_descriptors_unchanged: _ParentInputDescriptorGuard,
     registration_binding_frame: _RegistrationBindingFramer,
+    coordinator_parent_authority: _CoordinatorParentAuthority,
+    require_coordinator_parent_routes_unchanged: _CoordinatorParentRouteGuard,
     /,
 ) -> _RegisteredParentChildResult:
     """Run one fixed registered child while borrowing parent-owned resources."""
 
-    require_registration = _require_registration
-    registration_binding_route = _registration_binding
-    claim_parent_execution_routes = _claim_and_verify_parent_execution_routes
-    require_parent_execution_routes_unchanged = (
-        _require_parent_execution_routes_unchanged
-    )
-    build_child_result_binding = _build_registered_child_result_binding
-    parent_activate_child = _parent_activate_child
-    supervised_parent_child_frame = _supervised_parent_child_frame
-    verified_child_result_identity_frame = _verified_child_result_identity_frame
-    dynamic_child_result_binding_frame = _dynamic_child_result_binding_frame
-    fraction_type = Fraction
-    math_module = math
-    finite = math.isfinite
-    sign = math.copysign
-    lower_hex = _LOWER_HEX
-
-    def require_coordinator_parent_routes_unchanged() -> None:
-        if (
-            _require_registration is not require_registration
-            or _registration_binding is not registration_binding_route
-            or _claim_and_verify_parent_execution_routes
-            is not claim_parent_execution_routes
-            or _require_parent_execution_routes_unchanged
-            is not require_parent_execution_routes_unchanged
-            or _build_registered_child_result_binding is not build_child_result_binding
-            or _parent_activate_child is not parent_activate_child
-            or _supervised_parent_child_frame is not supervised_parent_child_frame
-            or _verified_child_result_identity_frame
-            is not verified_child_result_identity_frame
-            or _dynamic_child_result_binding_frame
-            is not dynamic_child_result_binding_frame
-            or Fraction is not fraction_type
-            or math is not math_module
-            or math.isfinite is not finite
-            or math.copysign is not sign
-            or _LOWER_HEX is not lower_hex
-        ):
-            raise Experiment002CoordinatorError(
-                "coordinator parent execution routes changed"
-            )
+    if (
+        type(coordinator_parent_authority) is not tuple
+        or len(coordinator_parent_authority) != 9
+    ):
+        raise Experiment002CoordinatorError(
+            "coordinator parent execution authority is invalid"
+        )
+    (
+        require_registration,
+        registration_binding_route,
+        claim_parent_execution_routes,
+        require_parent_execution_routes_unchanged,
+        build_child_result_binding,
+        parent_activate_child,
+        supervised_parent_child_frame,
+        verified_child_result_snapshot_frame,
+        dynamic_child_result_binding_frame,
+    ) = coordinator_parent_authority
 
     require_input_descriptors_unchanged()
     require_registration(registration)
@@ -2197,7 +2810,12 @@ def _run_one_registered_parent_child(
         _verified_child_result_type,
         _load_registered_child_result,
         verify_verified_child_result_route,
+        snapshot_verified_child_result_route,
+        _supervised_child_result_authority,
+        child_result_binding_authority,
+        _function_integrity_frame,
     ) = routes
+    child_result_binding_descriptors = child_result_binding_authority[3]
     require_coordinator_parent_routes_unchanged()
     imported_registration_frame = registration_binding_frame(
         registration_binding_route(registration)
@@ -2220,10 +2838,12 @@ def _run_one_registered_parent_child(
     first_child_result_binding_frame = dynamic_child_result_binding_frame(
         child_result_binding,
         child_result_binding_type,
+        child_result_binding_descriptors,
     )
     second_child_result_binding_frame = dynamic_child_result_binding_frame(
         child_result_binding,
         child_result_binding_type,
+        child_result_binding_descriptors,
     )
     if (
         first_child_result_binding_frame != expected_child_result_binding_frame
@@ -2252,7 +2872,36 @@ def _run_one_registered_parent_child(
             raise Experiment002CoordinatorError(
                 "run registration changed across the parent execution boundary"
             )
+        current_child_result_binding_frame = dynamic_child_result_binding_frame(
+            child_result_binding,
+            child_result_binding_type,
+            child_result_binding_descriptors,
+        )
+        if current_child_result_binding_frame != expected_child_result_binding_frame:
+            raise Experiment002CoordinatorError(
+                "registered child-result binding changed across the parent boundary"
+            )
         require_input_descriptors_unchanged()
+
+    def call_verified_child_route(
+        route: Callable[[object], object],
+        value: object,
+        route_name: str,
+        /,
+    ) -> object:
+        require_stable_parent_boundary()
+        try:
+            route_result = route(value)
+        except BaseException as primary:
+            try:
+                require_stable_parent_boundary()
+            except BaseException:
+                raise Experiment002CoordinatorError(
+                    f"{route_name} failed after its parent authority changed"
+                ) from primary
+            raise
+        require_stable_parent_boundary()
+        return route_result
 
     activation_lock = threading.Lock()
     accepting_activation = True
@@ -2272,6 +2921,8 @@ def _run_one_registered_parent_child(
                     "supervisor attempted child activation more than once"
                 )
             require_input_descriptors_unchanged()
+            require_parent_execution_routes_unchanged(routes)
+            require_registration(registration)
             parent_activate_child(
                 channel,
                 registration,
@@ -2279,7 +2930,7 @@ def _run_one_registered_parent_child(
                 seed=assignment_seed,
                 child_pid=child_pid,
             )
-            require_input_descriptors_unchanged()
+            require_stable_parent_boundary()
             if activated_pid is not None:
                 raise Experiment002CoordinatorError(
                     "supervisor completed child activation more than once"
@@ -2296,12 +2947,14 @@ def _run_one_registered_parent_child(
     )
     try:
         try:
+            require_stable_parent_boundary()
             supervised = supervise_child(
                 cpu_ids_snapshot,
                 activate,
                 source_bundle_fd,
                 child_result_binding,
             )
+            require_stable_parent_boundary()
         finally:
             with activation_lock:
                 accepting_activation = False
@@ -2310,7 +2963,8 @@ def _run_one_registered_parent_child(
             require_stable_parent_boundary()
         except BaseException:
             raise Experiment002CoordinatorError(
-                "child supervision failed after its parent boundary changed"
+                "child supervision failed after its parent boundary changed "
+                "(routes or authority)"
             ) from primary
         raise
     try:
@@ -2334,38 +2988,55 @@ def _run_one_registered_parent_child(
                 "supervised child result differs from its activation or CPU assignment"
             )
         verified_child_result = first[-1]
+        snapshotter = cast(
+            Callable[[object], object],
+            snapshot_verified_child_result_route,
+        )
         verifier = cast(
             Callable[[object], object],
             verify_verified_child_result_route,
         )
-        verification = verifier(verified_child_result)
-        if verification is not None:
-            raise Experiment002CoordinatorError(
-                "verified child-result verifier returned an unexpected value"
-            )
         expected_identity = (
             assignment_role,
             assignment_ordinal,
             assignment_seed,
             *initial_registration_frame,
         )
-        first_identity = verified_child_result_identity_frame(
-            verified_child_result,
-            routes,
-        )
-        second_identity = verified_child_result_identity_frame(
-            verified_child_result,
-            routes,
-        )
-        if first_identity[:7] != expected_identity or second_identity != first_identity:
-            raise Experiment002CoordinatorError(
-                "verified child result differs from its registered assignment"
+        first_snapshot = verified_child_result_snapshot_frame(
+            call_verified_child_route(
+                snapshotter,
+                verified_child_result,
+                "verified child-result snapshotter",
             )
-        verification = verifier(verified_child_result)
+        )
+        if first_snapshot[:7] != expected_identity:
+            raise Experiment002CoordinatorError(
+                "verified child result snapshot differs from its registered assignment"
+            )
+        verification = call_verified_child_route(
+            verifier,
+            verified_child_result,
+            "verified child-result verifier",
+        )
         if verification is not None:
             raise Experiment002CoordinatorError(
                 "verified child-result verifier returned an unexpected value"
             )
+        second_snapshot = verified_child_result_snapshot_frame(
+            call_verified_child_route(
+                snapshotter,
+                verified_child_result,
+                "verified child-result snapshotter",
+            )
+        )
+        if (
+            second_snapshot != first_snapshot
+            or second_snapshot[:7] != expected_identity
+        ):
+            raise Experiment002CoordinatorError(
+                "verified child result snapshots changed across verification"
+            )
+        require_stable_parent_boundary()
 
         third = supervised_parent_child_frame(supervised, routes)
         fourth = supervised_parent_child_frame(supervised, routes)
@@ -2378,22 +3049,6 @@ def _run_one_registered_parent_child(
             raise Experiment002CoordinatorError(
                 "supervised child result changed after final verification"
             )
-        third_identity = verified_child_result_identity_frame(
-            verified_child_result,
-            routes,
-        )
-        fourth_identity = verified_child_result_identity_frame(
-            verified_child_result,
-            routes,
-        )
-        if (
-            third_identity != first_identity
-            or fourth_identity != third_identity
-            or third_identity[:7] != expected_identity
-        ):
-            raise Experiment002CoordinatorError(
-                "verified child result changed after final verification"
-            )
         require_stable_parent_boundary()
         registered_result = (
             third[0],
@@ -2401,20 +3056,23 @@ def _run_one_registered_parent_child(
             third[2],
             third[3],
             third[4],
-            cast(
-                _VerifiedChildResultView,
-                verified_child_result,
-            ),
+            second_snapshot,
         )
         require_stable_parent_boundary()
     except BaseException as primary:
         try:
             require_stable_parent_boundary()
         except BaseException:
+            cause = (
+                primary.__cause__
+                if type(primary) is Experiment002CoordinatorError
+                and primary.__cause__ is not None
+                else primary
+            )
             raise Experiment002CoordinatorError(
                 "child result validation failed after its registration or "
                 "coordinator parent execution routes changed"
-            ) from primary
+            ) from cause
         raise
     return registered_result
 
