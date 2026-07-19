@@ -323,6 +323,20 @@ type _RegisteredStagingLeaseFrame = tuple[
 ]
 
 
+@dataclass(slots=True, eq=False)
+class _RegisteredParentLifecycleState:
+    """One stable identity containing every authorized lifecycle mutation."""
+
+    owner_thread: int | None
+    phase: int
+    lease: _PinnedRoot | None
+    lease_frame: _RegisteredStagingLeaseFrame | None
+    namespace_owned: bool
+    children_started: int
+    children_completed: int
+    cleanup_attempted: bool
+
+
 @dataclass(frozen=True, slots=True)
 class _ChildResourceMetrics:
     pid: int
@@ -3285,48 +3299,201 @@ def _bind_registered_parent_lifecycle() -> tuple[
     get_thread_id = threading.get_ident
     error_type = Experiment002SupervisorError
     base_exception_type = BaseException
+    module_globals = globals()
+    state_type = _RegisteredParentLifecycleState
+    pinned_root_type = _PinnedRoot
+    pinned_parent_type = _PinnedParent
+    state_field_names = (
+        "owner_thread",
+        "phase",
+        "lease",
+        "lease_frame",
+        "namespace_owned",
+        "children_started",
+        "children_completed",
+        "cleanup_attempted",
+    )
+    state_namespace = state_type.__dict__
+    state_namespace_names = tuple(sorted(state_namespace))
+    state_namespace_values = tuple(
+        state_namespace[name] for name in state_namespace_names
+    )
+    state_descriptors = tuple(state_namespace.get(name) for name in state_field_names)
+    if any(
+        exact_type(descriptor) is not MemberDescriptorType
+        for descriptor in state_descriptors
+    ):
+        raise RuntimeError("registered parent lifecycle state slots are unavailable")
     state_lock = threading.Lock()
     owner_process = get_process_id()
-    owner_thread: int | None = None
-    phase = fresh
-    lease: _PinnedRoot | None = None
-    lease_frame: _RegisteredStagingLeaseFrame | None = None
-    namespace_owned = False
-    children_started = 0
-    children_completed = 0
-    cleanup_attempted = False
+    state = state_type(
+        owner_thread=None,
+        phase=fresh,
+        lease=None,
+        lease_frame=None,
+        namespace_owned=False,
+        children_started=0,
+        children_completed=0,
+        cleanup_attempted=False,
+    )
+
+    def fail_invalid_state(message: str) -> NoReturn:
+        raise error_type(f"registered parent lifecycle state is invalid: {message}")
+
+    def require_state_class_authority() -> None:
+        current_namespace = state_type.__dict__
+        if (
+            module_globals.get("_RegisteredParentLifecycleState") is not state_type
+            or tuple(sorted(current_namespace)) != state_namespace_names
+            or any(
+                current_namespace[name] is not state_namespace_values[index]
+                for index, name in enumerate(state_namespace_names)
+            )
+            or any(
+                current_namespace.get(name) is not state_descriptors[index]
+                for index, name in enumerate(state_field_names)
+            )
+        ):
+            fail_invalid_state("class authority changed")
+
+    def require_state_invariants() -> None:
+        require_state_class_authority()
+        owner_thread = state.owner_thread
+        current_phase = state.phase
+        current_lease = state.lease
+        current_frame = state.lease_frame
+        namespace_is_owned = state.namespace_owned
+        started = state.children_started
+        completed = state.children_completed
+        cleanup_was_attempted = state.cleanup_attempted
+        if (
+            exact_type(state) is not state_type
+            or (
+                owner_thread is not None
+                and (exact_type(owner_thread) is not int or owner_thread < 1)
+            )
+            or exact_type(current_phase) is not int
+            or current_phase
+            not in {
+                fresh,
+                preparing,
+                active,
+                child_running,
+                cleaning,
+                closed,
+                failed_without_lease,
+                failed_with_lease,
+            }
+            or exact_type(namespace_is_owned) is not bool
+            or exact_type(started) is not int
+            or exact_type(completed) is not int
+            or not 0 <= completed <= started <= maximum_children
+            or started - completed not in {0, 1}
+            or exact_type(cleanup_was_attempted) is not bool
+        ):
+            fail_invalid_state("field types, ranges, or phase are inconsistent")
+
+        lease_is_absent = current_lease is None and current_frame is None
+        lease_is_paired = (
+            exact_type(current_lease) is pinned_root_type
+            and exact_type(current_frame) is tuple
+            and len(cast(tuple[object, ...], current_frame)) == 7
+            and cast(tuple[object, ...], current_frame)[0] is current_lease
+            and cast(tuple[object, ...], current_frame)[1]
+            == cast(_PinnedRoot, current_lease).descriptor
+            and cast(tuple[object, ...], current_frame)[2]
+            == cast(_PinnedRoot, current_lease).identity
+            and cast(tuple[object, ...], current_frame)[3]
+            is cast(_PinnedRoot, current_lease).parent
+            and exact_type(cast(_PinnedRoot, current_lease).parent)
+            is pinned_parent_type
+            and cast(tuple[object, ...], current_frame)[4]
+            == cast(_PinnedRoot, current_lease).parent.descriptors
+            and cast(tuple[object, ...], current_frame)[5]
+            == cast(_PinnedRoot, current_lease).parent.identities
+            and cast(tuple[object, ...], current_frame)[6]
+            == cast(_PinnedRoot, current_lease).parent.components
+        )
+        if not lease_is_absent and not lease_is_paired:
+            fail_invalid_state("staging lease and frame are not exactly paired")
+
+        if current_phase == fresh:
+            legal = (
+                lease_is_absent
+                and not namespace_is_owned
+                and started == completed == 0
+                and not cleanup_was_attempted
+            )
+        elif current_phase == preparing:
+            legal = (
+                not namespace_is_owned
+                and started == completed == 0
+                and not cleanup_was_attempted
+            )
+        elif current_phase == active:
+            legal = (
+                lease_is_paired
+                and namespace_is_owned
+                and started == completed
+                and not cleanup_was_attempted
+            )
+        elif current_phase == child_running:
+            legal = (
+                lease_is_paired
+                and namespace_is_owned
+                and started == completed + 1
+                and not cleanup_was_attempted
+            )
+        elif current_phase == cleaning:
+            legal = cleanup_was_attempted
+        elif current_phase == closed:
+            legal = lease_is_absent and cleanup_was_attempted
+        elif current_phase == failed_without_lease:
+            legal = lease_is_absent
+        else:
+            legal = lease_is_paired and not cleanup_was_attempted
+        if not legal:
+            fail_invalid_state("phase and retained authority disagree")
 
     def enter() -> None:
-        nonlocal owner_thread
         if get_process_id() != owner_process:
             raise error_type("registered parent lifecycle was inherited by a fork")
         if not state_lock.acquire(blocking=False):
             raise error_type("registered parent lifecycle call overlaps another call")
-        current_thread = get_thread_id()
-        if exact_type(current_thread) is not int:
+        try:
+            require_state_invariants()
+            current_thread = get_thread_id()
+            if exact_type(current_thread) is not int or current_thread < 1:
+                raise error_type("registered parent thread identity is invalid")
+            if state.owner_thread is None:
+                state.owner_thread = current_thread
+            elif current_thread != state.owner_thread:
+                raise error_type("registered parent lifecycle caller changed")
+            require_state_invariants()
+        except base_exception_type:
             state_lock.release()
-            raise error_type("registered parent thread identity is invalid")
-        if owner_thread is None:
-            owner_thread = current_thread
-        elif current_thread != owner_thread:
-            state_lock.release()
-            raise error_type("registered parent lifecycle caller changed")
+            raise
 
     def leave() -> None:
-        state_lock.release()
+        try:
+            require_state_invariants()
+        finally:
+            state_lock.release()
 
     def poison() -> None:
-        nonlocal phase
-        phase = failed_with_lease if lease is not None else failed_without_lease
+        state.phase = (
+            failed_with_lease if state.lease is not None else failed_without_lease
+        )
 
     def require_lease() -> _PinnedRoot:
-        current = lease
-        frame = lease_frame
+        current = state.lease
+        frame = state.lease_frame
         if (
             current is None
             or frame is None
-            or exact_type(current) is not _PinnedRoot
+            or exact_type(current) is not pinned_root_type
             or exact_type(frame) is not tuple
+            or len(frame) != 7
             or frame[0] is not current
             or current.descriptor != frame[1]
             or current.identity != frame[2]
@@ -3409,9 +3576,8 @@ def _bind_registered_parent_lifecycle() -> tuple[
             )
 
     def cleanup_owned_lease(*, remove_scratch: bool) -> tuple[BaseException, ...]:
-        nonlocal lease, lease_frame
-        current = lease
-        frame = lease_frame
+        current = state.lease
+        frame = state.lease_frame
         if current is None:
             return ()
         failures: list[BaseException] = []
@@ -3441,25 +3607,25 @@ def _bind_registered_parent_lifecycle() -> tuple[
             current.close()
         except base_exception_type as error:
             failures.append(error)
-        lease = None
-        lease_frame = None
+        state.lease = None
+        state.lease_frame = None
         return tuple(failures)
 
     def _prepare_registered_experiment_staging() -> None:
-        nonlocal phase, lease, lease_frame, namespace_owned
         enter()
         try:
-            if phase != fresh:
+            if state.phase != fresh:
                 raise error_type("registered parent lifecycle prepare was replayed")
-            phase = preparing
+            state.phase = preparing
+            require_state_invariants()
             try:
                 observed, containment_failures = contain_direct_children()
                 raise_for_quiescence(observed, containment_failures)
                 require_absent(scratch_path)
                 require_absent(staging_path)
                 created = create_and_pin(staging_path)
-                lease = created
-                lease_frame = (
+                state.lease = created
+                state.lease_frame = (
                     created,
                     created.descriptor,
                     created.identity,
@@ -3470,12 +3636,13 @@ def _bind_registered_parent_lifecycle() -> tuple[
                 )
                 require_absent(scratch_path)
                 require_lease()
-                namespace_owned = True
-                phase = active
+                state.namespace_owned = True
+                state.phase = active
+                require_state_invariants()
             except base_exception_type as primary:
                 poison()
                 cleanup_failures = cleanup_owned_lease(remove_scratch=False)
-                phase = failed_without_lease
+                state.phase = failed_without_lease
                 if cleanup_failures:
                     raise error_type(
                         "registered staging preparation failed with cleanup errors"
@@ -3485,11 +3652,13 @@ def _bind_registered_parent_lifecycle() -> tuple[
             leave()
 
     def _require_registered_parent_quiescence() -> None:
-        nonlocal phase
         enter()
         try:
-            terminal_phase = phase in {failed_without_lease, failed_with_lease}
-            if phase not in {
+            terminal_phase = state.phase in {
+                failed_without_lease,
+                failed_with_lease,
+            }
+            if state.phase not in {
                 fresh,
                 active,
                 closed,
@@ -3501,7 +3670,7 @@ def _bind_registered_parent_lifecycle() -> tuple[
                 )
             observed, failures = contain_direct_children()
             if observed or failures:
-                if phase != closed:
+                if state.phase != closed:
                     poison()
                 raise_for_quiescence(observed, failures)
             if terminal_phase:
@@ -3510,14 +3679,13 @@ def _bind_registered_parent_lifecycle() -> tuple[
             leave()
 
     def begin_registered_child() -> None:
-        nonlocal phase, children_started
         enter()
         try:
-            if phase != active:
-                if phase != closed:
+            if state.phase != active:
+                if state.phase != closed:
                     poison()
                 raise error_type("registered child requires one active staging lease")
-            if children_started >= maximum_children:
+            if state.children_started >= maximum_children:
                 poison()
                 raise error_type("registered parent attempted more than four children")
             try:
@@ -3527,16 +3695,16 @@ def _bind_registered_parent_lifecycle() -> tuple[
             except base_exception_type:
                 poison()
                 raise
-            children_started += 1
-            phase = child_running
+            state.children_started += 1
+            state.phase = child_running
+            require_state_invariants()
         finally:
             leave()
 
     def finish_registered_child_success() -> None:
-        nonlocal phase, children_completed
         enter()
         try:
-            if phase != child_running:
+            if state.phase != child_running:
                 poison()
                 raise error_type("registered child completion phase is invalid")
             try:
@@ -3546,19 +3714,19 @@ def _bind_registered_parent_lifecycle() -> tuple[
             except base_exception_type:
                 poison()
                 raise
-            children_completed += 1
-            if children_completed != children_started:
+            state.children_completed += 1
+            if state.children_completed != state.children_started:
                 poison()
                 raise error_type("registered child completion count is invalid")
-            phase = active
+            state.phase = active
+            require_state_invariants()
         finally:
             leave()
 
     def finish_registered_child_failure() -> None:
-        nonlocal phase
         enter()
         try:
-            if phase != child_running:
+            if state.phase != child_running:
                 poison()
                 raise error_type("registered child failure phase is invalid")
             boundary_failures: list[BaseException] = []
@@ -3583,19 +3751,19 @@ def _bind_registered_parent_lifecycle() -> tuple[
             leave()
 
     def _cleanup_registered_experiment_output_roots() -> None:
-        nonlocal phase, cleanup_attempted
         enter()
         try:
-            if phase == closed:
+            if state.phase == closed:
                 return
-            if phase in {child_running, cleaning}:
+            if state.phase in {child_running, cleaning}:
                 raise error_type(
                     "registered output cleanup overlaps an active lifecycle phase"
                 )
-            if cleanup_attempted:
+            if state.cleanup_attempted:
                 raise error_type("failed registered output cleanup was replayed")
-            cleanup_attempted = True
-            phase = cleaning
+            state.cleanup_attempted = True
+            state.phase = cleaning
+            require_state_invariants()
             failures: list[BaseException] = []
             observed_before, before_failures = contain_direct_children()
             if observed_before:
@@ -3605,7 +3773,8 @@ def _bind_registered_parent_lifecycle() -> tuple[
                     )
                 )
             failures.extend(before_failures)
-            failures.extend(cleanup_owned_lease(remove_scratch=namespace_owned))
+            failures.extend(cleanup_owned_lease(remove_scratch=state.namespace_owned))
+            require_state_invariants()
             observed_after, after_failures = contain_direct_children()
             if observed_after:
                 failures.append(
@@ -3615,11 +3784,12 @@ def _bind_registered_parent_lifecycle() -> tuple[
                 )
             failures.extend(after_failures)
             if failures:
-                phase = failed_without_lease
+                state.phase = failed_without_lease
                 raise error_type(
                     "registered output cleanup failed after all containment phases"
                 ) from failures[0]
-            phase = closed
+            state.phase = closed
+            require_state_invariants()
         finally:
             leave()
 

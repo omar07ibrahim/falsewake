@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from types import ModuleType
+from types import FunctionType, ModuleType
 from typing import Any, Literal, cast
 
 import pytest
@@ -993,6 +993,36 @@ def _route_closure(route: Callable[..., object]) -> dict[str, object]:
     }
 
 
+_LIFECYCLE_MUTABLE_STATE_FIELDS = frozenset(
+    {
+        "owner_thread",
+        "phase",
+        "lease",
+        "lease_frame",
+        "namespace_owned",
+        "children_started",
+        "children_completed",
+        "cleanup_attempted",
+    }
+)
+
+
+def _reachable_closure_functions(*roots: FunctionType) -> tuple[FunctionType, ...]:
+    pending = list(roots)
+    seen: set[int] = set()
+    functions: list[FunctionType] = []
+    while pending:
+        function = pending.pop()
+        if id(function) in seen:
+            continue
+        seen.add(id(function))
+        functions.append(function)
+        for value in _route_closure(function).values():
+            if type(value) is FunctionType:
+                pending.append(value)
+    return tuple(functions)
+
+
 def _isolated_supervisor_error(module: ModuleType) -> type[Exception]:
     return cast("type[Exception]", cast(Any, module).Experiment002SupervisorError)
 
@@ -1007,6 +1037,10 @@ def test_registered_lifecycle_routes_share_one_deleted_closure_authority() -> No
     assert not hasattr(supervisor, "_bind_registered_parent_lifecycle")
     assert closures[0]["enter"] is closures[1]["enter"]
     assert closures[1]["enter"] is closures[2]["enter"]
+    state = closures[0]["state"]
+    assert type(state) is supervisor._RegisteredParentLifecycleState
+    assert closures[1]["state"] is state
+    assert closures[2]["state"] is state
     enter = cast(Callable[..., object], closures[0]["enter"])
     assert type(_route_closure(enter)["state_lock"]) is type(threading.Lock())
     assert (
@@ -1019,6 +1053,28 @@ def test_registered_lifecycle_routes_share_one_deleted_closure_authority() -> No
         containment_closure["require_single_parent_thread"]
         is _REAL_REQUIRE_SINGLE_PARENT_THREAD
     )
+    roots = cast(
+        "tuple[FunctionType, ...]",
+        (
+            *routes,
+            supervisor._begin_registered_supervisor_child,
+            supervisor._finish_registered_supervisor_child_success,
+            supervisor._finish_registered_supervisor_child_failure,
+            supervisor._supervise_registered_child,
+        ),
+    )
+    functions = _reachable_closure_functions(*roots)
+    assert all(
+        _LIFECYCLE_MUTABLE_STATE_FIELDS.isdisjoint(function.__code__.co_freevars)
+        for function in functions
+    )
+    captured_states = {
+        value
+        for function in functions
+        for name, value in _route_closure(function).items()
+        if name == "state"
+    }
+    assert captured_states == {state}
 
 
 def test_registered_lifecycle_runs_exactly_four_guarded_children_then_cleans(
@@ -1051,6 +1107,112 @@ def test_registered_lifecycle_runs_exactly_four_guarded_children_then_cleans(
         assert len(calls) == 4
         assert kernel.journal_calls >= 12
         assert not scratch.exists() and not staging.exists()
+
+
+def test_registered_lifecycle_mutations_preserve_coordinator_recursive_integrity(
+    tmp_path: Path,
+) -> None:
+    from falsewake import experiment_002_coordinator as coordinator
+
+    with _isolated_registered_supervisor(tmp_path) as (
+        isolated,
+        _kernel,
+        calls,
+        behavior,
+    ):
+        routes = cast(
+            "tuple[FunctionType, ...]",
+            (
+                isolated._prepare_registered_experiment_staging,
+                isolated._require_registered_parent_quiescence,
+                isolated._cleanup_registered_experiment_output_roots,
+                isolated._supervise_registered_child,
+            ),
+        )
+        integrity = coordinator._capture_recursive_function_integrity(routes)
+        coordinator._require_recursive_function_integrity_unchanged(integrity)
+        state = _route_closure(routes[0])["state"]
+        assert type(state) is cast(Any, isolated)._RegisteredParentLifecycleState
+
+        isolated._prepare_registered_experiment_staging()
+        coordinator._require_recursive_function_integrity_unchanged(integrity)
+        assert cast(Any, state).phase == 2
+
+        def verify_child_running_integrity() -> object:
+            assert cast(Any, state).phase == 3
+            assert (
+                cast(Any, state).children_started
+                == cast(Any, state).children_completed + 1
+            )
+            coordinator._require_recursive_function_integrity_unchanged(integrity)
+            return object()
+
+        behavior[0] = verify_child_running_integrity
+        for ordinal in range(4):
+            isolated._supervise_registered_child(
+                (2, 7),
+                object(),
+                90 + ordinal,
+                _DEFAULT_RESULT_CASE.binding,
+            )
+            coordinator._require_recursive_function_integrity_unchanged(integrity)
+            assert cast(Any, state).phase == 2
+            assert cast(Any, state).children_started == ordinal + 1
+            assert cast(Any, state).children_completed == ordinal + 1
+
+        isolated._cleanup_registered_experiment_output_roots()
+        coordinator._require_recursive_function_integrity_unchanged(integrity)
+        assert cast(Any, state).phase == 5
+        assert cast(Any, state).lease is None
+        assert cast(Any, state).lease_frame is None
+        assert len(calls) == 4
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    (
+        ("owner_thread", True),
+        ("phase", 99),
+        ("lease", object()),
+        ("lease_frame", ()),
+        ("namespace_owned", 1),
+        ("children_started", 5),
+        ("children_completed", 1),
+        ("cleanup_attempted", 1),
+    ),
+)
+def test_registered_lifecycle_rejects_invalid_stable_state_fields(
+    tmp_path: Path,
+    field: str,
+    invalid: object,
+) -> None:
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        state = _route_closure(isolated._require_registered_parent_quiescence)["state"]
+        setattr(state, field, invalid)
+        with pytest.raises(
+            _isolated_supervisor_error(isolated),
+            match="lifecycle state is invalid",
+        ):
+            isolated._require_registered_parent_quiescence()
+
+
+@pytest.mark.parametrize("tamper", ("global", "descriptor"))
+def test_registered_lifecycle_rejects_stable_state_class_authority_tamper(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        dynamic = cast(Any, isolated)
+        state_type = dynamic._RegisteredParentLifecycleState
+        if tamper == "global":
+            dynamic._RegisteredParentLifecycleState = object
+        else:
+            state_type.phase = object()
+        with pytest.raises(
+            _isolated_supervisor_error(isolated),
+            match="class authority changed",
+        ):
+            isolated._require_registered_parent_quiescence()
 
 
 @pytest.mark.parametrize("root_name", ["scratch_root", "staging_root"])
@@ -1337,9 +1499,10 @@ def test_registered_cleanup_aggregates_failure_after_scrub_and_is_not_replayed(
         plan = cast(Any, isolated)._REGISTERED_PLAN
         staging = Path(plan.staging_root)
         isolated._prepare_registered_experiment_staging()
-        retained_lease = _route_closure(
+        retained_state = _route_closure(
             isolated._prepare_registered_experiment_staging
-        )["lease"]
+        )["state"]
+        retained_lease = cast(Any, retained_state).lease
         payload = staging / "owned"
         payload.write_bytes(b"scrub even on failure")
         with pytest.raises(
