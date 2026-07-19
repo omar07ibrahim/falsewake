@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.machinery
 import importlib.metadata
 import json
 import os
@@ -62,13 +63,16 @@ _CHILD_BUNDLE_MAGIC: Final = b"FW2CHLD1"
 _CHILD_BUNDLE_VERSION: Final = 1
 _CHILD_BUNDLE_HEADER: Final = struct.Struct("<8sI40s40s64s64sIQQ")
 _MAX_CHILD_BUNDLE_BYTES: Final = 256 << 20
+_SEALED_CHILD_BUNDLE_FD: Final = 7
+_SEALED_CHILD_MEMFD_TARGET: Final = "/memfd:falsewake-exp002-child-bundle (deleted)"
+_SEALED_ORIGIN_PREFIX: Final = "falsewake-sealed://experiment-002/"
+_PARENT_ORIGIN_KIND: Final = "parent_repository"
+_SEALED_CHILD_ORIGIN_KIND: Final = "sealed_child"
 _LOWER_HEX_40 = frozenset("0123456789abcdef")
 _LOWER_HEX_64 = _LOWER_HEX_40
 _ISSUER_MARKER: Final = object()
 _AUTHORITY_PROCESS_ID: Final = os.getpid()
 _PATH_TYPE: Final = type(Path())
-_EXECUTING_FILE: Final = Path(__file__).absolute()
-_LOADED_SOURCE_SHA256: Final = hashlib.sha256(_EXECUTING_FILE.read_bytes()).hexdigest()
 
 
 class Experiment002RunAuthorityError(ValueError):
@@ -77,6 +81,197 @@ class Experiment002RunAuthorityError(ValueError):
 
 class _ForkReinitializableLock(Protocol):
     def _at_fork_reinit(self) -> None: ...
+
+
+class _SourceDataLoader(Protocol):
+    def get_data(self, origin: str) -> bytes: ...
+
+
+class _GetDataRoute(Protocol):
+    def __call__(self, origin: str) -> bytes: ...
+
+
+class _FinderVerifierRoute(Protocol):
+    def __call__(self) -> None: ...
+
+
+def _capture_loaded_authority_source() -> tuple[
+    str,
+    Path,
+    str,
+    object,
+    object,
+    object,
+    object,
+    object | None,
+    object | None,
+    tuple[object, ...],
+    object | None,
+    tuple[str, ...],
+    str,
+]:
+    spec = globals().get("__spec__")
+    module = sys.modules.get(__name__)
+    if type(spec) is not importlib.machinery.ModuleSpec or module is None:
+        raise Experiment002RunAuthorityError(
+            "run authority has no exact import module specification"
+        )
+    loader = spec.loader
+    origin = spec.origin
+    spec_name = spec.name
+    spec_search_locations = spec.submodule_search_locations
+    if loader is None or type(origin) is not str or not origin:
+        raise Experiment002RunAuthorityError(
+            "run authority import origin or loader is invalid"
+        )
+    get_data_route = getattr(loader, "get_data", None)
+    if not callable(get_data_route):
+        raise Experiment002RunAuthorityError(
+            "run authority loader has no source-data route"
+        )
+    if origin.startswith(_SEALED_ORIGIN_PREFIX):
+        suffix = origin.removeprefix(_SEALED_ORIGIN_PREFIX)
+        try:
+            source_digest, relative_path = suffix.split("/", maxsplit=1)
+        except ValueError as error:
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority origin is malformed"
+            ) from error
+        if type(sys.meta_path) is not list or type(sys.path) is not list:
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority import surfaces have invalid types"
+            )
+        meta_path_object = cast(object, sys.meta_path)
+        meta_path_frame = tuple(cast(list[object], sys.meta_path))
+        sys_path_object = cast(object, sys.path)
+        sys_path_frame = tuple(sys.path)
+        verifier_route = getattr(loader, "_verify_sealed_import_state", None)
+        if (
+            len(source_digest) != 64
+            or any(character not in _LOWER_HEX_64 for character in source_digest)
+            or relative_path != _AUTHORITY_SOURCE_PATH
+            or not sys.meta_path
+            or cast(object, sys.meta_path[0]) is not cast(object, loader)
+            or not callable(verifier_route)
+            or any(type(path) is not str for path in sys.path)
+            or sys_path_frame != _TRUSTED_RUNTIME_SYS_PATHS
+            or getattr(module, "__spec__", None) is not spec
+            or getattr(module, "__loader__", None) is not loader
+            or type(getattr(module, "__file__", None)) is not str
+            or getattr(module, "__file__", None) != origin
+            or type(getattr(module, "__package__", None)) is not str
+            or getattr(module, "__package__", None) != "falsewake"
+            or type(spec_name) is not str
+            or spec_name != __name__
+            or spec_search_locations is not None
+        ):
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority import identity is invalid"
+            )
+        try:
+            verifier_result = cast(_FinderVerifierRoute, verifier_route)()
+            payload = cast(_GetDataRoute, get_data_route)(origin)
+            final_verifier_result = cast(_FinderVerifierRoute, verifier_route)()
+        except BaseException as error:
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority source cannot be captured"
+            ) from error
+        if (
+            verifier_result is not None
+            or final_verifier_result is not None
+            or type(payload) is not bytes
+            or not 0 < len(payload) <= _MAX_SOURCE_FILE_BYTES
+            or getattr(loader, "get_data", None) is not get_data_route
+            or getattr(loader, "_verify_sealed_import_state", None)
+            is not verifier_route
+            or cast(object, sys.meta_path) is not meta_path_object
+            or len(sys.meta_path) != len(meta_path_frame)
+            or any(
+                observed is not expected
+                for observed, expected in zip(
+                    cast(list[object], sys.meta_path),
+                    meta_path_frame,
+                    strict=True,
+                )
+            )
+            or cast(object, sys.path) is not sys_path_object
+            or tuple(sys.path) != sys_path_frame
+        ):
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority source payload is invalid"
+            )
+        executing_file = _CANONICAL_REPOSITORY_ROOT / _AUTHORITY_SOURCE_PATH
+        return (
+            _SEALED_CHILD_ORIGIN_KIND,
+            executing_file,
+            origin,
+            loader,
+            spec,
+            module,
+            get_data_route,
+            verifier_route,
+            meta_path_object,
+            meta_path_frame,
+            sys_path_object,
+            sys_path_frame,
+            hashlib.sha256(payload).hexdigest(),
+        )
+
+    canonical_path = os.fspath(_CANONICAL_REPOSITORY_ROOT / _AUTHORITY_SOURCE_PATH)
+    if (
+        type(loader) is not importlib.machinery.SourceFileLoader
+        or origin != canonical_path
+        or globals().get("__file__") != canonical_path
+        or loader.name != __name__
+        or loader.path != canonical_path
+        or getattr(module, "__spec__", None) is not spec
+        or getattr(module, "__loader__", None) is not loader
+    ):
+        raise Experiment002RunAuthorityError(
+            "parent run-authority import identity is not canonical"
+        )
+    try:
+        payload = cast(_SourceDataLoader, loader).get_data(origin)
+    except BaseException as error:
+        raise Experiment002RunAuthorityError(
+            "parent run-authority source cannot be captured"
+        ) from error
+    if type(payload) is not bytes or not 0 < len(payload) <= _MAX_SOURCE_FILE_BYTES:
+        raise Experiment002RunAuthorityError(
+            "parent run-authority source payload is invalid"
+        )
+    return (
+        _PARENT_ORIGIN_KIND,
+        Path(canonical_path),
+        origin,
+        loader,
+        spec,
+        module,
+        get_data_route,
+        None,
+        None,
+        (),
+        None,
+        (),
+        hashlib.sha256(payload).hexdigest(),
+    )
+
+
+(
+    _LOADED_SOURCE_ORIGIN_KIND,
+    _EXECUTING_FILE,
+    _LOADED_SOURCE_ORIGIN,
+    _LOADED_SOURCE_LOADER,
+    _LOADED_MODULE_SPEC,
+    _LOADED_MODULE,
+    _LOADED_SOURCE_GET_DATA_ROUTE,
+    _LOADED_FINDER_VERIFY_ROUTE,
+    _LOADED_META_PATH_OBJECT,
+    _LOADED_META_PATH_FRAME,
+    _LOADED_SYS_PATH_OBJECT,
+    _LOADED_SYS_PATH_FRAME,
+    _LOADED_SOURCE_SHA256,
+) = _capture_loaded_authority_source()
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -126,6 +321,26 @@ class VerifiedRunRegistration:
 
 
 @dataclass(frozen=True, slots=True)
+class _AuthorityOriginBinding:
+    kind: str
+    parent_process_id: int
+    bundle_descriptor: int
+    bundle_stat_frame: tuple[int, ...]
+    bundle_seals: int
+    bundle_proc_target: str
+    bundle_offset: int
+    source_loader: object | None
+    source_finder: object | None
+    loader_get_data_route: object | None
+    finder_verify_route: object | None
+    module_object: object | None
+    module_spec: object | None
+    module_origin: str
+    meta_path: tuple[object, ...]
+    runtime_sys_path: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _VerifiedState:
     issuer_marker: object
     repository_root: Path
@@ -137,6 +352,7 @@ class _VerifiedState:
     registration_bytes: bytes
     source_bundle_payload: bytes
     frozen_blobs: tuple[_FrozenBlob, ...]
+    origin_binding: _AuthorityOriginBinding
     process_id: int
     nonce: object
 
@@ -166,6 +382,7 @@ class _IssuedGuard:
     registration_bytes: bytes
     source_bundle_payload: bytes
     frozen_blobs: tuple[_FrozenBlob, ...]
+    origin_binding: _AuthorityOriginBinding
     process_id: int
     nonce: object
 
@@ -221,6 +438,21 @@ class _ChildBundleFrame:
     frozen_blobs: tuple[_FrozenBlob, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _SealedChildSnapshot:
+    frame: _ChildBundleFrame
+    origin_binding: _AuthorityOriginBinding
+
+
+@dataclass(frozen=True, slots=True)
+class _SealedDescriptorSnapshot:
+    payload: bytes
+    stat_frame: tuple[int, ...]
+    seals: int
+    proc_target: str
+    offset: int
+
+
 _ISSUED: weakref.WeakKeyDictionary[VerifiedRunRegistration, _VerifiedState] = (
     weakref.WeakKeyDictionary()
 )
@@ -251,6 +483,10 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
     """
 
     _require_authority_process()
+    if _LOADED_SOURCE_ORIGIN_KIND != _PARENT_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "parent run-registration issuer requires its canonical file origin"
+        )
     with _ISSUED_LOCK:
         _require_authority_process()
         if _ISSUANCE_COMPLETE:
@@ -282,6 +518,39 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
         return _record_verified_snapshot_locked(snapshot)
 
 
+def _verify_and_issue_experiment_002_sealed_child_registration() -> (
+    VerifiedRunRegistration
+):
+    """Verify fixed sealed-child state and mint one process-local capability."""
+
+    _require_authority_process()
+    if _LOADED_SOURCE_ORIGIN_KIND != _SEALED_CHILD_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "sealed-child issuer requires its exact virtual source origin"
+        )
+    with _ISSUED_LOCK:
+        _require_authority_process()
+        if _ISSUANCE_COMPLETE:
+            raise Experiment002RunAuthorityError(
+                "a run registration was already issued in this process"
+            )
+    observed = _verify_sealed_child_local_state()
+    with _ISSUED_LOCK:
+        _require_authority_process()
+        if _ISSUANCE_COMPLETE:
+            raise Experiment002RunAuthorityError(
+                "a concurrent run-registration issuance already completed"
+            )
+        final_observed = _verify_sealed_child_local_state()
+        if not _sealed_child_snapshots_match(observed, final_observed):
+            raise Experiment002RunAuthorityError(
+                "sealed-child authority inputs changed across issuance"
+            )
+        return _record_verified_state_locked(
+            _state_from_sealed_child_snapshot(observed)
+        )
+
+
 def verify_verified_run_registration(
     registration: VerifiedRunRegistration,
 ) -> None:
@@ -299,28 +568,43 @@ def reverify_verified_run_registration(
     _require_authority_process()
     state = _verified_state(registration)
     try:
-        raw_config = _read_regular_file(
-            state.repository_root / _RUN_CONFIG_PATH,
-            maximum_bytes=_MAX_CONFIG_BYTES,
-        )
-        document = _parse_registration(raw_config)
-        observed = _verify_committed_repository(state.repository_root, document)
-        _require_registered_runtime_identity(state.repository_root, document)
-        with _ISSUED_LOCK:
-            _require_authority_process()
-            current_state = _verified_state(registration)
-            final_observed = _verify_committed_repository(
-                state.repository_root, document
+        if state.origin_binding.kind == _SEALED_CHILD_ORIGIN_KIND:
+            observed_child = _verify_sealed_child_local_state()
+            with _ISSUED_LOCK:
+                _require_authority_process()
+                current_state = _verified_state(registration)
+                final_child = _verify_sealed_child_local_state()
+                if (
+                    current_state is not state
+                    or not _sealed_child_snapshots_match(observed_child, final_child)
+                    or not _sealed_child_snapshot_matches_state(final_child, state)
+                ):
+                    raise Experiment002RunAuthorityError(
+                        "sealed-child registration no longer matches its authority"
+                    )
+        else:
+            raw_config = _read_regular_file(
+                state.repository_root / _RUN_CONFIG_PATH,
+                maximum_bytes=_MAX_CONFIG_BYTES,
             )
+            document = _parse_registration(raw_config)
+            observed = _verify_committed_repository(state.repository_root, document)
             _require_registered_runtime_identity(state.repository_root, document)
-            if (
-                current_state is not state
-                or final_observed != observed
-                or not _snapshot_matches_state(final_observed, state)
-            ):
-                raise Experiment002RunAuthorityError(
-                    "run registration no longer matches its issued authority"
+            with _ISSUED_LOCK:
+                _require_authority_process()
+                current_state = _verified_state(registration)
+                final_observed = _verify_committed_repository(
+                    state.repository_root, document
                 )
+                _require_registered_runtime_identity(state.repository_root, document)
+                if (
+                    current_state is not state
+                    or final_observed != observed
+                    or not _snapshot_matches_state(final_observed, state)
+                ):
+                    raise Experiment002RunAuthorityError(
+                        "run registration no longer matches its issued authority"
+                    )
     except BaseException:
         with _ISSUED_LOCK:
             _require_authority_process()
@@ -339,6 +623,10 @@ def _create_sealed_experiment_002_child_bundle_fd(
     try:
         reverify_verified_run_registration(registration)
         state = _verified_state(registration)
+        if state.origin_binding.kind != _PARENT_ORIGIN_KIND:
+            raise Experiment002RunAuthorityError(
+                "sealed child bundles require a parent-origin authority"
+            )
         bundle = _child_bundle_bytes_from_state(state)
         frame = _parse_experiment_002_child_bundle(bundle)
         _require_child_bundle_matches_state(frame, state)
@@ -465,6 +753,13 @@ def _issue_controlled_snapshot_for_tests(
 def _record_verified_snapshot_locked(
     snapshot: _RepositorySnapshot,
 ) -> VerifiedRunRegistration:
+    _require_authority_process()
+    return _record_verified_state_locked(_state_from_snapshot(snapshot))
+
+
+def _record_verified_state_locked(
+    verified: _VerifiedState,
+) -> VerifiedRunRegistration:
     global _ISSUANCE_COMPLETE
 
     _require_authority_process()
@@ -472,7 +767,7 @@ def _record_verified_snapshot_locked(
         raise Experiment002RunAuthorityError(
             "a run registration was already issued in this process"
         )
-    verified = _state_from_snapshot(snapshot)
+    _require_verified_state_frame(verified)
     guard = _guard_from_state(verified)
     capability = object.__new__(VerifiedRunRegistration)
     _ISSUED[capability] = verified
@@ -521,9 +816,190 @@ def _guard_from_state(state: _VerifiedState) -> _IssuedGuard:
             _FrozenBlob(path=blob.path, payload=blob.payload)
             for blob in state.frozen_blobs
         ),
+        origin_binding=_clone_origin_binding(state.origin_binding),
         process_id=state.process_id,
         nonce=state.nonce,
     )
+
+
+def _parent_origin_binding() -> _AuthorityOriginBinding:
+    if _LOADED_SOURCE_ORIGIN_KIND != _PARENT_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "repository authority cannot be minted from a sealed-child origin"
+        )
+    return _AuthorityOriginBinding(
+        kind=_PARENT_ORIGIN_KIND,
+        parent_process_id=0,
+        bundle_descriptor=-1,
+        bundle_stat_frame=(),
+        bundle_seals=0,
+        bundle_proc_target="",
+        bundle_offset=-1,
+        source_loader=None,
+        source_finder=None,
+        loader_get_data_route=None,
+        finder_verify_route=None,
+        module_object=None,
+        module_spec=None,
+        module_origin=_LOADED_SOURCE_ORIGIN,
+        meta_path=(),
+        runtime_sys_path=(),
+    )
+
+
+def _clone_origin_binding(
+    binding: _AuthorityOriginBinding,
+) -> _AuthorityOriginBinding:
+    _require_origin_binding_frame(binding, None)
+    return _AuthorityOriginBinding(
+        kind=binding.kind,
+        parent_process_id=binding.parent_process_id,
+        bundle_descriptor=binding.bundle_descriptor,
+        bundle_stat_frame=tuple(binding.bundle_stat_frame),
+        bundle_seals=binding.bundle_seals,
+        bundle_proc_target=binding.bundle_proc_target,
+        bundle_offset=binding.bundle_offset,
+        source_loader=binding.source_loader,
+        source_finder=binding.source_finder,
+        loader_get_data_route=binding.loader_get_data_route,
+        finder_verify_route=binding.finder_verify_route,
+        module_object=binding.module_object,
+        module_spec=binding.module_spec,
+        module_origin=binding.module_origin,
+        meta_path=tuple(binding.meta_path),
+        runtime_sys_path=tuple(binding.runtime_sys_path),
+    )
+
+
+def _identity_sequences_match(
+    left: tuple[object, ...], right: tuple[object, ...]
+) -> bool:
+    return len(left) == len(right) and all(
+        left_item is right_item
+        for left_item, right_item in zip(left, right, strict=True)
+    )
+
+
+def _origin_bindings_match(
+    left: _AuthorityOriginBinding,
+    right: _AuthorityOriginBinding,
+) -> bool:
+    if (
+        type(left) is not _AuthorityOriginBinding
+        or type(right) is not _AuthorityOriginBinding
+    ):
+        return False
+    return (
+        left.kind == right.kind
+        and left.parent_process_id == right.parent_process_id
+        and left.bundle_descriptor == right.bundle_descriptor
+        and left.bundle_stat_frame == right.bundle_stat_frame
+        and left.bundle_seals == right.bundle_seals
+        and left.bundle_proc_target == right.bundle_proc_target
+        and left.bundle_offset == right.bundle_offset
+        and left.source_loader is right.source_loader
+        and left.source_finder is right.source_finder
+        and left.loader_get_data_route is right.loader_get_data_route
+        and left.finder_verify_route is right.finder_verify_route
+        and left.module_object is right.module_object
+        and left.module_spec is right.module_spec
+        and left.module_origin == right.module_origin
+        and _identity_sequences_match(left.meta_path, right.meta_path)
+        and left.runtime_sys_path == right.runtime_sys_path
+    )
+
+
+def _require_origin_binding_frame(
+    binding: _AuthorityOriginBinding,
+    source_bundle_sha256: str | None,
+) -> None:
+    if type(binding) is not _AuthorityOriginBinding:
+        raise Experiment002RunAuthorityError(
+            "run-registration origin binding has an invalid type"
+        )
+    if (
+        type(binding.kind) is not str
+        or type(binding.parent_process_id) is not int
+        or type(binding.bundle_descriptor) is not int
+        or type(binding.bundle_stat_frame) is not tuple
+        or any(type(value) is not int for value in binding.bundle_stat_frame)
+        or type(binding.bundle_seals) is not int
+        or type(binding.bundle_proc_target) is not str
+        or type(binding.bundle_offset) is not int
+        or type(binding.module_origin) is not str
+        or type(binding.meta_path) is not tuple
+        or type(binding.runtime_sys_path) is not tuple
+        or any(type(path) is not str for path in binding.runtime_sys_path)
+    ):
+        raise Experiment002RunAuthorityError(
+            "run-registration origin binding fields have invalid types"
+        )
+    if binding.kind == _PARENT_ORIGIN_KIND:
+        expected_parent = (
+            binding.parent_process_id == 0
+            and binding.bundle_descriptor == -1
+            and binding.bundle_stat_frame == ()
+            and binding.bundle_seals == 0
+            and binding.bundle_proc_target == ""
+            and binding.bundle_offset == -1
+            and binding.source_loader is None
+            and binding.source_finder is None
+            and binding.loader_get_data_route is None
+            and binding.finder_verify_route is None
+            and binding.module_object is None
+            and binding.module_spec is None
+            and binding.module_origin == _LOADED_SOURCE_ORIGIN
+            and _LOADED_SOURCE_ORIGIN_KIND == _PARENT_ORIGIN_KIND
+            and binding.meta_path == ()
+            and binding.runtime_sys_path == ()
+        )
+        if not expected_parent:
+            raise Experiment002RunAuthorityError(
+                "parent run-registration origin binding changed"
+            )
+        return
+    if binding.kind != _SEALED_CHILD_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError("run-registration origin kind is invalid")
+    if source_bundle_sha256 is None:
+        source_bundle_sha256 = _sealed_origin_source_digest(binding.module_origin)
+    expected_origin = _sealed_authority_origin(source_bundle_sha256)
+    if (
+        binding.parent_process_id < 1
+        or binding.parent_process_id == _AUTHORITY_PROCESS_ID
+        or binding.parent_process_id != os.getppid()
+        or binding.bundle_descriptor != _SEALED_CHILD_BUNDLE_FD
+        or len(binding.bundle_stat_frame) != 9
+        or binding.bundle_seals != _required_child_bundle_seals()
+        or binding.bundle_proc_target != _SEALED_CHILD_MEMFD_TARGET
+        or binding.bundle_offset != 0
+        or binding.source_loader is None
+        or binding.source_finder is not binding.source_loader
+        or binding.source_loader is not _LOADED_SOURCE_LOADER
+        or binding.loader_get_data_route is not _LOADED_SOURCE_GET_DATA_ROUTE
+        or binding.finder_verify_route is not _LOADED_FINDER_VERIFY_ROUTE
+        or not callable(binding.loader_get_data_route)
+        or not callable(binding.finder_verify_route)
+        or binding.module_object is not _LOADED_MODULE
+        or binding.module_spec is not _LOADED_MODULE_SPEC
+        or binding.module_origin != expected_origin
+        or binding.module_origin != _LOADED_SOURCE_ORIGIN
+        or not binding.meta_path
+        or binding.meta_path[0] is not binding.source_loader
+        or not _identity_sequences_match(binding.meta_path, _LOADED_META_PATH_FRAME)
+        or cast(object, sys.meta_path) is not _LOADED_META_PATH_OBJECT
+        or type(sys.meta_path) is not list
+        or not _identity_sequences_match(
+            tuple(cast(list[object], sys.meta_path)), binding.meta_path
+        )
+        or binding.runtime_sys_path != _TRUSTED_RUNTIME_SYS_PATHS
+        or binding.runtime_sys_path != _LOADED_SYS_PATH_FRAME
+        or cast(object, sys.path) is not _LOADED_SYS_PATH_OBJECT
+        or type(sys.path) is not list
+        or tuple(sys.path) != binding.runtime_sys_path
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child run-registration origin binding changed"
+        )
 
 
 def _guard_matches_state(guard: _IssuedGuard, state: _VerifiedState) -> bool:
@@ -543,6 +1019,7 @@ def _guard_matches_state(guard: _IssuedGuard, state: _VerifiedState) -> bool:
         and guard.registration_bytes == state.registration_bytes
         and guard.source_bundle_payload == state.source_bundle_payload
         and guard.frozen_blobs == state.frozen_blobs
+        and _origin_bindings_match(guard.origin_binding, state.origin_binding)
         and guard.process_id == state.process_id
         and guard.nonce is state.nonce
     )
@@ -564,6 +1041,7 @@ def _require_verified_state_frame(state: _VerifiedState) -> None:
         registration_bytes=state.registration_bytes,
         source_bundle_payload=state.source_bundle_payload,
         frozen_blobs=state.frozen_blobs,
+        origin_binding=state.origin_binding,
         process_id=state.process_id,
         nonce=state.nonce,
     )
@@ -585,6 +1063,7 @@ def _require_guard_frame(guard: _IssuedGuard) -> None:
         registration_bytes=guard.registration_bytes,
         source_bundle_payload=guard.source_bundle_payload,
         frozen_blobs=guard.frozen_blobs,
+        origin_binding=guard.origin_binding,
         process_id=guard.process_id,
         nonce=guard.nonce,
     )
@@ -602,6 +1081,7 @@ def _require_authority_frame(
     registration_bytes: bytes,
     source_bundle_payload: bytes,
     frozen_blobs: tuple[_FrozenBlob, ...],
+    origin_binding: _AuthorityOriginBinding,
     process_id: int,
     nonce: object,
 ) -> None:
@@ -629,6 +1109,7 @@ def _require_authority_frame(
         source_bundle_payload=source_bundle_payload,
         frozen_blobs=frozen_blobs,
     )
+    _require_origin_binding_frame(origin_binding, source_bundle_sha256)
     if (
         type(process_id) is not int
         or process_id != _AUTHORITY_PROCESS_ID
@@ -656,6 +1137,7 @@ def _state_from_snapshot(snapshot: _RepositorySnapshot) -> _VerifiedState:
             _FrozenBlob(path=blob.path, payload=blob.payload)
             for blob in snapshot.frozen_blobs
         ),
+        origin_binding=_parent_origin_binding(),
         process_id=_AUTHORITY_PROCESS_ID,
         nonce=object(),
     )
@@ -676,6 +1158,7 @@ def _snapshot_matches_state(
         and snapshot.registration_bytes == state.registration_bytes
         and snapshot.source_bundle_payload == state.source_bundle_payload
         and snapshot.frozen_blobs == state.frozen_blobs
+        and state.origin_binding.kind == _PARENT_ORIGIN_KIND
         and state.process_id == _AUTHORITY_PROCESS_ID
     )
 
@@ -1843,6 +2326,10 @@ def _require_child_bundle_total_byte_count(
 
 def _child_bundle_bytes_from_state(state: _VerifiedState) -> bytes:
     _require_verified_state_frame(state)
+    if state.origin_binding.kind != _PARENT_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "a child-origin authority cannot create another child bundle"
+        )
     if (
         not state.registration_bytes
         or not state.source_bundle_payload
@@ -1886,6 +2373,33 @@ def _decode_fixed_ascii(value: bytes, name: str) -> str:
         return value.decode("ascii", errors="strict")
     except UnicodeDecodeError as error:
         raise Experiment002RunAuthorityError(f"{name} is not ASCII") from error
+
+
+def _sealed_authority_origin(source_bundle_sha256: str) -> str:
+    digest = _require_hex(
+        source_bundle_sha256,
+        length=64,
+        name="sealed authority source bundle sha256",
+    )
+    return f"{_SEALED_ORIGIN_PREFIX}{digest}/{_AUTHORITY_SOURCE_PATH}"
+
+
+def _sealed_origin_source_digest(origin: str) -> str:
+    if type(origin) is not str or not origin.startswith(_SEALED_ORIGIN_PREFIX):
+        raise Experiment002RunAuthorityError("sealed authority origin is invalid")
+    suffix = origin.removeprefix(_SEALED_ORIGIN_PREFIX)
+    try:
+        digest, path = suffix.split("/", maxsplit=1)
+    except ValueError as error:
+        raise Experiment002RunAuthorityError(
+            "sealed authority origin is malformed"
+        ) from error
+    _require_hex(digest, length=64, name="sealed authority origin digest")
+    if path != _AUTHORITY_SOURCE_PATH or origin != _sealed_authority_origin(digest):
+        raise Experiment002RunAuthorityError(
+            "sealed authority origin path is not exact"
+        )
+    return digest
 
 
 def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
@@ -2035,6 +2549,326 @@ def _require_child_bundle_matches_state(
         )
 
 
+def _verify_sealed_child_local_state() -> _SealedChildSnapshot:
+    if _LOADED_SOURCE_ORIGIN_KIND != _SEALED_CHILD_ORIGIN_KIND:
+        raise Experiment002RunAuthorityError(
+            "sealed-child verification requires a sealed source origin"
+        )
+    descriptor = _read_fixed_sealed_child_bundle()
+    frame = _parse_experiment_002_child_bundle(descriptor.payload)
+    document = _parse_registration(frame.registration_bytes)
+    _require_sealed_child_document_bindings(frame, document)
+    _require_sealed_child_runtime_identity(document)
+    binding = _capture_sealed_child_origin_binding(frame, descriptor)
+    _require_origin_binding_frame(binding, frame.source_bundle_sha256)
+    return _SealedChildSnapshot(frame=frame, origin_binding=binding)
+
+
+def _require_sealed_child_document_bindings(
+    frame: _ChildBundleFrame,
+    document: _RegistrationDocument,
+) -> None:
+    if (
+        type(frame) is not _ChildBundleFrame
+        or type(document) is not _RegistrationDocument
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child registration frame has an invalid type"
+        )
+    _require_retained_launch_material(
+        implementation_commit=frame.implementation_commit,
+        registration_sha256=frame.registration_sha256,
+        source_bundle_sha256=frame.source_bundle_sha256,
+        source_paths=document.source_paths,
+        registration_bytes=frame.registration_bytes,
+        source_bundle_payload=frame.source_bundle_payload,
+        frozen_blobs=frame.frozen_blobs,
+    )
+    invocation = document.invocation
+    argv = cast(list[str], invocation["argv"])
+    entrypoint = _require_relative_path(argv[0], "sealed-child argv entrypoint")
+    expected_parent_sys_path = (
+        os.fspath(_CANONICAL_REPOSITORY_ROOT / "src"),
+        *_TRUSTED_RUNTIME_SYS_PATHS,
+    )
+    if (
+        frame.implementation_commit != document.implementation_commit
+        or frame.source_bundle_sha256 != document.source_bundle_sha256
+        or tuple(blob.path for blob in frame.source_blobs) != document.source_paths
+        or _AUTHORITY_SOURCE_PATH not in document.source_paths
+        or entrypoint not in document.source_paths
+        or not entrypoint.startswith("src/")
+        or invocation["cwd"] != os.fspath(_CANONICAL_REPOSITORY_ROOT)
+        or tuple(cast(list[str], invocation["sys_path"])) != expected_parent_sys_path
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child registration bindings are not canonical"
+        )
+
+
+def _require_sealed_child_runtime_identity(
+    document: _RegistrationDocument,
+) -> None:
+    runtime = document.runtime
+    invocation = document.invocation
+    python_version = platform.python_version()
+    if type(python_version) is not str or python_version != runtime["python_version"]:
+        raise Experiment002RunAuthorityError(
+            "sealed-child Python version is not registered"
+        )
+    if (
+        type(sys.executable) is not str
+        or os.path.abspath(sys.executable) != runtime["python_executable"]
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child Python executable is not registered"
+        )
+    package_versions = {
+        "numpy_version": importlib.metadata.version("numpy"),
+        "safetensors_version": importlib.metadata.version("safetensors"),
+        "torch_version": importlib.metadata.version("torch"),
+    }
+    for key, observed in package_versions.items():
+        if type(observed) is not str or observed != runtime[key]:
+            raise Experiment002RunAuthorityError(
+                f"sealed-child package version is not registered ({key})"
+            )
+    try:
+        current_directory = Path.cwd().resolve(strict=True)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "sealed-child cwd cannot be resolved"
+        ) from error
+    if current_directory != _CANONICAL_REPOSITORY_ROOT or invocation[
+        "cwd"
+    ] != os.fspath(_CANONICAL_REPOSITORY_ROOT):
+        raise Experiment002RunAuthorityError(
+            "sealed-child cwd is not the canonical repository root"
+        )
+    if (
+        type(sys.argv) is not list
+        or type(sys.orig_argv) is not list
+        or any(type(argument) is not str for argument in sys.argv)
+        or any(type(argument) is not str for argument in sys.orig_argv)
+        or list(sys.argv) != invocation["argv"]
+        or list(sys.orig_argv) != invocation["orig_argv"]
+    ):
+        raise Experiment002RunAuthorityError("sealed-child argv is not registered")
+    if (
+        type(sys.path) is not list
+        or any(type(path) is not str for path in sys.path)
+        or tuple(sys.path) != _TRUSTED_RUNTIME_SYS_PATHS
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child sys.path is not the exact runtime-only allowlist"
+        )
+    observed_environment = dict(os.environ)
+    if (
+        any(
+            type(key) is not str or type(value) is not str
+            for key, value in observed_environment.items()
+        )
+        or observed_environment != invocation["environment"]
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child environment is not registered"
+        )
+    expected_flags = cast(dict[str, int], invocation["python_flags"])
+    for key, expected in expected_flags.items():
+        observed_flag = getattr(sys.flags, key)
+        if type(observed_flag) is not int or observed_flag != expected:
+            raise Experiment002RunAuthorityError(
+                f"sealed-child Python flag is not registered ({key})"
+            )
+
+
+def _capture_sealed_child_origin_binding(
+    frame: _ChildBundleFrame,
+    descriptor: _SealedDescriptorSnapshot,
+) -> _AuthorityOriginBinding:
+    module = sys.modules.get(__name__)
+    spec = getattr(module, "__spec__", None)
+    loader = getattr(spec, "loader", None)
+    origin = getattr(spec, "origin", None)
+    if (
+        type(sys.meta_path) is not list
+        or not sys.meta_path
+        or type(sys.path) is not list
+        or any(type(path) is not str for path in sys.path)
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child import surfaces have invalid types"
+        )
+    finder = cast(object, sys.meta_path[0])
+    get_data_route = getattr(loader, "get_data", None)
+    verifier_route = getattr(finder, "_verify_sealed_import_state", None)
+    spec_name = getattr(spec, "name", None)
+    module_package = getattr(module, "__package__", None)
+    module_file = getattr(module, "__file__", None)
+    expected_origin = _sealed_authority_origin(frame.source_bundle_sha256)
+    if (
+        module is not _LOADED_MODULE
+        or spec is not _LOADED_MODULE_SPEC
+        or type(spec) is not importlib.machinery.ModuleSpec
+        or loader is not _LOADED_SOURCE_LOADER
+        or finder is not loader
+        or get_data_route is not _LOADED_SOURCE_GET_DATA_ROUTE
+        or verifier_route is not _LOADED_FINDER_VERIFY_ROUTE
+        or not callable(get_data_route)
+        or not callable(verifier_route)
+        or type(origin) is not str
+        or origin != expected_origin
+        or origin != _LOADED_SOURCE_ORIGIN
+        or type(spec_name) is not str
+        or spec_name != __name__
+        or spec.submodule_search_locations is not None
+        or getattr(module, "__loader__", None) is not loader
+        or getattr(module, "__spec__", None) is not spec
+        or type(module_package) is not str
+        or module_package != "falsewake"
+        or type(module_file) is not str
+        or module_file != expected_origin
+        or cast(object, sys.meta_path) is not _LOADED_META_PATH_OBJECT
+        or not _identity_sequences_match(
+            tuple(cast(list[object], sys.meta_path)), _LOADED_META_PATH_FRAME
+        )
+        or cast(object, sys.path) is not _LOADED_SYS_PATH_OBJECT
+        or tuple(sys.path) != _LOADED_SYS_PATH_FRAME
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child module, finder, loader, or origin identity is invalid"
+        )
+    meta_path = tuple(cast(list[object], sys.meta_path))
+    runtime_sys_path = tuple(sys.path)
+    try:
+        verifier_result = cast(_FinderVerifierRoute, verifier_route)()
+        authority_payload = cast(_GetDataRoute, get_data_route)(expected_origin)
+        final_verifier_result = cast(_FinderVerifierRoute, verifier_route)()
+    except BaseException as error:
+        raise Experiment002RunAuthorityError(
+            "sealed-child source finder could not reverify itself"
+        ) from error
+    if verifier_result is not None or final_verifier_result is not None:
+        raise Experiment002RunAuthorityError(
+            "sealed-child source finder verifier returned a value"
+        )
+    authority_blobs = tuple(
+        blob for blob in frame.source_blobs if blob.path == _AUTHORITY_SOURCE_PATH
+    )
+    if (
+        type(authority_payload) is not bytes
+        or len(authority_blobs) != 1
+        or authority_blobs[0].payload != authority_payload
+        or hashlib.sha256(authority_payload).hexdigest() != _LOADED_SOURCE_SHA256
+        or _sealed_origin_source_digest(expected_origin) != frame.source_bundle_sha256
+        or type(sys.meta_path) is not list
+        or not _identity_sequences_match(
+            tuple(cast(list[object], sys.meta_path)), meta_path
+        )
+        or getattr(loader, "get_data", None) is not get_data_route
+        or getattr(finder, "_verify_sealed_import_state", None) is not verifier_route
+        or getattr(module, "__spec__", None) is not spec
+        or getattr(module, "__loader__", None) is not loader
+        or type(getattr(spec, "origin", None)) is not str
+        or getattr(spec, "origin", None) != expected_origin
+        or tuple(sys.path) != runtime_sys_path
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child source identity changed while being captured"
+        )
+    parent_process_id = os.getppid()
+    if (
+        type(parent_process_id) is not int
+        or parent_process_id < 1
+        or parent_process_id == _AUTHORITY_PROCESS_ID
+    ):
+        raise Experiment002RunAuthorityError(
+            "sealed-child parent process identity is invalid"
+        )
+    return _AuthorityOriginBinding(
+        kind=_SEALED_CHILD_ORIGIN_KIND,
+        parent_process_id=parent_process_id,
+        bundle_descriptor=_SEALED_CHILD_BUNDLE_FD,
+        bundle_stat_frame=descriptor.stat_frame,
+        bundle_seals=descriptor.seals,
+        bundle_proc_target=descriptor.proc_target,
+        bundle_offset=descriptor.offset,
+        source_loader=loader,
+        source_finder=finder,
+        loader_get_data_route=get_data_route,
+        finder_verify_route=verifier_route,
+        module_object=module,
+        module_spec=spec,
+        module_origin=expected_origin,
+        meta_path=meta_path,
+        runtime_sys_path=runtime_sys_path,
+    )
+
+
+def _sealed_child_snapshots_match(
+    left: _SealedChildSnapshot,
+    right: _SealedChildSnapshot,
+) -> bool:
+    return (
+        type(left) is _SealedChildSnapshot
+        and type(right) is _SealedChildSnapshot
+        and left.frame == right.frame
+        and _origin_bindings_match(left.origin_binding, right.origin_binding)
+    )
+
+
+def _state_from_sealed_child_snapshot(
+    snapshot: _SealedChildSnapshot,
+) -> _VerifiedState:
+    if type(snapshot) is not _SealedChildSnapshot:
+        raise Experiment002RunAuthorityError(
+            "sealed-child snapshot has an invalid type"
+        )
+    frame = snapshot.frame
+    state = _VerifiedState(
+        issuer_marker=_ISSUER_MARKER,
+        repository_root=_CANONICAL_REPOSITORY_ROOT,
+        head_commit=frame.head_commit,
+        implementation_commit=frame.implementation_commit,
+        registration_sha256=frame.registration_sha256,
+        source_bundle_sha256=frame.source_bundle_sha256,
+        source_paths=tuple(blob.path for blob in frame.source_blobs),
+        registration_bytes=frame.registration_bytes,
+        source_bundle_payload=frame.source_bundle_payload,
+        frozen_blobs=tuple(
+            _FrozenBlob(path=blob.path, payload=blob.payload)
+            for blob in frame.frozen_blobs
+        ),
+        origin_binding=_clone_origin_binding(snapshot.origin_binding),
+        process_id=_AUTHORITY_PROCESS_ID,
+        nonce=object(),
+    )
+    _require_verified_state_frame(state)
+    return state
+
+
+def _sealed_child_snapshot_matches_state(
+    snapshot: _SealedChildSnapshot,
+    state: _VerifiedState,
+) -> bool:
+    if type(snapshot) is not _SealedChildSnapshot or type(state) is not _VerifiedState:
+        return False
+    frame = snapshot.frame
+    return (
+        state.origin_binding.kind == _SEALED_CHILD_ORIGIN_KIND
+        and frame.head_commit == state.head_commit
+        and frame.implementation_commit == state.implementation_commit
+        and frame.registration_sha256 == state.registration_sha256
+        and frame.source_bundle_sha256 == state.source_bundle_sha256
+        and tuple(blob.path for blob in frame.source_blobs) == state.source_paths
+        and frame.registration_bytes == state.registration_bytes
+        and frame.source_bundle_payload == state.source_bundle_payload
+        and frame.frozen_blobs == state.frozen_blobs
+        and _origin_bindings_match(snapshot.origin_binding, state.origin_binding)
+        and state.process_id == _AUTHORITY_PROCESS_ID
+    )
+
+
 def _required_os_constant(name: str) -> int:
     value = getattr(os, name, None)
     if type(value) is not int or value < 0:
@@ -2061,13 +2895,17 @@ def _memfd_requirements() -> tuple[int, int]:
     )
     _required_fcntl_constant("F_ADD_SEALS")
     _required_fcntl_constant("F_GET_SEALS")
-    seals = (
+    return flags, _required_child_bundle_seals()
+
+
+def _required_child_bundle_seals() -> int:
+    _required_fcntl_constant("F_GET_SEALS")
+    return (
         _required_fcntl_constant("F_SEAL_WRITE")
         | _required_fcntl_constant("F_SEAL_GROW")
         | _required_fcntl_constant("F_SEAL_SHRINK")
         | _required_fcntl_constant("F_SEAL_SEAL")
     )
-    return flags, seals
 
 
 def _require_descriptor_number(descriptor: object, name: str) -> int:
@@ -2146,6 +2984,85 @@ def _read_descriptor_exactly(descriptor: int, byte_count: int) -> bytes:
             "child-bundle descriptor has trailing bytes"
         )
     return b"".join(chunks)
+
+
+def _read_fixed_sealed_child_bundle() -> _SealedDescriptorSnapshot:
+    descriptor = _SEALED_CHILD_BUNDLE_FD
+    required_seals = _required_child_bundle_seals()
+    try:
+        before = os.fstat(descriptor)
+        descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+        inheritable = os.get_inheritable(descriptor)
+        proc_target = os.readlink(f"/proc/self/fd/{descriptor}")
+        offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+    except (AttributeError, OSError, ValueError) as error:
+        raise Experiment002RunAuthorityError(
+            "fixed sealed-child bundle descriptor cannot be inspected"
+        ) from error
+    before_frame = _stat_frame(before)
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 0
+        or before.st_uid != os.geteuid()
+        or before.st_gid != os.getegid()
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or not 0 < before.st_size <= _MAX_CHILD_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            "fixed sealed-child bundle is not an exact anonymous regular file"
+        )
+    if (
+        type(descriptor_flags) is not int
+        or descriptor_flags != fcntl.FD_CLOEXEC
+        or inheritable is not False
+        or type(status_flags) is not int
+        or status_flags & os.O_ACCMODE != os.O_RDONLY
+        or status_flags & (os.O_APPEND | os.O_NONBLOCK)
+        or type(seals) is not int
+        or seals != required_seals
+        or type(proc_target) is not str
+        or proc_target != _SEALED_CHILD_MEMFD_TARGET
+        or type(offset) is not int
+        or offset != 0
+    ):
+        raise Experiment002RunAuthorityError(
+            "fixed sealed-child bundle descriptor flags or identity are invalid"
+        )
+    payload = _read_descriptor_exactly(descriptor, before.st_size)
+    try:
+        after = os.fstat(descriptor)
+        final_descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        final_status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        final_seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+        final_inheritable = os.get_inheritable(descriptor)
+        final_target = os.readlink(f"/proc/self/fd/{descriptor}")
+        final_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+    except (AttributeError, OSError, ValueError) as error:
+        raise Experiment002RunAuthorityError(
+            "fixed sealed-child bundle descriptor changed while being read"
+        ) from error
+    if (
+        _stat_frame(after) != before_frame
+        or final_descriptor_flags != descriptor_flags
+        or final_status_flags != status_flags
+        or final_seals != seals
+        or final_inheritable is not False
+        or final_target != proc_target
+        or final_offset != offset
+        or len(payload) != before.st_size
+    ):
+        raise Experiment002RunAuthorityError(
+            "fixed sealed-child bundle descriptor changed while being read"
+        )
+    return _SealedDescriptorSnapshot(
+        payload=payload,
+        stat_frame=before_frame,
+        seals=seals,
+        proc_target=proc_target,
+        offset=offset,
+    )
 
 
 def _verify_sealed_bundle_descriptor(

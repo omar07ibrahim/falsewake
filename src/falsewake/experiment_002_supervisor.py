@@ -51,7 +51,7 @@ _PYTHON_RESOLVED_SHA256: Final = (
 _RUNNER_ENTRYPOINT: Final = "src/falsewake/experiment_002_runner.py"
 _RUNNER_PATH: Final = f"{_REPOSITORY_ROOT}/{_RUNNER_ENTRYPOINT}"
 _RUNNER_SHA256: Final = (
-    "0c5b7cdc150a85456f05756a1658fd655e100dfb7644a123e62b673e7dc1e1c6"
+    "3aaa25b54670c357d528887d582d39e5fb0b815edb86201a7eef793c92b4931d"
 )
 _CHILD_CONTROL_FD: Final = 3
 _CHILD_RUNNER_FD: Final = 4
@@ -84,6 +84,7 @@ _KIB: Final = 1_024
 _DEVNULL: Final = "/dev/null"
 _RUNNER_BOOTSTRAP: Final = (
     "import os,sys;"
+    "os.set_inheritable(3,False);os.set_inheritable(7,False);"
     "os.close(6);os.close(5);"
     f"sys.executable={_PYTHON_EXECUTABLE!r};"
     f"sys.argv=[{_RUNNER_ENTRYPOINT!r}];"

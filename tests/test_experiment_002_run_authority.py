@@ -5,6 +5,7 @@ import copy
 import errno
 import fcntl
 import hashlib
+import importlib.machinery
 import importlib.metadata
 import inspect
 import json
@@ -24,7 +25,9 @@ import time
 import warnings
 import weakref
 import zlib
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from pathlib import Path, PosixPath
@@ -71,6 +74,84 @@ class RepositoryCase:
     source_paths: tuple[str, ...]
     source_payload_byte_count: int
     source_sha256: str
+
+
+class FakeSealedSourceFinder:
+    get_data: Callable[[str], bytes]
+    _verify_sealed_import_state: Callable[[], None]
+
+    def __init__(self, source_map: dict[str, bytes]) -> None:
+        self.source_map = dict(source_map)
+        self.valid = True
+        self.verification_count = 0
+        self.meta_path_object: object | None = None
+        self.meta_path_frame: tuple[object, ...] | None = None
+        self.sys_path_object: object | None = None
+
+        def get_data(origin: str) -> bytes:
+            if type(origin) is not str or origin not in self.source_map:
+                raise FileNotFoundError(origin)
+            return self.source_map[origin]
+
+        def verify() -> None:
+            self.verification_count += 1
+            if (
+                not self.valid
+                or type(sys.modules) is not dict
+                or any(type(name) is not str for name in sys.modules)
+                or type(sys.meta_path) is not list
+                or not sys.meta_path
+                or cast(object, sys.meta_path[0]) is not self
+                or type(sys.path) is not list
+                or any(type(path) is not str for path in sys.path)
+                or tuple(sys.path) != RUNTIME_SYS_PATH_ROOTS
+                or type(self.source_map) is not dict
+                or any(
+                    type(origin) is not str or type(payload) is not bytes
+                    for origin, payload in self.source_map.items()
+                )
+            ):
+                raise RuntimeError("sealed finder state changed")
+            if self.meta_path_object is None:
+                self.meta_path_object = sys.meta_path
+                self.meta_path_frame = tuple(cast(list[object], sys.meta_path))
+                self.sys_path_object = sys.path
+            if (
+                cast(object, sys.meta_path) is not self.meta_path_object
+                or self.meta_path_frame is None
+                or len(sys.meta_path) != len(self.meta_path_frame)
+                or any(
+                    observed is not expected
+                    for observed, expected in zip(
+                        cast(list[object], sys.meta_path),
+                        self.meta_path_frame,
+                        strict=True,
+                    )
+                )
+                or cast(object, sys.path) is not self.sys_path_object
+            ):
+                raise RuntimeError("sealed finder import surfaces changed")
+
+        self.get_data = get_data
+        self._verify_sealed_import_state = verify
+
+
+@dataclass(slots=True)
+class SealedChildHarness:
+    case: RepositoryCase
+    bundle: bytes
+    frame: authority._ChildBundleFrame
+    finder: FakeSealedSourceFinder
+    spec: importlib.machinery.ModuleSpec
+    origin: str
+
+
+class EqualStringSubclass(str):
+    pass
+
+
+class EqualIntegerSubclass(int):
+    pass
 
 
 def _git(repository: Path, *arguments: str, input_bytes: bytes | None = None) -> bytes:
@@ -423,6 +504,194 @@ def _prepare_controlled_capability_lifecycle(
     return snapshot
 
 
+@contextmanager
+def _fixed_sealed_child_bundle_fd(bundle: bytes) -> Iterator[None]:
+    saved_descriptor = -1
+    original_inheritable = False
+    writer = -1
+    reader = -1
+    try:
+        try:
+            original_inheritable = os.get_inheritable(7)
+            saved_descriptor = fcntl.fcntl(7, fcntl.F_DUPFD_CLOEXEC, 64)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                raise
+            placeholder = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
+            if placeholder != 7:
+                os.dup2(placeholder, 7, inheritable=False)
+                os.close(placeholder)
+        writer = os.memfd_create(
+            "falsewake-exp002-child-bundle",
+            os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+        )
+        authority._write_descriptor_exactly(writer, bundle)
+        os.fchmod(writer, 0o400)
+        os.fsync(writer)
+        fcntl.fcntl(
+            writer,
+            fcntl.F_ADD_SEALS,
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL,
+        )
+        reader = os.open(f"/proc/self/fd/{writer}", os.O_RDONLY | os.O_CLOEXEC)
+        os.dup2(reader, 7, inheritable=False)
+        if reader != 7:
+            os.close(reader)
+            reader = -1
+        os.close(writer)
+        writer = -1
+        assert os.lseek(7, 0, os.SEEK_CUR) == 0
+        yield
+    finally:
+        for descriptor in (reader, writer):
+            if descriptor >= 0 and descriptor != 7:
+                with suppress(OSError):
+                    os.close(descriptor)
+        with suppress(OSError):
+            os.close(7)
+        if saved_descriptor >= 0:
+            os.dup2(
+                saved_descriptor,
+                7,
+                inheritable=original_inheritable,
+            )
+            os.close(saved_descriptor)
+
+
+def _replace_fixed_sealed_child_bundle_fd(
+    bundle: bytes,
+    *,
+    name: str = "falsewake-exp002-child-bundle",
+    mode: int = 0o400,
+    seals: int | None = None,
+) -> None:
+    if seals is None:
+        seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+    writer = os.memfd_create(name, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    reader = -1
+    try:
+        authority._write_descriptor_exactly(writer, bundle)
+        os.fchmod(writer, mode)
+        os.fsync(writer)
+        if seals:
+            fcntl.fcntl(writer, fcntl.F_ADD_SEALS, seals)
+        reader = os.open(f"/proc/self/fd/{writer}", os.O_RDONLY | os.O_CLOEXEC)
+        os.dup2(reader, 7, inheritable=False)
+    finally:
+        with suppress(OSError):
+            os.close(reader)
+        os.close(writer)
+
+
+def _prepare_sealed_child_harness(
+    case: RepositoryCase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> SealedChildHarness:
+    snapshot = authority._verify_synthetic_repository_for_tests(case.root)
+    monkeypatch.setattr(authority, "_CANONICAL_REPOSITORY_ROOT", case.root)
+    parent_state = authority._state_from_snapshot(snapshot)
+    bundle = authority._child_bundle_bytes_from_state(parent_state)
+    frame = authority._parse_experiment_002_child_bundle(bundle)
+    origin_prefix = f"falsewake-sealed://experiment-002/{frame.source_bundle_sha256}/"
+    source_map = {
+        f"{origin_prefix}{blob.path}": blob.payload for blob in frame.source_blobs
+    }
+    finder = FakeSealedSourceFinder(source_map)
+    origin = f"{origin_prefix}{authority._AUTHORITY_SOURCE_PATH}"
+    spec = importlib.machinery.ModuleSpec(
+        authority.__name__,
+        cast(Any, finder),
+        origin=origin,
+    )
+    spec.has_location = True
+    document = authority._parse_registration(frame.registration_bytes)
+    invocation = document.invocation
+    runtime = document.runtime
+    flags = cast(dict[str, int], invocation["python_flags"])
+    environment = cast(dict[str, str], invocation["environment"])
+    versions = {
+        "numpy": cast(str, runtime["numpy_version"]),
+        "safetensors": cast(str, runtime["safetensors_version"]),
+        "torch": cast(str, runtime["torch_version"]),
+    }
+
+    monkeypatch.setattr(authority, "_LOADED_SOURCE_ORIGIN_KIND", "sealed_child")
+    monkeypatch.setattr(authority, "_LOADED_SOURCE_ORIGIN", origin)
+    monkeypatch.setattr(authority, "_LOADED_SOURCE_LOADER", finder)
+    monkeypatch.setattr(authority, "_LOADED_MODULE_SPEC", spec)
+    monkeypatch.setattr(authority, "_LOADED_MODULE", authority)
+    monkeypatch.setattr(
+        authority,
+        "_LOADED_SOURCE_GET_DATA_ROUTE",
+        finder.get_data,
+    )
+    monkeypatch.setattr(
+        authority,
+        "_LOADED_FINDER_VERIFY_ROUTE",
+        finder._verify_sealed_import_state,
+    )
+    authority_blob = next(
+        blob
+        for blob in frame.source_blobs
+        if blob.path == authority._AUTHORITY_SOURCE_PATH
+    )
+    monkeypatch.setattr(
+        authority,
+        "_LOADED_SOURCE_SHA256",
+        hashlib.sha256(authority_blob.payload).hexdigest(),
+    )
+    monkeypatch.setattr(authority, "__spec__", spec)
+    monkeypatch.setattr(authority, "__loader__", finder)
+    monkeypatch.setattr(authority, "__file__", origin)
+    monkeypatch.setattr(authority, "__package__", "falsewake")
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    monkeypatch.setattr(sys, "path", list(authority._TRUSTED_RUNTIME_SYS_PATHS))
+    monkeypatch.setattr(authority, "_LOADED_META_PATH_OBJECT", sys.meta_path)
+    monkeypatch.setattr(
+        authority,
+        "_LOADED_META_PATH_FRAME",
+        tuple(cast(list[object], sys.meta_path)),
+    )
+    monkeypatch.setattr(authority, "_LOADED_SYS_PATH_OBJECT", sys.path)
+    monkeypatch.setattr(
+        authority,
+        "_LOADED_SYS_PATH_FRAME",
+        tuple(sys.path),
+    )
+    monkeypatch.setattr(sys, "argv", list(invocation["argv"]))
+    monkeypatch.setattr(sys, "orig_argv", list(invocation["orig_argv"]))
+    monkeypatch.setattr(sys, "executable", cast(str, runtime["python_executable"]))
+    monkeypatch.setattr(sys, "flags", SimpleNamespace(**flags))
+    monkeypatch.setattr(os, "environ", dict(environment))
+    monkeypatch.setattr(platform, "python_version", lambda: runtime["python_version"])
+    monkeypatch.setattr(
+        importlib.metadata,
+        "version",
+        lambda distribution_name: versions[distribution_name],
+    )
+    monkeypatch.chdir(case.root)
+    monkeypatch.setattr(authority, "_ISSUED", weakref.WeakKeyDictionary())
+    monkeypatch.setattr(authority, "_ISSUED_GUARDS", weakref.WeakKeyDictionary())
+    monkeypatch.setattr(authority, "_FAILED", weakref.WeakSet())
+    monkeypatch.setattr(authority, "_ISSUANCE_COMPLETE", False)
+    return SealedChildHarness(
+        case=case,
+        bundle=bundle,
+        frame=frame,
+        finder=finder,
+        spec=spec,
+        origin=origin,
+    )
+
+
 def test_source_is_strictly_standard_library_only() -> None:
     source_path = PROJECT_ROOT / "src/falsewake/experiment_002_run_authority.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
@@ -491,6 +760,467 @@ def test_public_issuer_has_no_repository_or_digest_override() -> None:
         authority.verify_and_issue_experiment_002_run_registration
     )
     assert tuple(signature.parameters) == ()
+
+
+def test_sealed_child_issuer_has_no_override_and_parent_issuer_rejects_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    _prepare_sealed_child_harness(case, monkeypatch)
+    signature = inspect.signature(
+        authority._verify_and_issue_experiment_002_sealed_child_registration
+    )
+    assert tuple(signature.parameters) == ()
+    git_called = False
+
+    def forbidden_git(*args: object, **kwargs: object) -> bytes:
+        nonlocal git_called
+        del args, kwargs
+        git_called = True
+        raise AssertionError("Git must not run from a sealed-child issuer")
+
+    monkeypatch.setattr(authority, "_git", forbidden_git)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="canonical file origin",
+    ):
+        authority.verify_and_issue_experiment_002_run_registration()
+    assert not git_called
+
+
+def test_sealed_child_source_capture_uses_stable_loader_routes_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+
+    def forbidden_path_read(_path: Path) -> bytes:
+        raise AssertionError("sealed source capture must not read __file__")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_path_read)
+    captured = authority._capture_loaded_authority_source()
+    (
+        kind,
+        executing_file,
+        origin,
+        loader,
+        spec,
+        module,
+        get_data_route,
+        verifier_route,
+        meta_path_object,
+        meta_path_frame,
+        sys_path_object,
+        sys_path_frame,
+        source_sha256,
+    ) = captured
+    assert kind == authority._SEALED_CHILD_ORIGIN_KIND
+    assert executing_file == case.root / authority._AUTHORITY_SOURCE_PATH
+    assert origin == harness.origin
+    assert loader is harness.finder
+    assert spec is harness.spec
+    assert module is authority
+    assert get_data_route is harness.finder.get_data
+    assert verifier_route is harness.finder._verify_sealed_import_state
+    assert meta_path_object is sys.meta_path
+    assert meta_path_frame == tuple(sys.meta_path)
+    assert sys_path_object is sys.path
+    assert sys_path_frame == authority._TRUSTED_RUNTIME_SYS_PATHS
+    assert (
+        source_sha256
+        == hashlib.sha256(harness.finder.source_map[harness.origin]).hexdigest()
+    )
+    assert harness.finder.verification_count == 2
+    with pytest.raises(FileNotFoundError):
+        harness.finder.get_data(f"{harness.origin}.unregistered")
+
+
+def test_parent_verification_rejects_stable_loaded_source_digest_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    monkeypatch.setattr(authority, "_LOADED_SOURCE_SHA256", "0" * 64)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="executing run-authority source differs from its bound blob",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_sealed_child_issuer_and_reverification_never_use_git_or_popen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("sealed-child authority must stay process-local")
+
+    monkeypatch.setattr(authority, "_git", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        offset_before = os.lseek(7, 0, os.SEEK_CUR)
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        assert os.lseek(7, 0, os.SEEK_CUR) == offset_before == 0
+        assert capability.head_commit == case.head_commit
+        assert capability.implementation_commit == case.implementation_commit
+        assert (
+            capability.registration_sha256
+            == hashlib.sha256(harness.frame.registration_bytes).hexdigest()
+        )
+        assert capability.source_bundle_sha256 == case.source_sha256
+
+        state = authority._ISSUED[capability]
+        guard = authority._ISSUED_GUARDS[capability]
+        assert state.source_paths == case.source_paths
+        assert state.origin_binding.kind == authority._SEALED_CHILD_ORIGIN_KIND
+        assert state.origin_binding is not guard.origin_binding
+        assert authority._origin_bindings_match(
+            state.origin_binding,
+            guard.origin_binding,
+        )
+        assert state.origin_binding.bundle_descriptor == 7
+        assert state.origin_binding.bundle_offset == 0
+        assert state.origin_binding.bundle_proc_target == (
+            "/memfd:falsewake-exp002-child-bundle (deleted)"
+        )
+        assert state.origin_binding.source_loader is harness.finder
+        assert state.origin_binding.source_finder is harness.finder
+        assert state.origin_binding.loader_get_data_route is harness.finder.get_data
+        assert (
+            state.origin_binding.finder_verify_route
+            is harness.finder._verify_sealed_import_state
+        )
+        assert state.origin_binding.module_object is authority
+        assert state.origin_binding.module_spec is harness.spec
+        assert state.origin_binding.module_origin == harness.origin
+        assert state.origin_binding.runtime_sys_path == RUNTIME_SYS_PATH_ROOTS
+
+        for module_name in ("numpy", "safetensors", "torch"):
+            monkeypatch.setitem(sys.modules, module_name, ModuleType(module_name))
+        authority.reverify_verified_run_registration(capability)
+        assert os.lseek(7, 0, os.SEEK_CUR) == 0
+        assert capability not in authority._FAILED
+
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="parent-origin authority",
+        ):
+            authority._create_sealed_experiment_002_child_bundle_fd(capability)
+        assert capability not in authority._FAILED
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="already issued",
+        ):
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "descriptor_closed",
+        "descriptor_offset",
+        "descriptor_replaced",
+        "descriptor_mode",
+        "finder_failed",
+        "get_data_route",
+        "verifier_route",
+        "source_payload",
+        "module_origin",
+        "module_origin_string_subclass",
+        "module_file",
+        "module_file_string_subclass",
+        "module_package_string_subclass",
+        "module_loader",
+        "module_spec",
+        "spec_name_string_subclass",
+        "meta_path_identity",
+        "sys_modules_key_subclass",
+        "sys_path_identity",
+        "sys_path_string_subclass",
+        "argv_string_subclass",
+        "orig_argv_string_subclass",
+        "environment_string_subclass",
+        "python_version_string_subclass",
+        "python_executable_string_subclass",
+        "package_version_string_subclass",
+        "flag_integer_subclass",
+        "parent_process",
+    ],
+)
+def test_sealed_child_reverification_detects_tamper_and_permanently_poisons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        if tamper == "descriptor_closed":
+            os.close(7)
+        elif tamper == "descriptor_offset":
+            os.lseek(7, 1, os.SEEK_SET)
+        elif tamper == "descriptor_replaced":
+            _replace_fixed_sealed_child_bundle_fd(harness.bundle)
+        elif tamper == "descriptor_mode":
+            os.fchmod(7, 0o600)
+        elif tamper == "finder_failed":
+            harness.finder.valid = False
+        elif tamper == "get_data_route":
+            original_get_data = harness.finder.get_data
+
+            def replacement_get_data(origin: str) -> bytes:
+                return original_get_data(origin)
+
+            harness.finder.get_data = replacement_get_data
+        elif tamper == "verifier_route":
+            original_verifier = harness.finder._verify_sealed_import_state
+
+            def replacement_verifier() -> None:
+                original_verifier()
+
+            harness.finder._verify_sealed_import_state = replacement_verifier
+        elif tamper == "source_payload":
+            harness.finder.source_map[harness.origin] += b"\n"
+        elif tamper == "module_origin":
+            harness.spec.origin = f"{harness.origin}.changed"
+        elif tamper == "module_origin_string_subclass":
+            harness.spec.origin = EqualStringSubclass(harness.origin)
+        elif tamper == "module_file":
+            monkeypatch.setattr(authority, "__file__", f"{harness.origin}.changed")
+        elif tamper == "module_file_string_subclass":
+            monkeypatch.setattr(
+                authority,
+                "__file__",
+                EqualStringSubclass(harness.origin),
+            )
+        elif tamper == "module_package_string_subclass":
+            monkeypatch.setattr(
+                authority,
+                "__package__",
+                EqualStringSubclass("falsewake"),
+            )
+        elif tamper == "module_loader":
+            monkeypatch.setattr(authority, "__loader__", object())
+        elif tamper == "module_spec":
+            monkeypatch.setattr(authority, "__spec__", None)
+        elif tamper == "spec_name_string_subclass":
+            harness.spec.name = EqualStringSubclass(authority.__name__)
+        elif tamper == "meta_path_identity":
+            monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
+        elif tamper == "sys_modules_key_subclass":
+            spoofed_name = EqualStringSubclass("falsewake.spoofed")
+            monkeypatch.setitem(sys.modules, spoofed_name, ModuleType(spoofed_name))
+        elif tamper == "sys_path_identity":
+            monkeypatch.setattr(sys, "path", list(sys.path))
+        elif tamper == "sys_path_string_subclass":
+            sys.path[0] = EqualStringSubclass(sys.path[0])
+        elif tamper == "argv_string_subclass":
+            sys.argv[0] = EqualStringSubclass(sys.argv[0])
+        elif tamper == "orig_argv_string_subclass":
+            sys.orig_argv[0] = EqualStringSubclass(sys.orig_argv[0])
+        elif tamper == "environment_string_subclass":
+            environment_key = next(iter(os.environ))
+            os.environ[environment_key] = EqualStringSubclass(
+                os.environ[environment_key]
+            )
+        elif tamper == "python_version_string_subclass":
+            runtime = cast(dict[str, Any], harness.case.document["runtime"])
+            expected_python_version = cast(str, runtime["python_version"])
+            monkeypatch.setattr(
+                platform,
+                "python_version",
+                lambda: EqualStringSubclass(expected_python_version),
+            )
+        elif tamper == "python_executable_string_subclass":
+            monkeypatch.setattr(
+                sys,
+                "executable",
+                EqualStringSubclass(sys.executable),
+            )
+        elif tamper == "package_version_string_subclass":
+            versions = cast(dict[str, Any], harness.case.document["runtime"])
+            package_versions = {
+                "numpy": cast(str, versions["numpy_version"]),
+                "safetensors": cast(str, versions["safetensors_version"]),
+                "torch": cast(str, versions["torch_version"]),
+            }
+            monkeypatch.setattr(
+                importlib.metadata,
+                "version",
+                lambda name: EqualStringSubclass(package_versions[name]),
+            )
+        elif tamper == "flag_integer_subclass":
+            mutated_flags = vars(sys.flags).copy()
+            mutated_flags["isolated"] = EqualIntegerSubclass(
+                cast(int, mutated_flags["isolated"])
+            )
+            monkeypatch.setattr(sys, "flags", SimpleNamespace(**mutated_flags))
+        else:
+            parent_process_id = os.getppid()
+            monkeypatch.setattr(os, "getppid", lambda: parent_process_id + 1)
+
+        with pytest.raises(authority.Experiment002RunAuthorityError):
+            authority.reverify_verified_run_registration(capability)
+        assert capability in authority._FAILED
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="not issued",
+        ):
+            _ = capability.head_commit
+
+
+@pytest.mark.parametrize("tamper_target", ["state", "guard"])
+def test_sealed_child_origin_frame_tamper_permanently_poisons_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper_target: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        original_state = authority._ISSUED[capability]
+        original_guard = authority._ISSUED_GUARDS[capability]
+        if tamper_target == "state":
+            authority._ISSUED[capability] = dataclass_replace(
+                original_state,
+                origin_binding=dataclass_replace(
+                    original_state.origin_binding,
+                    bundle_offset=1,
+                ),
+            )
+        else:
+            authority._ISSUED_GUARDS[capability] = dataclass_replace(
+                original_guard,
+                origin_binding=dataclass_replace(
+                    original_guard.origin_binding,
+                    bundle_offset=1,
+                ),
+            )
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="not issued",
+        ):
+            _ = capability.head_commit
+        authority._ISSUED[capability] = original_state
+        authority._ISSUED_GUARDS[capability] = original_guard
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="not issued",
+        ):
+            authority.verify_verified_run_registration(capability)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong_memfd_name", "missing_seals", "inheritable"],
+)
+def test_fixed_sealed_child_descriptor_rejects_nonexact_kernel_identity(
+    mutation: str,
+) -> None:
+    payload = b"sealed-child-descriptor-probe"
+    with _fixed_sealed_child_bundle_fd(payload):
+        if mutation == "wrong_memfd_name":
+            _replace_fixed_sealed_child_bundle_fd(payload, name="wrong-name")
+        elif mutation == "missing_seals":
+            _replace_fixed_sealed_child_bundle_fd(payload, seals=0)
+        else:
+            os.set_inheritable(7, True)
+        with pytest.raises(authority.Experiment002RunAuthorityError):
+            authority._read_fixed_sealed_child_bundle()
+
+
+def test_sealed_child_issuance_is_concurrent_one_shot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    barrier = threading.Barrier(3)
+
+    def attempt_issue() -> authority.VerifiedRunRegistration:
+        barrier.wait()
+        return authority._verify_and_issue_experiment_002_sealed_child_registration()
+
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(attempt_issue) for _ in range(2)]
+            barrier.wait()
+            outcomes: list[authority.VerifiedRunRegistration | BaseException] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result())
+                except authority.Experiment002RunAuthorityError as error:
+                    outcomes.append(error)
+        issued = [
+            outcome
+            for outcome in outcomes
+            if isinstance(outcome, authority.VerifiedRunRegistration)
+        ]
+        rejected = [
+            outcome
+            for outcome in outcomes
+            if isinstance(outcome, authority.Experiment002RunAuthorityError)
+        ]
+        assert len(issued) == 1
+        assert len(rejected) == 1
+        authority.reverify_verified_run_registration(issued[0])
+
+
+def test_sealed_child_capability_is_process_local_across_fork(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not hasattr(os, "fork"):
+        pytest.skip("fork is required for the process-local capability test")
+    case = _valid_repository(tmp_path)
+    harness = _prepare_sealed_child_harness(case, monkeypatch)
+    with _fixed_sealed_child_bundle_fd(harness.bundle):
+        capability = (
+            authority._verify_and_issue_experiment_002_sealed_child_registration()
+        )
+        read_descriptor, write_descriptor = os.pipe()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"This process .* is multi-threaded, use of fork\(\)",
+                category=DeprecationWarning,
+            )
+            child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_descriptor)
+            try:
+                _ = capability.head_commit
+            except authority.Experiment002RunAuthorityError:
+                os.write(write_descriptor, b"rejected")
+                os.close(write_descriptor)
+                os._exit(0)
+            os.close(write_descriptor)
+            os._exit(2)
+
+        os.close(write_descriptor)
+        observed = os.read(read_descriptor, 64)
+        os.close(read_descriptor)
+        waited_pid, status = os.waitpid(child_pid, 0)
+        assert waited_pid == child_pid
+        assert os.WIFEXITED(status)
+        assert os.WEXITSTATUS(status) == 0
+        assert observed == b"rejected"
+        authority.reverify_verified_run_registration(capability)
+        assert capability.head_commit == case.head_commit
 
 
 def test_public_authority_rejects_a_physical_foreign_copy(
