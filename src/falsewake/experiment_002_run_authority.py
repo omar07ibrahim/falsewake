@@ -10,21 +10,25 @@ module.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.metadata
 import json
 import os
 import platform
+import selectors
 import shutil
+import signal
 import stat
 import struct
 import subprocess
 import sys
 import threading
+import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Final, NoReturn, SupportsIndex, cast
+from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 _RUN_CONFIG_PATH: Final = "configs/experiment-002-run.json"
 _AUTHORITY_SOURCE_PATH: Final = "src/falsewake/experiment_002_run_authority.py"
@@ -44,11 +48,24 @@ _MAX_CONFIG_BYTES: Final = 1 << 20
 _MAX_SOURCE_FILE_BYTES: Final = 64 << 20
 _MAX_SOURCE_BUNDLE_BYTES: Final = 256 << 20
 _MAX_SOURCE_FILES: Final = 4_096
+_MAX_FROZEN_FILE_BYTES: Final = 64 << 20
+_MAX_FROZEN_BUNDLE_BYTES: Final = 256 << 20
+_MAX_TRACKED_FILES: Final = 4_096
+_MAX_TRACKED_DIRECTORIES: Final = 4_096
+_MAX_TRACKED_FILE_BYTES: Final = 64 << 20
+_MAX_TRACKED_BYTES: Final = 256 << 20
+_MAX_WORKTREE_ENTRIES: Final = 16_384
+_MAX_WORKTREE_DEPTH: Final = 64
 _MAX_GIT_OUTPUT_BYTES: Final = 32 << 20
 _GIT_TIMEOUT_SECONDS: Final = 30
+_CHILD_BUNDLE_MAGIC: Final = b"FW2CHLD1"
+_CHILD_BUNDLE_VERSION: Final = 1
+_CHILD_BUNDLE_HEADER: Final = struct.Struct("<8sI40s40s64s64sIQQ")
+_MAX_CHILD_BUNDLE_BYTES: Final = 256 << 20
 _LOWER_HEX_40 = frozenset("0123456789abcdef")
 _LOWER_HEX_64 = _LOWER_HEX_40
 _ISSUER_MARKER: Final = object()
+_AUTHORITY_PROCESS_ID: Final = os.getpid()
 _PATH_TYPE: Final = type(Path())
 _EXECUTING_FILE: Final = Path(__file__).absolute()
 _LOADED_SOURCE_SHA256: Final = hashlib.sha256(_EXECUTING_FILE.read_bytes()).hexdigest()
@@ -56,6 +73,10 @@ _LOADED_SOURCE_SHA256: Final = hashlib.sha256(_EXECUTING_FILE.read_bytes()).hexd
 
 class Experiment002RunAuthorityError(ValueError):
     """The source-bound Experiment 002 registration failed closed."""
+
+
+class _ForkReinitializableLock(Protocol):
+    def _at_fork_reinit(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -113,6 +134,9 @@ class _VerifiedState:
     registration_sha256: str
     source_bundle_sha256: str
     source_paths: tuple[str, ...]
+    registration_bytes: bytes
+    source_bundle_payload: bytes
+    frozen_blobs: tuple[_FrozenBlob, ...]
     process_id: int
     nonce: object
 
@@ -125,6 +149,9 @@ class _RepositorySnapshot:
     registration_sha256: str
     source_bundle_sha256: str
     source_paths: tuple[str, ...]
+    registration_bytes: bytes = b""
+    source_bundle_payload: bytes = b""
+    frozen_blobs: tuple[_FrozenBlob, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +163,9 @@ class _IssuedGuard:
     registration_sha256: str
     source_bundle_sha256: str
     source_paths: tuple[str, ...]
+    registration_bytes: bytes
+    source_bundle_payload: bytes
+    frozen_blobs: tuple[_FrozenBlob, ...]
     process_id: int
     nonce: object
 
@@ -160,6 +190,37 @@ class _TreeBlob:
     payload: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class _TreeBlobIdentity:
+    mode: str
+    oid: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PreflightTrackedBlob:
+    path: str
+    identity: _TreeBlobIdentity
+    byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenBlob:
+    path: str
+    payload: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildBundleFrame:
+    head_commit: str
+    implementation_commit: str
+    registration_sha256: str
+    source_bundle_sha256: str
+    registration_bytes: bytes
+    source_bundle_payload: bytes
+    source_blobs: tuple[_FrozenBlob, ...]
+    frozen_blobs: tuple[_FrozenBlob, ...]
+
+
 _ISSUED: weakref.WeakKeyDictionary[VerifiedRunRegistration, _VerifiedState] = (
     weakref.WeakKeyDictionary()
 )
@@ -168,7 +229,17 @@ _ISSUED_GUARDS: weakref.WeakKeyDictionary[VerifiedRunRegistration, _IssuedGuard]
 )
 _FAILED: weakref.WeakSet[VerifiedRunRegistration] = weakref.WeakSet()
 _ISSUED_LOCK = threading.RLock()
+os.register_at_fork(
+    after_in_child=cast(_ForkReinitializableLock, _ISSUED_LOCK)._at_fork_reinit
+)
 _ISSUANCE_COMPLETE = False
+
+
+def _require_authority_process() -> None:
+    if os.getpid() != _AUTHORITY_PROCESS_ID:
+        raise Experiment002RunAuthorityError(
+            "run-registration authority cannot be inherited across a process fork"
+        )
 
 
 def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistration:
@@ -179,7 +250,9 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
     verified source location.
     """
 
+    _require_authority_process()
     with _ISSUED_LOCK:
+        _require_authority_process()
         if _ISSUANCE_COMPLETE:
             raise Experiment002RunAuthorityError(
                 "a run registration was already issued in this process"
@@ -195,6 +268,7 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
     snapshot = _verify_committed_repository(root, document)
     _require_production_activation(root, document)
     with _ISSUED_LOCK:
+        _require_authority_process()
         if _ISSUANCE_COMPLETE:
             raise Experiment002RunAuthorityError(
                 "a concurrent run-registration issuance already completed"
@@ -213,6 +287,7 @@ def verify_verified_run_registration(
 ) -> None:
     """Reverify repository state and reject any forged or stale capability."""
 
+    _require_authority_process()
     reverify_verified_run_registration(registration)
 
 
@@ -221,6 +296,7 @@ def reverify_verified_run_registration(
 ) -> None:
     """Fully recheck repository state, poisoning the capability on mismatch."""
 
+    _require_authority_process()
     state = _verified_state(registration)
     try:
         raw_config = _read_regular_file(
@@ -231,6 +307,7 @@ def reverify_verified_run_registration(
         observed = _verify_committed_repository(state.repository_root, document)
         _require_registered_runtime_identity(state.repository_root, document)
         with _ISSUED_LOCK:
+            _require_authority_process()
             current_state = _verified_state(registration)
             final_observed = _verify_committed_repository(
                 state.repository_root, document
@@ -246,8 +323,114 @@ def reverify_verified_run_registration(
                 )
     except BaseException:
         with _ISSUED_LOCK:
+            _require_authority_process()
             _FAILED.add(registration)
         raise
+
+
+def _create_sealed_experiment_002_child_bundle_fd(
+    registration: VerifiedRunRegistration, /
+) -> int:
+    """Return an O_RDONLY fd with mode 0400 and byte seals verified at return."""
+
+    _require_authority_process()
+    writer: int | None = None
+    reader: int | None = None
+    try:
+        reverify_verified_run_registration(registration)
+        state = _verified_state(registration)
+        bundle = _child_bundle_bytes_from_state(state)
+        frame = _parse_experiment_002_child_bundle(bundle)
+        _require_child_bundle_matches_state(frame, state)
+
+        memfd_flags, required_seals = _memfd_requirements()
+        try:
+            created_writer = os.memfd_create(
+                "falsewake-exp002-child-bundle",
+                flags=memfd_flags,
+            )
+        except (AttributeError, OSError) as error:
+            raise Experiment002RunAuthorityError(
+                "anonymous child-bundle memfd creation failed"
+            ) from error
+        writer = _require_descriptor_number(created_writer, "child-bundle writer")
+        _write_descriptor_exactly(writer, bundle)
+        try:
+            os.fchmod(writer, 0o400)
+            os.fsync(writer)
+            fcntl.fcntl(writer, fcntl.F_ADD_SEALS, required_seals)
+        except (AttributeError, OSError) as error:
+            raise Experiment002RunAuthorityError(
+                "child-bundle memfd could not be finalized and sealed"
+            ) from error
+        writer_stat = _verify_sealed_bundle_descriptor(
+            writer,
+            expected_bytes=bundle,
+            state=state,
+            required_seals=required_seals,
+            expected_access_mode=os.O_RDWR,
+        )
+
+        open_flags = os.O_RDONLY | _required_os_constant("O_CLOEXEC")
+        try:
+            created_reader = os.open(f"/proc/self/fd/{writer}", open_flags)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "sealed child bundle could not be reopened read-only"
+            ) from error
+        reader = _require_descriptor_number(created_reader, "child-bundle reader")
+        if reader == writer:
+            raise Experiment002RunAuthorityError(
+                "child-bundle reader did not receive an independent descriptor"
+            )
+        reader_stat = _verify_sealed_bundle_descriptor(
+            reader,
+            expected_bytes=bundle,
+            state=state,
+            required_seals=required_seals,
+            expected_access_mode=os.O_RDONLY,
+        )
+        if (reader_stat.st_dev, reader_stat.st_ino) != (
+            writer_stat.st_dev,
+            writer_stat.st_ino,
+        ):
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptors do not identify the same memfd"
+            )
+        _require_independent_open_file_descriptions(writer, reader, len(bundle))
+
+        os.close(writer)
+        writer = None
+        _verify_sealed_bundle_descriptor(
+            reader,
+            expected_bytes=bundle,
+            state=state,
+            required_seals=required_seals,
+            expected_access_mode=os.O_RDONLY,
+        )
+
+        reverify_verified_run_registration(registration)
+        if _verified_state(registration) is not state:
+            raise Experiment002RunAuthorityError(
+                "run-registration authority changed during child-bundle creation"
+            )
+        _verify_sealed_bundle_descriptor(
+            reader,
+            expected_bytes=bundle,
+            state=state,
+            required_seals=required_seals,
+            expected_access_mode=os.O_RDONLY,
+        )
+        result = reader
+        reader = None
+        return result
+    finally:
+        for descriptor in (reader, writer):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    continue
 
 
 def _verify_synthetic_repository_for_tests(
@@ -273,7 +456,9 @@ def _issue_controlled_snapshot_for_tests(
     only so lifecycle tests can stress the exact one-shot production recorder.
     """
 
+    _require_authority_process()
     with _ISSUED_LOCK:
+        _require_authority_process()
         return _record_verified_snapshot_locked(snapshot)
 
 
@@ -282,13 +467,14 @@ def _record_verified_snapshot_locked(
 ) -> VerifiedRunRegistration:
     global _ISSUANCE_COMPLETE
 
+    _require_authority_process()
     if _ISSUANCE_COMPLETE:
         raise Experiment002RunAuthorityError(
             "a run registration was already issued in this process"
         )
     verified = _state_from_snapshot(snapshot)
-    capability = object.__new__(VerifiedRunRegistration)
     guard = _guard_from_state(verified)
+    capability = object.__new__(VerifiedRunRegistration)
     _ISSUED[capability] = verified
     _ISSUED_GUARDS[capability] = guard
     _ISSUANCE_COMPLETE = True
@@ -296,9 +482,11 @@ def _record_verified_snapshot_locked(
 
 
 def _verified_state(registration: VerifiedRunRegistration) -> _VerifiedState:
+    _require_authority_process()
     if type(registration) is not VerifiedRunRegistration:
         raise TypeError("registration must be an exact VerifiedRunRegistration")
     with _ISSUED_LOCK:
+        _require_authority_process()
         state = _ISSUED.get(registration)
         guard = _ISSUED_GUARDS.get(registration)
         failed = registration in _FAILED
@@ -307,7 +495,7 @@ def _verified_state(registration: VerifiedRunRegistration) -> _VerifiedState:
             or guard is None
             or failed
             or state.issuer_marker is not _ISSUER_MARKER
-            or state.process_id != os.getpid()
+            or state.process_id != _AUTHORITY_PROCESS_ID
             or not _guard_matches_state(guard, state)
         ):
             _FAILED.add(registration)
@@ -327,6 +515,12 @@ def _guard_from_state(state: _VerifiedState) -> _IssuedGuard:
         registration_sha256=state.registration_sha256,
         source_bundle_sha256=state.source_bundle_sha256,
         source_paths=state.source_paths,
+        registration_bytes=state.registration_bytes,
+        source_bundle_payload=state.source_bundle_payload,
+        frozen_blobs=tuple(
+            _FrozenBlob(path=blob.path, payload=blob.payload)
+            for blob in state.frozen_blobs
+        ),
         process_id=state.process_id,
         nonce=state.nonce,
     )
@@ -346,6 +540,9 @@ def _guard_matches_state(guard: _IssuedGuard, state: _VerifiedState) -> bool:
         and guard.registration_sha256 == state.registration_sha256
         and guard.source_bundle_sha256 == state.source_bundle_sha256
         and guard.source_paths == state.source_paths
+        and guard.registration_bytes == state.registration_bytes
+        and guard.source_bundle_payload == state.source_bundle_payload
+        and guard.frozen_blobs == state.frozen_blobs
         and guard.process_id == state.process_id
         and guard.nonce is state.nonce
     )
@@ -364,6 +561,9 @@ def _require_verified_state_frame(state: _VerifiedState) -> None:
         registration_sha256=state.registration_sha256,
         source_bundle_sha256=state.source_bundle_sha256,
         source_paths=state.source_paths,
+        registration_bytes=state.registration_bytes,
+        source_bundle_payload=state.source_bundle_payload,
+        frozen_blobs=state.frozen_blobs,
         process_id=state.process_id,
         nonce=state.nonce,
     )
@@ -382,6 +582,9 @@ def _require_guard_frame(guard: _IssuedGuard) -> None:
         registration_sha256=guard.registration_sha256,
         source_bundle_sha256=guard.source_bundle_sha256,
         source_paths=guard.source_paths,
+        registration_bytes=guard.registration_bytes,
+        source_bundle_payload=guard.source_bundle_payload,
+        frozen_blobs=guard.frozen_blobs,
         process_id=guard.process_id,
         nonce=guard.nonce,
     )
@@ -396,6 +599,9 @@ def _require_authority_frame(
     registration_sha256: str,
     source_bundle_sha256: str,
     source_paths: tuple[str, ...],
+    registration_bytes: bytes,
+    source_bundle_payload: bytes,
+    frozen_blobs: tuple[_FrozenBlob, ...],
     process_id: int,
     nonce: object,
 ) -> None:
@@ -414,7 +620,20 @@ def _require_authority_frame(
     if type(source_paths) is not tuple or not source_paths:
         raise Experiment002RunAuthorityError("authority source paths changed")
     _require_path_list(list(source_paths), "authority source paths")
-    if type(process_id) is not int or process_id < 1 or type(nonce) is not object:
+    _require_retained_launch_material(
+        implementation_commit=implementation_commit,
+        registration_sha256=registration_sha256,
+        source_bundle_sha256=source_bundle_sha256,
+        source_paths=source_paths,
+        registration_bytes=registration_bytes,
+        source_bundle_payload=source_bundle_payload,
+        frozen_blobs=frozen_blobs,
+    )
+    if (
+        type(process_id) is not int
+        or process_id != _AUTHORITY_PROCESS_ID
+        or type(nonce) is not object
+    ):
         raise Experiment002RunAuthorityError("authority process frame changed")
 
 
@@ -431,7 +650,13 @@ def _state_from_snapshot(snapshot: _RepositorySnapshot) -> _VerifiedState:
         registration_sha256=snapshot.registration_sha256,
         source_bundle_sha256=snapshot.source_bundle_sha256,
         source_paths=snapshot.source_paths,
-        process_id=os.getpid(),
+        registration_bytes=snapshot.registration_bytes,
+        source_bundle_payload=snapshot.source_bundle_payload,
+        frozen_blobs=tuple(
+            _FrozenBlob(path=blob.path, payload=blob.payload)
+            for blob in snapshot.frozen_blobs
+        ),
+        process_id=_AUTHORITY_PROCESS_ID,
         nonce=object(),
     )
 
@@ -448,7 +673,10 @@ def _snapshot_matches_state(
         and snapshot.registration_sha256 == state.registration_sha256
         and snapshot.source_bundle_sha256 == state.source_bundle_sha256
         and snapshot.source_paths == state.source_paths
-        and state.process_id == os.getpid()
+        and snapshot.registration_bytes == state.registration_bytes
+        and snapshot.source_bundle_payload == state.source_bundle_payload
+        and snapshot.frozen_blobs == state.frozen_blobs
+        and state.process_id == _AUTHORITY_PROCESS_ID
     )
 
 
@@ -459,7 +687,12 @@ def _verify_committed_repository(
     _require_git_toplevel(root)
     head_commit = _head_commit(root)
 
-    config_blob = _committed_blob(root, head_commit, _RUN_CONFIG_PATH)
+    config_blob = _committed_blob(
+        root,
+        head_commit,
+        _RUN_CONFIG_PATH,
+        maximum_bytes=_MAX_CONFIG_BYTES,
+    )
     if config_blob.mode != "100644":
         raise Experiment002RunAuthorityError(
             "run registration must be a nonexecutable regular HEAD blob"
@@ -481,7 +714,39 @@ def _verify_committed_repository(
         implementation_commit=document.implementation_commit,
         head_commit=head_commit,
     )
-    _require_frozen_files(root, head_commit)
+    minimum_source_byte_count = _minimum_blob_frame_byte_count(document.source_paths)
+    maximum_frozen_payload_bytes = min(
+        _MAX_FROZEN_BUNDLE_BYTES,
+        _MAX_CHILD_BUNDLE_BYTES
+        - _CHILD_BUNDLE_HEADER.size
+        - len(document.raw_bytes)
+        - minimum_source_byte_count,
+    )
+    if maximum_frozen_payload_bytes < 4:
+        raise Experiment002RunAuthorityError(
+            "child-bundle framing leaves no room for frozen blobs"
+        )
+    frozen_blobs = _capture_frozen_files(
+        root,
+        head_commit,
+        maximum_payload_bytes=maximum_frozen_payload_bytes,
+    )
+    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs))
+    maximum_source_payload_bytes = min(
+        _MAX_SOURCE_BUNDLE_BYTES,
+        _MAX_CHILD_BUNDLE_BYTES
+        - _CHILD_BUNDLE_HEADER.size
+        - len(document.raw_bytes)
+        - frozen_payload_byte_count,
+    )
+    if document.source_payload_byte_count > maximum_source_payload_bytes:
+        raise Experiment002RunAuthorityError(
+            "registered source payload exceeds the exact child-bundle budget"
+        )
+    source_payload_limit = min(
+        maximum_source_payload_bytes,
+        document.source_payload_byte_count,
+    )
 
     observed_paths = _enumerate_import_roots(root, document.import_roots)
     if observed_paths != document.source_paths:
@@ -496,19 +761,39 @@ def _verify_committed_repository(
 
     source_blobs: list[tuple[str, bytes]] = []
     tree_blobs: dict[str, _TreeBlob] = {}
-    for path in document.source_paths:
-        implementation_blob = _committed_blob(
-            root, document.implementation_commit, path
+    framed_source_byte_count = 4
+    source_frame_overheads = tuple(
+        12 + len(path.encode("utf-8")) for path in document.source_paths
+    )
+    remaining_frame_overhead = sum(source_frame_overheads)
+    for path, frame_overhead in zip(
+        document.source_paths, source_frame_overheads, strict=True
+    ):
+        remaining_frame_overhead -= frame_overhead
+        framed_source_byte_count += frame_overhead
+        if framed_source_byte_count > source_payload_limit:
+            raise Experiment002RunAuthorityError(
+                "committed source framing exceeds its retained byte budget"
+            )
+        maximum_blob_bytes = min(
+            _MAX_SOURCE_FILE_BYTES,
+            source_payload_limit - framed_source_byte_count - remaining_frame_overhead,
         )
-        head_blob = _committed_blob(root, head_commit, path)
+        implementation_blob = _committed_blob(
+            root,
+            document.implementation_commit,
+            path,
+            maximum_bytes=maximum_blob_bytes,
+        )
+        head_identity = _committed_blob_identity(root, head_commit, path)
         if (
-            implementation_blob.mode != head_blob.mode
-            or implementation_blob.payload != head_blob.payload
+            implementation_blob.mode != head_identity.mode
+            or implementation_blob.oid != head_identity.oid
         ):
             raise Experiment002RunAuthorityError(
                 f"registered source changed after implementation commit ({path})"
             )
-        _require_worktree_blob(root, path, head_blob)
+        _require_worktree_blob(root, path, implementation_blob)
         if (
             path == _AUTHORITY_SOURCE_PATH
             and hashlib.sha256(implementation_blob.payload).hexdigest()
@@ -518,9 +803,18 @@ def _verify_committed_repository(
                 "executing run-authority source differs from its bound blob"
             )
         source_blobs.append((path, implementation_blob.payload))
-        tree_blobs[path] = head_blob
+        tree_blobs[path] = implementation_blob
+        framed_source_byte_count += len(implementation_blob.payload)
 
-    payload_byte_count, source_digest = _source_bundle_digest(tuple(source_blobs))
+    source_bundle_payload = _source_bundle_payload(tuple(source_blobs))
+    payload_byte_count = len(source_bundle_payload)
+    if payload_byte_count != framed_source_byte_count:
+        raise Experiment002RunAuthorityError(
+            "committed source framing byte count changed"
+        )
+    source_digest = hashlib.sha256(
+        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+    ).hexdigest()
     if payload_byte_count != document.source_payload_byte_count:
         raise Experiment002RunAuthorityError(
             "committed source bundle byte count differs from registration"
@@ -536,20 +830,35 @@ def _verify_committed_repository(
         raise Experiment002RunAuthorityError(
             "repository HEAD changed during verification"
         )
-    _require_clean_worktree(root, head_commit)
     _require_worktree_blob(root, _RUN_CONFIG_PATH, config_blob)
-    for path, expected_sha256 in _frozen_file_bindings():
-        blob = _committed_blob(root, head_commit, path)
-        if hashlib.sha256(blob.payload).hexdigest() != expected_sha256:
-            raise Experiment002RunAuthorityError(
-                f"frozen binding changed during verification ({path})"
-            )
-        _require_worktree_blob(root, path, blob)
+    if (
+        _capture_frozen_files(
+            root,
+            head_commit,
+            maximum_payload_bytes=maximum_frozen_payload_bytes,
+        )
+        != frozen_blobs
+    ):
+        raise Experiment002RunAuthorityError(
+            "frozen bindings changed during verification"
+        )
     for path, blob in tree_blobs.items():
         _require_worktree_blob(root, path, blob)
     if _enumerate_import_roots(root, document.import_roots) != document.source_paths:
         raise Experiment002RunAuthorityError(
             "registered import roots changed during verification"
+        )
+    # This is the closing raw-object/worktree closure: it reloads and hashes every
+    # HEAD blob, then byte-compares every tracked file through O_NOFOLLOW fds.
+    _require_clean_worktree(root, head_commit)
+    if _head_commit(root) != head_commit:
+        raise Experiment002RunAuthorityError(
+            "repository HEAD changed during closing raw verification"
+        )
+    _require_git_topology(root)
+    if _head_commit(root) != head_commit:
+        raise Experiment002RunAuthorityError(
+            "repository HEAD changed during final topology verification"
         )
 
     return _RepositorySnapshot(
@@ -559,6 +868,9 @@ def _verify_committed_repository(
         registration_sha256=hashlib.sha256(document.raw_bytes).hexdigest(),
         source_bundle_sha256=source_digest,
         source_paths=document.source_paths,
+        registration_bytes=document.raw_bytes,
+        source_bundle_payload=source_bundle_payload,
+        frozen_blobs=frozen_blobs,
     )
 
 
@@ -641,23 +953,45 @@ def _parse_registration(raw: bytes) -> _RegistrationDocument:
     source_paths = _require_path_list(source_object["paths"], "source paths")
     if not import_roots:
         raise Experiment002RunAuthorityError("at least one import root is required")
+    if len(import_roots) > _MAX_SOURCE_FILES:
+        raise Experiment002RunAuthorityError("too many registered import roots")
     if not source_paths:
         raise Experiment002RunAuthorityError("at least one source path is required")
     if len(source_paths) > _MAX_SOURCE_FILES:
         raise Experiment002RunAuthorityError("too many registered source paths")
-    for first_index, first in enumerate(import_roots):
-        first_path = PurePosixPath(first)
-        for second in import_roots[first_index + 1 :]:
-            second_path = PurePosixPath(second)
-            if first_path in second_path.parents or second_path in first_path.parents:
-                raise Experiment002RunAuthorityError(
-                    "registered import roots must not overlap"
-                )
+    seen_import_roots: set[str] = set()
+    for import_root in import_roots:
+        parts = PurePosixPath(import_root).parts
+        if any(
+            "/".join(parts[:depth]) in seen_import_roots
+            for depth in range(1, len(parts))
+        ):
+            raise Experiment002RunAuthorityError(
+                "registered import roots must not overlap"
+            )
+        seen_import_roots.add(import_root)
     byte_count = source_object["payload_byte_count"]
     if type(byte_count) is not int or not 0 <= byte_count <= _MAX_SOURCE_BUNDLE_BYTES:
         raise Experiment002RunAuthorityError(
             "source bundle payload_byte_count is invalid"
         )
+    minimum_source_byte_count = _minimum_blob_frame_byte_count(source_paths)
+    if byte_count < minimum_source_byte_count:
+        raise Experiment002RunAuthorityError(
+            "source bundle payload_byte_count is below its minimum framing"
+        )
+    frozen_paths = tuple(
+        path
+        for path, _ in sorted(
+            _frozen_file_bindings(), key=lambda item: item[0].encode("utf-8")
+        )
+    )
+    minimum_frozen_byte_count = _minimum_blob_frame_byte_count(frozen_paths)
+    _require_child_bundle_total_byte_count(
+        len(raw),
+        byte_count,
+        minimum_frozen_byte_count,
+    )
     source_sha256 = _require_hex(
         source_object["sha256"], length=64, name="source bundle sha256"
     )
@@ -1154,9 +1488,47 @@ def _frozen_file_bindings() -> tuple[tuple[str, str], ...]:
     )
 
 
-def _require_frozen_files(root: Path, head_commit: str) -> None:
-    for path, expected_sha256 in _frozen_file_bindings():
-        blob = _committed_blob(root, head_commit, path)
+def _capture_frozen_files(
+    root: Path,
+    head_commit: str,
+    *,
+    maximum_payload_bytes: int,
+) -> tuple[_FrozenBlob, ...]:
+    bindings = tuple(
+        sorted(_frozen_file_bindings(), key=lambda item: item[0].encode("utf-8"))
+    )
+    if len({path for path, _ in bindings}) != len(bindings):
+        raise Experiment002RunAuthorityError("frozen file bindings are not unique")
+    binding_paths = tuple(path for path, _ in bindings)
+    minimum_byte_count = _minimum_blob_frame_byte_count(binding_paths)
+    if (
+        type(maximum_payload_bytes) is not int
+        or maximum_payload_bytes < minimum_byte_count
+        or maximum_payload_bytes > _MAX_FROZEN_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            "frozen payload retained byte budget is invalid"
+        )
+    result: list[_FrozenBlob] = []
+    frame_overheads = tuple(12 + len(path.encode("utf-8")) for path in binding_paths)
+    remaining_frame_overhead = sum(frame_overheads)
+    framed_byte_count = 4
+    for (path, expected_sha256), frame_overhead in zip(
+        bindings, frame_overheads, strict=True
+    ):
+        remaining_frame_overhead -= frame_overhead
+        framed_byte_count += frame_overhead
+        maximum_blob_bytes = min(
+            _MAX_FROZEN_FILE_BYTES,
+            maximum_payload_bytes - framed_byte_count - remaining_frame_overhead,
+        )
+        blob = _committed_blob(
+            root,
+            head_commit,
+            path,
+            maximum_bytes=maximum_blob_bytes,
+        )
+        framed_byte_count += len(blob.payload)
         observed_sha256 = hashlib.sha256(blob.payload).hexdigest()
         if observed_sha256 != expected_sha256:
             raise Experiment002RunAuthorityError(
@@ -1170,11 +1542,50 @@ def _require_frozen_files(root: Path, head_commit: str) -> None:
                 "normalization artifact byte count mismatch"
             )
         _require_worktree_blob(root, path, blob)
+        result.append(_FrozenBlob(path=path, payload=blob.payload))
+    return tuple(result)
+
+
+def _require_frozen_files(root: Path, head_commit: str) -> None:
+    _capture_frozen_files(
+        root,
+        head_commit,
+        maximum_payload_bytes=_MAX_FROZEN_BUNDLE_BYTES,
+    )
 
 
 def _source_bundle_digest(
     sources: tuple[tuple[str, bytes], ...],
 ) -> tuple[int, str]:
+    payload = _source_bundle_payload(sources)
+    digest = hashlib.sha256(_SOURCE_BUNDLE_DOMAIN + payload).hexdigest()
+    return len(payload), digest
+
+
+def _minimum_blob_frame_byte_count(paths: tuple[str, ...]) -> int:
+    if type(paths) is not tuple or not paths:
+        raise Experiment002RunAuthorityError("blob-frame paths are invalid")
+    total_byte_count = 4
+    previous_path_bytes: bytes | None = None
+    for path in paths:
+        _require_relative_path(path, "blob-frame path")
+        path_bytes = path.encode("utf-8")
+        if previous_path_bytes is not None and path_bytes <= previous_path_bytes:
+            raise Experiment002RunAuthorityError(
+                "blob-frame paths are duplicated or not UTF-8 sorted"
+            )
+        previous_path_bytes = path_bytes
+        total_byte_count += 12 + len(path_bytes)
+        if total_byte_count > _MAX_CHILD_BUNDLE_BYTES:
+            raise Experiment002RunAuthorityError(
+                "minimum blob framing exceeds the child-bundle limit"
+            )
+    return total_byte_count
+
+
+def _source_bundle_payload(
+    sources: tuple[tuple[str, bytes], ...],
+) -> bytes:
     if not sources or len(sources) > _MAX_SOURCE_FILES:
         raise Experiment002RunAuthorityError("source bundle file count is invalid")
     paths = tuple(path for path, _ in sources)
@@ -1194,14 +1605,637 @@ def _source_bundle_digest(
         payload.extend(blob)
         if len(payload) > _MAX_SOURCE_BUNDLE_BYTES:
             raise Experiment002RunAuthorityError("source bundle is too large")
-    digest = hashlib.sha256(_SOURCE_BUNDLE_DOMAIN + payload).hexdigest()
-    return len(payload), digest
+    return bytes(payload)
+
+
+def _parse_blob_frames(
+    payload: bytes,
+    *,
+    name: str,
+    maximum_files: int,
+    maximum_file_bytes: int,
+    maximum_payload_bytes: int,
+) -> tuple[_FrozenBlob, ...]:
+    if type(payload) is not bytes:
+        raise Experiment002RunAuthorityError(f"{name} payload type is invalid")
+    if len(payload) < 4 or len(payload) > maximum_payload_bytes:
+        raise Experiment002RunAuthorityError(f"{name} payload byte count is invalid")
+    file_count = struct.unpack_from("<I", payload, 0)[0]
+    if file_count < 1 or file_count > maximum_files:
+        raise Experiment002RunAuthorityError(f"{name} file count is invalid")
+    offset = 4
+    previous_path_bytes: bytes | None = None
+    result: list[_FrozenBlob] = []
+    for _ in range(file_count):
+        if len(payload) - offset < 4:
+            raise Experiment002RunAuthorityError(f"{name} path frame is truncated")
+        path_byte_count = struct.unpack_from("<I", payload, offset)[0]
+        offset += 4
+        if (
+            path_byte_count < 1
+            or path_byte_count > 4_096
+            or path_byte_count > len(payload) - offset
+        ):
+            raise Experiment002RunAuthorityError(f"{name} path byte count is invalid")
+        path_bytes = payload[offset : offset + path_byte_count]
+        offset += path_byte_count
+        try:
+            path = path_bytes.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise Experiment002RunAuthorityError(
+                f"{name} path is not strict UTF-8"
+            ) from error
+        _require_relative_path(path, f"{name} path")
+        if previous_path_bytes is not None and path_bytes <= previous_path_bytes:
+            raise Experiment002RunAuthorityError(
+                f"{name} paths are duplicated or not UTF-8 sorted"
+            )
+        previous_path_bytes = path_bytes
+        if len(payload) - offset < 8:
+            raise Experiment002RunAuthorityError(f"{name} blob frame is truncated")
+        blob_byte_count = struct.unpack_from("<Q", payload, offset)[0]
+        offset += 8
+        if (
+            blob_byte_count > maximum_file_bytes
+            or blob_byte_count > len(payload) - offset
+        ):
+            raise Experiment002RunAuthorityError(f"{name} blob byte count is invalid")
+        blob = payload[offset : offset + blob_byte_count]
+        offset += blob_byte_count
+        result.append(_FrozenBlob(path=path, payload=blob))
+    if offset != len(payload):
+        raise Experiment002RunAuthorityError(f"{name} payload has trailing bytes")
+    return tuple(result)
+
+
+def _parse_source_bundle_payload(payload: bytes) -> tuple[_FrozenBlob, ...]:
+    return _parse_blob_frames(
+        payload,
+        name="source bundle",
+        maximum_files=_MAX_SOURCE_FILES,
+        maximum_file_bytes=_MAX_SOURCE_FILE_BYTES,
+        maximum_payload_bytes=_MAX_SOURCE_BUNDLE_BYTES,
+    )
+
+
+def _require_frozen_blob_sequence(blobs: tuple[_FrozenBlob, ...]) -> None:
+    if type(blobs) is not tuple:
+        raise Experiment002RunAuthorityError("frozen blob sequence type is invalid")
+    expected_bindings = tuple(
+        sorted(_frozen_file_bindings(), key=lambda item: item[0].encode("utf-8"))
+    )
+    if len(blobs) != len(expected_bindings):
+        raise Experiment002RunAuthorityError("frozen blob file count is invalid")
+    expected_paths = tuple(path for path, _ in expected_bindings)
+    observed_paths: list[str] = []
+    total_bytes = 4
+    for blob, (expected_path, expected_sha256) in zip(
+        blobs, expected_bindings, strict=True
+    ):
+        if type(blob) is not _FrozenBlob:
+            raise Experiment002RunAuthorityError("frozen blob frame type is invalid")
+        if type(blob.path) is not str or type(blob.payload) is not bytes:
+            raise Experiment002RunAuthorityError("frozen blob frame changed")
+        _require_relative_path(blob.path, "frozen blob path")
+        observed_paths.append(blob.path)
+        if blob.path != expected_path:
+            raise Experiment002RunAuthorityError(
+                "frozen blob paths are not the exact UTF-8-sorted bindings"
+            )
+        if len(blob.payload) > _MAX_FROZEN_FILE_BYTES:
+            raise Experiment002RunAuthorityError("frozen blob is too large")
+        if hashlib.sha256(blob.payload).hexdigest() != expected_sha256:
+            raise Experiment002RunAuthorityError(
+                f"frozen blob digest mismatch ({blob.path})"
+            )
+        if (
+            blob.path == "models/experiment-002-normalization.f32"
+            and len(blob.payload) != 320
+        ):
+            raise Experiment002RunAuthorityError(
+                "normalization artifact byte count mismatch"
+            )
+        total_bytes += 12 + len(blob.path.encode("utf-8")) + len(blob.payload)
+        if total_bytes > _MAX_FROZEN_BUNDLE_BYTES:
+            raise Experiment002RunAuthorityError("frozen blob payload is too large")
+    if tuple(observed_paths) != expected_paths:
+        raise Experiment002RunAuthorityError("frozen blob sequence changed")
+
+
+def _frozen_blob_payload(blobs: tuple[_FrozenBlob, ...]) -> bytes:
+    _require_frozen_blob_sequence(blobs)
+    payload = bytearray(struct.pack("<I", len(blobs)))
+    for blob in blobs:
+        path_bytes = blob.path.encode("utf-8")
+        payload.extend(struct.pack("<I", len(path_bytes)))
+        payload.extend(path_bytes)
+        payload.extend(struct.pack("<Q", len(blob.payload)))
+        payload.extend(blob.payload)
+    if len(payload) > _MAX_FROZEN_BUNDLE_BYTES:
+        raise Experiment002RunAuthorityError("frozen blob payload is too large")
+    return bytes(payload)
+
+
+def _parse_frozen_blob_payload(payload: bytes) -> tuple[_FrozenBlob, ...]:
+    blobs = _parse_blob_frames(
+        payload,
+        name="frozen bundle",
+        maximum_files=len(_frozen_file_bindings()),
+        maximum_file_bytes=_MAX_FROZEN_FILE_BYTES,
+        maximum_payload_bytes=_MAX_FROZEN_BUNDLE_BYTES,
+    )
+    _require_frozen_blob_sequence(blobs)
+    return blobs
+
+
+def _require_retained_launch_material(
+    *,
+    implementation_commit: str,
+    registration_sha256: str,
+    source_bundle_sha256: str,
+    source_paths: tuple[str, ...],
+    registration_bytes: bytes,
+    source_bundle_payload: bytes,
+    frozen_blobs: tuple[_FrozenBlob, ...],
+) -> None:
+    if (
+        type(registration_bytes) is not bytes
+        or type(source_bundle_payload) is not bytes
+        or type(frozen_blobs) is not tuple
+    ):
+        raise Experiment002RunAuthorityError(
+            "retained child-launch material has an invalid type"
+        )
+    present = (
+        bool(registration_bytes),
+        bool(source_bundle_payload),
+        bool(frozen_blobs),
+    )
+    if not any(present):
+        return
+    if not all(present):
+        raise Experiment002RunAuthorityError(
+            "retained child-launch material is incomplete"
+        )
+    if len(registration_bytes) > _MAX_CONFIG_BYTES:
+        raise Experiment002RunAuthorityError("retained registration is too large")
+    if hashlib.sha256(registration_bytes).hexdigest() != registration_sha256:
+        raise Experiment002RunAuthorityError("retained registration digest changed")
+    document = _parse_registration(registration_bytes)
+    if document.implementation_commit != implementation_commit:
+        raise Experiment002RunAuthorityError(
+            "retained registration implementation changed"
+        )
+    if document.source_paths != source_paths:
+        raise Experiment002RunAuthorityError("retained registration paths changed")
+    if document.source_payload_byte_count != len(source_bundle_payload):
+        raise Experiment002RunAuthorityError(
+            "retained source payload byte count changed"
+        )
+    observed_source_sha256 = hashlib.sha256(
+        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+    ).hexdigest()
+    if (
+        observed_source_sha256 != source_bundle_sha256
+        or document.source_bundle_sha256 != source_bundle_sha256
+    ):
+        raise Experiment002RunAuthorityError("retained source payload digest changed")
+    source_blobs = _parse_source_bundle_payload(source_bundle_payload)
+    if tuple(blob.path for blob in source_blobs) != source_paths:
+        raise Experiment002RunAuthorityError("retained source payload paths changed")
+    _require_frozen_blob_sequence(frozen_blobs)
+    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs))
+    _require_child_bundle_total_byte_count(
+        len(registration_bytes),
+        len(source_bundle_payload),
+        frozen_payload_byte_count,
+    )
+    source_by_path = {blob.path: blob.payload for blob in source_blobs}
+    for frozen_blob in frozen_blobs:
+        source_payload = source_by_path.get(frozen_blob.path)
+        if source_payload is not None and source_payload != frozen_blob.payload:
+            raise Experiment002RunAuthorityError(
+                f"retained source and frozen blobs differ ({frozen_blob.path})"
+            )
+
+
+def _require_child_bundle_total_byte_count(
+    registration_byte_count: int,
+    source_payload_byte_count: int,
+    frozen_payload_byte_count: int,
+) -> int:
+    counts = (
+        registration_byte_count,
+        source_payload_byte_count,
+        frozen_payload_byte_count,
+    )
+    if any(type(value) is not int or value < 0 for value in counts):
+        raise Experiment002RunAuthorityError(
+            "child bundle component byte count is invalid"
+        )
+    total_byte_count = _CHILD_BUNDLE_HEADER.size + sum(counts)
+    if total_byte_count > _MAX_CHILD_BUNDLE_BYTES:
+        raise Experiment002RunAuthorityError(
+            "child bundle exceeds the exact total byte limit"
+        )
+    return total_byte_count
+
+
+def _child_bundle_bytes_from_state(state: _VerifiedState) -> bytes:
+    _require_verified_state_frame(state)
+    if (
+        not state.registration_bytes
+        or not state.source_bundle_payload
+        or not state.frozen_blobs
+    ):
+        raise Experiment002RunAuthorityError(
+            "verified authority has no retained child-launch material"
+        )
+    frozen_payload = _frozen_blob_payload(state.frozen_blobs)
+    expected_byte_count = _require_child_bundle_total_byte_count(
+        len(state.registration_bytes),
+        len(state.source_bundle_payload),
+        len(frozen_payload),
+    )
+    header = _CHILD_BUNDLE_HEADER.pack(
+        _CHILD_BUNDLE_MAGIC,
+        _CHILD_BUNDLE_VERSION,
+        state.head_commit.encode("ascii"),
+        state.implementation_commit.encode("ascii"),
+        state.registration_sha256.encode("ascii"),
+        state.source_bundle_sha256.encode("ascii"),
+        len(state.registration_bytes),
+        len(state.source_bundle_payload),
+        len(frozen_payload),
+    )
+    bundle = b"".join(
+        (
+            header,
+            state.registration_bytes,
+            state.source_bundle_payload,
+            frozen_payload,
+        )
+    )
+    if len(bundle) != expected_byte_count:
+        raise Experiment002RunAuthorityError("child bundle byte count changed")
+    return bundle
+
+
+def _decode_fixed_ascii(value: bytes, name: str) -> str:
+    try:
+        return value.decode("ascii", errors="strict")
+    except UnicodeDecodeError as error:
+        raise Experiment002RunAuthorityError(f"{name} is not ASCII") from error
+
+
+def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
+    if type(payload) is not bytes:
+        raise Experiment002RunAuthorityError("child bundle must be exact bytes")
+    if len(payload) < _CHILD_BUNDLE_HEADER.size:
+        raise Experiment002RunAuthorityError("child bundle header is truncated")
+    if len(payload) > _MAX_CHILD_BUNDLE_BYTES:
+        raise Experiment002RunAuthorityError("child bundle is too large")
+    (
+        magic,
+        version,
+        head_bytes,
+        implementation_bytes,
+        registration_sha256_bytes,
+        source_bundle_sha256_bytes,
+        registration_byte_count,
+        source_payload_byte_count,
+        frozen_payload_byte_count,
+    ) = _CHILD_BUNDLE_HEADER.unpack_from(payload)
+    if magic != _CHILD_BUNDLE_MAGIC or version != _CHILD_BUNDLE_VERSION:
+        raise Experiment002RunAuthorityError("child bundle magic or version is invalid")
+    if registration_byte_count < 1 or registration_byte_count > _MAX_CONFIG_BYTES:
+        raise Experiment002RunAuthorityError(
+            "child bundle registration byte count is invalid"
+        )
+    if (
+        source_payload_byte_count < 1
+        or source_payload_byte_count > _MAX_SOURCE_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            "child bundle source byte count is invalid"
+        )
+    if (
+        frozen_payload_byte_count < 1
+        or frozen_payload_byte_count > _MAX_FROZEN_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            "child bundle frozen byte count is invalid"
+        )
+    expected_byte_count = _require_child_bundle_total_byte_count(
+        registration_byte_count,
+        source_payload_byte_count,
+        frozen_payload_byte_count,
+    )
+    if expected_byte_count != len(payload):
+        raise Experiment002RunAuthorityError(
+            "child bundle is truncated or has trailing bytes"
+        )
+    head_commit = _require_hex(
+        _decode_fixed_ascii(head_bytes, "child bundle HEAD"),
+        length=40,
+        name="child bundle HEAD",
+    )
+    implementation_commit = _require_hex(
+        _decode_fixed_ascii(implementation_bytes, "child bundle implementation"),
+        length=40,
+        name="child bundle implementation",
+    )
+    if head_commit == implementation_commit:
+        raise Experiment002RunAuthorityError(
+            "child bundle HEAD and implementation commits are identical"
+        )
+    registration_sha256 = _require_hex(
+        _decode_fixed_ascii(
+            registration_sha256_bytes, "child bundle registration sha256"
+        ),
+        length=64,
+        name="child bundle registration sha256",
+    )
+    source_bundle_sha256 = _require_hex(
+        _decode_fixed_ascii(source_bundle_sha256_bytes, "child bundle source sha256"),
+        length=64,
+        name="child bundle source sha256",
+    )
+    offset = _CHILD_BUNDLE_HEADER.size
+    registration_bytes = payload[offset : offset + registration_byte_count]
+    offset += registration_byte_count
+    source_bundle_payload = payload[offset : offset + source_payload_byte_count]
+    offset += source_payload_byte_count
+    frozen_payload = payload[offset:]
+    if hashlib.sha256(registration_bytes).hexdigest() != registration_sha256:
+        raise Experiment002RunAuthorityError(
+            "child bundle registration digest mismatch"
+        )
+    document = _parse_registration(registration_bytes)
+    if document.implementation_commit != implementation_commit:
+        raise Experiment002RunAuthorityError(
+            "child bundle implementation binding mismatch"
+        )
+    if document.source_payload_byte_count != len(source_bundle_payload):
+        raise Experiment002RunAuthorityError(
+            "child bundle source byte-count binding mismatch"
+        )
+    observed_source_sha256 = hashlib.sha256(
+        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+    ).hexdigest()
+    if (
+        observed_source_sha256 != source_bundle_sha256
+        or document.source_bundle_sha256 != source_bundle_sha256
+    ):
+        raise Experiment002RunAuthorityError(
+            "child bundle source digest binding mismatch"
+        )
+    source_blobs = _parse_source_bundle_payload(source_bundle_payload)
+    if tuple(blob.path for blob in source_blobs) != document.source_paths:
+        raise Experiment002RunAuthorityError(
+            "child bundle source path binding mismatch"
+        )
+    frozen_blobs = _parse_frozen_blob_payload(frozen_payload)
+    source_by_path = {blob.path: blob.payload for blob in source_blobs}
+    for frozen_blob in frozen_blobs:
+        source_blob = source_by_path.get(frozen_blob.path)
+        if source_blob is not None and source_blob != frozen_blob.payload:
+            raise Experiment002RunAuthorityError(
+                f"child bundle source/frozen mismatch ({frozen_blob.path})"
+            )
+    return _ChildBundleFrame(
+        head_commit=head_commit,
+        implementation_commit=implementation_commit,
+        registration_sha256=registration_sha256,
+        source_bundle_sha256=source_bundle_sha256,
+        registration_bytes=registration_bytes,
+        source_bundle_payload=source_bundle_payload,
+        source_blobs=source_blobs,
+        frozen_blobs=frozen_blobs,
+    )
+
+
+def _require_child_bundle_matches_state(
+    frame: _ChildBundleFrame, state: _VerifiedState
+) -> None:
+    if type(frame) is not _ChildBundleFrame or type(state) is not _VerifiedState:
+        raise Experiment002RunAuthorityError("child bundle frame type is invalid")
+    if (
+        frame.head_commit != state.head_commit
+        or frame.implementation_commit != state.implementation_commit
+        or frame.registration_sha256 != state.registration_sha256
+        or frame.source_bundle_sha256 != state.source_bundle_sha256
+        or frame.registration_bytes != state.registration_bytes
+        or frame.source_bundle_payload != state.source_bundle_payload
+        or frame.frozen_blobs != state.frozen_blobs
+        or tuple(blob.path for blob in frame.source_blobs) != state.source_paths
+    ):
+        raise Experiment002RunAuthorityError(
+            "child bundle does not exactly match its verified authority"
+        )
+
+
+def _required_os_constant(name: str) -> int:
+    value = getattr(os, name, None)
+    if type(value) is not int or value < 0:
+        raise Experiment002RunAuthorityError(
+            f"required operating-system constant is unavailable ({name})"
+        )
+    return value
+
+
+def _required_fcntl_constant(name: str) -> int:
+    value = getattr(fcntl, name, None)
+    if type(value) is not int or value < 0:
+        raise Experiment002RunAuthorityError(
+            f"required sealing constant is unavailable ({name})"
+        )
+    return value
+
+
+def _memfd_requirements() -> tuple[int, int]:
+    if not callable(getattr(os, "memfd_create", None)):
+        raise Experiment002RunAuthorityError("memfd_create is unavailable")
+    flags = _required_os_constant("MFD_CLOEXEC") | _required_os_constant(
+        "MFD_ALLOW_SEALING"
+    )
+    _required_fcntl_constant("F_ADD_SEALS")
+    _required_fcntl_constant("F_GET_SEALS")
+    seals = (
+        _required_fcntl_constant("F_SEAL_WRITE")
+        | _required_fcntl_constant("F_SEAL_GROW")
+        | _required_fcntl_constant("F_SEAL_SHRINK")
+        | _required_fcntl_constant("F_SEAL_SEAL")
+    )
+    return flags, seals
+
+
+def _require_descriptor_number(descriptor: object, name: str) -> int:
+    if type(descriptor) is not int or descriptor < 0:
+        raise Experiment002RunAuthorityError(f"{name} is invalid")
+    return descriptor
+
+
+def _write_descriptor_exactly(descriptor: int, payload: bytes) -> None:
+    _require_descriptor_number(descriptor, "child-bundle writer")
+    if type(payload) is not bytes or not payload:
+        raise Experiment002RunAuthorityError("child-bundle write payload is invalid")
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(view):
+        try:
+            written = os.write(descriptor, view[offset:])
+        except InterruptedError:
+            continue
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "child-bundle memfd write failed"
+            ) from error
+        if type(written) is not int or written < 1 or written > len(view) - offset:
+            raise Experiment002RunAuthorityError(
+                "child-bundle memfd write made invalid progress"
+            )
+        offset += written
+    try:
+        observed_offset = os.lseek(descriptor, 0, os.SEEK_CUR)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "child-bundle writer offset cannot be verified"
+        ) from error
+    if observed_offset != len(payload):
+        raise Experiment002RunAuthorityError(
+            "child-bundle writer offset is inconsistent"
+        )
+
+
+def _read_descriptor_exactly(descriptor: int, byte_count: int) -> bytes:
+    _require_descriptor_number(descriptor, "child-bundle descriptor")
+    if (
+        type(byte_count) is not int
+        or byte_count < 1
+        or byte_count > _MAX_CHILD_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor byte count is invalid"
+        )
+    chunks: list[bytes] = []
+    offset = 0
+    while offset < byte_count:
+        try:
+            chunk = os.pread(descriptor, min(1 << 20, byte_count - offset), offset)
+        except InterruptedError:
+            continue
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptor read failed"
+            ) from error
+        if type(chunk) is not bytes or not chunk:
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptor is unexpectedly truncated"
+            )
+        chunks.append(chunk)
+        offset += len(chunk)
+    try:
+        trailing = os.pread(descriptor, 1, byte_count)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor length cannot be verified"
+        ) from error
+    if trailing != b"":
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor has trailing bytes"
+        )
+    return b"".join(chunks)
+
+
+def _verify_sealed_bundle_descriptor(
+    descriptor: int,
+    *,
+    expected_bytes: bytes,
+    state: _VerifiedState,
+    required_seals: int,
+    expected_access_mode: int,
+) -> os.stat_result:
+    _require_descriptor_number(descriptor, "child-bundle descriptor")
+    try:
+        before = os.fstat(descriptor)
+        descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        observed_seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+        inheritable = os.get_inheritable(descriptor)
+    except (AttributeError, OSError) as error:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor metadata cannot be verified"
+        ) from error
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 0
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or before.st_size != len(expected_bytes)
+    ):
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor stat frame is invalid"
+        )
+    if (
+        type(descriptor_flags) is not int
+        or descriptor_flags & fcntl.FD_CLOEXEC == 0
+        or inheritable is not False
+        or type(status_flags) is not int
+        or status_flags & os.O_ACCMODE != expected_access_mode
+        or type(observed_seals) is not int
+        or observed_seals != required_seals
+    ):
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor flags or seals are invalid"
+        )
+    observed_bytes = _read_descriptor_exactly(descriptor, len(expected_bytes))
+    if observed_bytes != expected_bytes:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor bytes do not match the authority"
+        )
+    frame = _parse_experiment_002_child_bundle(observed_bytes)
+    _require_child_bundle_matches_state(frame, state)
+    try:
+        after = os.fstat(descriptor)
+        final_seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor changed while being verified"
+        ) from error
+    if _stat_frame(after) != _stat_frame(before) or final_seals != required_seals:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor changed while being verified"
+        )
+    return after
+
+
+def _require_independent_open_file_descriptions(
+    writer: int, reader: int, bundle_byte_count: int
+) -> None:
+    try:
+        writer_offset = os.lseek(writer, 0, os.SEEK_CUR)
+        reader_offset = os.lseek(reader, 0, os.SEEK_CUR)
+        if writer_offset != bundle_byte_count or reader_offset != 0:
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptor offsets are invalid"
+            )
+        os.lseek(reader, 1, os.SEEK_SET)
+        if os.lseek(writer, 0, os.SEEK_CUR) != writer_offset:
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptors share one open file description"
+            )
+        os.lseek(reader, 0, os.SEEK_SET)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "child-bundle descriptor independence cannot be verified"
+        ) from error
 
 
 def _enumerate_import_roots(
     root: Path, import_roots: tuple[str, ...]
 ) -> tuple[str, ...]:
     result: list[str] = []
+    visited_entry_count = 0
     for relative_root in import_roots:
         root_path = _validated_worktree_path(root, relative_root)
         try:
@@ -1219,43 +2253,42 @@ def _enumerate_import_roots(
         while pending:
             directory, relative_directory = pending.pop()
             try:
-                entries = sorted(
-                    os.scandir(directory),
-                    key=lambda entry: entry.name.encode("utf-8"),
-                    reverse=True,
-                )
+                entries = os.scandir(directory)
             except OSError as error:
                 raise Experiment002RunAuthorityError(
                     "registered import root cannot be enumerated "
                     f"({relative_directory})"
                 ) from error
-            for entry in entries:
-                child_relative = f"{relative_directory}/{entry.name}"
-                _require_relative_path(child_relative, "import-root entry")
-                try:
-                    child_stat = entry.stat(follow_symlinks=False)
-                except OSError as error:
-                    raise Experiment002RunAuthorityError(
-                        "registered import-root entry is inaccessible "
-                        f"({child_relative})"
-                    ) from error
-                if stat.S_ISLNK(child_stat.st_mode):
-                    raise Experiment002RunAuthorityError(
-                        f"registered import root contains a symlink ({child_relative})"
-                    )
-                if stat.S_ISDIR(child_stat.st_mode):
-                    pending.append((Path(entry.path), child_relative))
-                elif stat.S_ISREG(child_stat.st_mode):
-                    result.append(child_relative)
-                else:
-                    raise Experiment002RunAuthorityError(
-                        "registered import root contains a nonregular entry "
-                        f"({child_relative})"
-                    )
-                if len(result) + len(pending) > _MAX_SOURCE_FILES:
-                    raise Experiment002RunAuthorityError(
-                        "registered import roots contain too many entries"
-                    )
+            try:
+                with entries:
+                    for entry in entries:
+                        visited_entry_count += 1
+                        if visited_entry_count > _MAX_SOURCE_FILES:
+                            raise Experiment002RunAuthorityError(
+                                "registered import roots contain too many entries"
+                            )
+                        child_relative = f"{relative_directory}/{entry.name}"
+                        _require_relative_path(child_relative, "import-root entry")
+                        child_stat = entry.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(child_stat.st_mode):
+                            raise Experiment002RunAuthorityError(
+                                "registered import root contains a symlink "
+                                f"({child_relative})"
+                            )
+                        if stat.S_ISDIR(child_stat.st_mode):
+                            pending.append((Path(entry.path), child_relative))
+                        elif stat.S_ISREG(child_stat.st_mode):
+                            result.append(child_relative)
+                        else:
+                            raise Experiment002RunAuthorityError(
+                                "registered import root contains a nonregular entry "
+                                f"({child_relative})"
+                            )
+            except OSError as error:
+                raise Experiment002RunAuthorityError(
+                    "registered import-root entry is inaccessible "
+                    f"({relative_directory})"
+                ) from error
     return tuple(sorted(result, key=lambda value: value.encode("utf-8")))
 
 
@@ -1363,9 +2396,13 @@ def _read_regular_file(path: Path, *, maximum_bytes: int) -> bytes:
         raise Experiment002RunAuthorityError(
             f"required regular file is absent or inaccessible ({path})"
         ) from error
-    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+    ):
         raise Experiment002RunAuthorityError(
-            f"required path is not a regular nonsymlink file ({path})"
+            f"required path is not a singly-linked regular nonsymlink file ({path})"
         )
     if before.st_size > maximum_bytes:
         raise Experiment002RunAuthorityError(f"required file is too large ({path})")
@@ -1379,7 +2416,11 @@ def _read_regular_file(path: Path, *, maximum_bytes: int) -> bytes:
     try:
         opened = os.fstat(descriptor)
         before_frame = _stat_frame(before)
-        if not stat.S_ISREG(opened.st_mode) or _stat_frame(opened) != before_frame:
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or _stat_frame(opened) != before_frame
+        ):
             raise Experiment002RunAuthorityError(
                 f"required regular file identity changed ({path})"
             )
@@ -1451,6 +2492,32 @@ def _require_git_toplevel(root: Path) -> None:
         raise Experiment002RunAuthorityError(
             "repository_root is not the exact Git worktree top level"
         )
+    _require_git_topology(root)
+
+
+def _require_git_topology(root: Path) -> None:
+    expected = f"{root / '.git'}\n"
+    outputs = (
+        (
+            _git(root, "rev-parse", "--path-format=absolute", "--git-dir"),
+            "Git metadata directory",
+        ),
+        (
+            _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+            "Git common metadata directory",
+        ),
+    )
+    for output, name in outputs:
+        if len(output) > 4_097:
+            raise Experiment002RunAuthorityError(f"{name} output is too long")
+        try:
+            observed = output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise Experiment002RunAuthorityError(f"{name} is not UTF-8") from error
+        if observed != expected or "\x00" in observed or observed.count("\n") != 1:
+            raise Experiment002RunAuthorityError(
+                f"{name} is not the exact top-level .git directory"
+            )
 
 
 def _head_commit(root: Path) -> str:
@@ -1459,18 +2526,7 @@ def _head_commit(root: Path) -> str:
 
 
 def _require_clean_worktree(root: Path, head_commit: str) -> None:
-    output = _git(
-        root,
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-        "--ignore-submodules=none",
-    )
-    if output:
-        raise Experiment002RunAuthorityError(
-            "repository worktree or index is not clean, including untracked files"
-        )
+    _require_git_topology(root)
     tagged = _git(root, "ls-files", "-v", "-z")
     tagged_records = tagged.split(b"\0")
     if not tagged_records or tagged_records[-1] != b"":
@@ -1486,6 +2542,651 @@ def _require_clean_worktree(root: Path, head_commit: str) -> None:
         raise Experiment002RunAuthorityError(
             "Git stage-zero index does not exactly equal the HEAD tree"
         )
+    _require_raw_tracked_worktree(root, tree_entries)
+    _require_git_topology(root)
+
+
+def _validated_tracked_entry(
+    mode: bytes,
+    oid: bytes,
+    path: bytes,
+    *,
+    name: str,
+) -> tuple[bytes, bytes, bytes]:
+    if mode not in {b"100644", b"100755"}:
+        raise Experiment002RunAuthorityError(
+            f"{name} contains a nonregular or unusual mode"
+        )
+    try:
+        oid_text = oid.decode("ascii", errors="strict")
+        path_text = path.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise Experiment002RunAuthorityError(
+            f"{name} contains a noncanonical identity or path"
+        ) from error
+    _require_hex(oid_text, length=40, name=f"{name} blob ID")
+    _require_relative_path(path_text, f"{name} path")
+    if path_text.encode("utf-8") != path:
+        raise Experiment002RunAuthorityError(f"{name} path is not canonical UTF-8")
+    return mode, oid, path
+
+
+def _require_raw_tracked_worktree(
+    root: Path,
+    tree_entries: tuple[tuple[bytes, bytes, bytes], ...],
+) -> None:
+    if type(tree_entries) is not tuple or len(tree_entries) > _MAX_TRACKED_FILES:
+        raise Experiment002RunAuthorityError("tracked tree entry count is invalid")
+    tracked_paths: set[str] = set()
+    tracked_directories: set[str] = set()
+    decoded_entries: list[tuple[str, _TreeBlobIdentity]] = []
+    previous_path_bytes: bytes | None = None
+    for mode, oid, path_bytes in tree_entries:
+        validated_mode, validated_oid, validated_path = _validated_tracked_entry(
+            mode,
+            oid,
+            path_bytes,
+            name="tracked tree",
+        )
+        if previous_path_bytes is not None and validated_path <= previous_path_bytes:
+            raise Experiment002RunAuthorityError(
+                "tracked tree paths are duplicated or not byte sorted"
+            )
+        previous_path_bytes = validated_path
+        path = validated_path.decode("utf-8", errors="strict")
+        parts = PurePosixPath(path).parts
+        if len(parts) - 1 > _MAX_WORKTREE_DEPTH:
+            raise Experiment002RunAuthorityError(
+                "tracked tree path exceeds the worktree depth limit"
+            )
+        if path in tracked_paths or path in tracked_directories:
+            raise Experiment002RunAuthorityError(
+                "tracked tree contains a file/directory path collision"
+            )
+        for directory_depth in range(1, len(parts)):
+            directory = "/".join(parts[:directory_depth])
+            if directory in tracked_paths:
+                raise Experiment002RunAuthorityError(
+                    "tracked tree contains a file/directory path collision"
+                )
+            tracked_directories.add(directory)
+            if len(tracked_directories) > _MAX_TRACKED_DIRECTORIES:
+                raise Experiment002RunAuthorityError(
+                    "tracked tree contains too many directory prefixes"
+                )
+        tracked_paths.add(path)
+        decoded_entries.append(
+            (
+                path,
+                _TreeBlobIdentity(
+                    mode=validated_mode.decode("ascii"),
+                    oid=validated_oid.decode("ascii"),
+                ),
+            )
+        )
+    if len(tracked_paths) + len(tracked_directories) + 1 > _MAX_WORKTREE_ENTRIES:
+        raise Experiment002RunAuthorityError(
+            "tracked tree exceeds the raw worktree entry budget"
+        )
+
+    preflighted: list[_PreflightTrackedBlob] = []
+    cumulative_byte_count = 0
+    for path, identity in decoded_entries:
+        byte_count = _preflight_committed_blob_size(
+            root,
+            identity,
+            path,
+            maximum_bytes=_MAX_TRACKED_FILE_BYTES,
+        )
+        cumulative_byte_count += byte_count
+        if cumulative_byte_count > _MAX_TRACKED_BYTES:
+            raise Experiment002RunAuthorityError(
+                "tracked tree exceeds its cumulative raw byte budget"
+            )
+        preflighted.append(
+            _PreflightTrackedBlob(
+                path=path,
+                identity=identity,
+                byte_count=byte_count,
+            )
+        )
+    _require_raw_worktree_inventory(
+        root,
+        tuple(preflighted),
+        frozenset(tracked_directories),
+    )
+
+
+def _require_raw_worktree_inventory(
+    root: Path,
+    tracked_blobs: tuple[_PreflightTrackedBlob, ...],
+    tracked_directories: frozenset[str],
+) -> None:
+    if (
+        type(tracked_blobs) is not tuple
+        or type(tracked_directories) is not frozenset
+        or len(tracked_blobs) > _MAX_TRACKED_FILES
+        or len(tracked_directories) > _MAX_TRACKED_DIRECTORIES
+    ):
+        raise Experiment002RunAuthorityError("raw worktree frame is invalid")
+    tracked_by_path: dict[str, _PreflightTrackedBlob] = {}
+    reconstructed_directories: set[str] = set()
+    cumulative_byte_count = 0
+    previous_path_bytes: bytes | None = None
+    for tracked in tracked_blobs:
+        if type(tracked) is not _PreflightTrackedBlob:
+            raise Experiment002RunAuthorityError("raw tracked blob frame is invalid")
+        _require_relative_path(tracked.path, "raw tracked blob path")
+        path_bytes = tracked.path.encode("utf-8")
+        if previous_path_bytes is not None and path_bytes <= previous_path_bytes:
+            raise Experiment002RunAuthorityError(
+                "raw tracked blob paths are not uniquely byte sorted"
+            )
+        previous_path_bytes = path_bytes
+        if tracked.path in tracked_by_path or tracked.path in tracked_directories:
+            raise Experiment002RunAuthorityError(
+                "raw tracked blob paths are duplicated or collide"
+            )
+        if (
+            type(tracked.identity) is not _TreeBlobIdentity
+            or tracked.identity.mode not in {"100644", "100755"}
+            or type(tracked.byte_count) is not int
+            or not 0 <= tracked.byte_count <= _MAX_TRACKED_FILE_BYTES
+        ):
+            raise Experiment002RunAuthorityError("raw tracked blob frame is invalid")
+        _require_hex(
+            tracked.identity.oid,
+            length=40,
+            name="raw tracked blob ID",
+        )
+        cumulative_byte_count += tracked.byte_count
+        if cumulative_byte_count > _MAX_TRACKED_BYTES:
+            raise Experiment002RunAuthorityError(
+                "raw tracked blobs exceed their cumulative byte budget"
+            )
+        parts = PurePosixPath(tracked.path).parts
+        if len(parts) - 1 > _MAX_WORKTREE_DEPTH:
+            raise Experiment002RunAuthorityError(
+                "raw tracked blob path exceeds the worktree depth limit"
+            )
+        for directory_depth in range(1, len(parts)):
+            reconstructed_directories.add("/".join(parts[:directory_depth]))
+            if len(reconstructed_directories) > _MAX_TRACKED_DIRECTORIES:
+                raise Experiment002RunAuthorityError(
+                    "raw tracked blobs contain too many directory prefixes"
+                )
+        tracked_by_path[tracked.path] = tracked
+    if reconstructed_directories != set(tracked_directories):
+        raise Experiment002RunAuthorityError(
+            "raw tracked directory frame does not match tracked blob paths"
+        )
+    if len(tracked_by_path) + len(tracked_directories) + 1 > _MAX_WORKTREE_ENTRIES:
+        raise Experiment002RunAuthorityError(
+            "raw worktree frame exceeds its entry budget"
+        )
+
+    directory_flags = (
+        os.O_RDONLY
+        | _required_os_constant("O_CLOEXEC")
+        | _required_os_constant("O_DIRECTORY")
+        | _required_os_constant("O_NOFOLLOW")
+        | _required_os_constant("O_NONBLOCK")
+    )
+    file_flags = (
+        os.O_RDONLY
+        | _required_os_constant("O_CLOEXEC")
+        | _required_os_constant("O_NOFOLLOW")
+        | _required_os_constant("O_NONBLOCK")
+    )
+    observed_paths: set[str] = set()
+    observed_directories: set[str] = set()
+    visited_file_identities: set[tuple[int, int]] = set()
+    visited_directory_identities: set[tuple[int, int]] = set()
+    visited_entry_count = 0
+    git_metadata_seen = False
+    root_device = -1
+    git_metadata_frame: tuple[int, ...] | None = None
+
+    def require_descriptor_payload(
+        descriptor: int,
+        payload: bytes,
+        path: str,
+        expected_frame: tuple[int, ...],
+    ) -> None:
+        for _pass_index in range(2):
+            offset = 0
+            while offset < len(payload):
+                try:
+                    chunk = os.pread(
+                        descriptor,
+                        min(1 << 20, len(payload) - offset),
+                        offset,
+                    )
+                except InterruptedError:
+                    continue
+                except OSError as error:
+                    raise Experiment002RunAuthorityError(
+                        f"tracked file cannot be read safely ({path})"
+                    ) from error
+                if (
+                    type(chunk) is not bytes
+                    or not chunk
+                    or chunk != payload[offset : offset + len(chunk)]
+                ):
+                    raise Experiment002RunAuthorityError(
+                        f"worktree file differs from committed HEAD blob ({path})"
+                    )
+                offset += len(chunk)
+            try:
+                trailing = os.pread(descriptor, 1, len(payload))
+                after = os.fstat(descriptor)
+            except OSError as error:
+                raise Experiment002RunAuthorityError(
+                    f"tracked file changed while being read ({path})"
+                ) from error
+            if trailing != b"" or _stat_frame(after) != expected_frame:
+                raise Experiment002RunAuthorityError(
+                    f"tracked file changed while being read ({path})"
+                )
+
+    def require_named_frame(
+        directory_descriptor: int,
+        name: str,
+        expected_frame: tuple[int, ...],
+        path: str,
+    ) -> None:
+        try:
+            observed = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                f"worktree name changed during verification ({path})"
+            ) from error
+        if _stat_frame(observed) != expected_frame:
+            raise Experiment002RunAuthorityError(
+                f"worktree name changed during verification ({path})"
+            )
+
+    def visit_directory(
+        directory_descriptor: int,
+        relative_directory: str,
+        depth: int,
+    ) -> None:
+        nonlocal git_metadata_seen, visited_entry_count
+        try:
+            before = os.fstat(directory_descriptor)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "worktree directory metadata is inaccessible"
+            ) from error
+        if not stat.S_ISDIR(before.st_mode):
+            raise Experiment002RunAuthorityError(
+                "worktree traversal entered a nondirectory"
+            )
+        if before.st_dev != root_device:
+            raise Experiment002RunAuthorityError(
+                "worktree traversal crossed a filesystem boundary"
+            )
+        before_frame = _stat_frame(before)
+        collected: list[tuple[str, str, bool]] = []
+        local_names: set[str] = set()
+        try:
+            entries = os.scandir(directory_descriptor)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "worktree directory cannot be enumerated"
+            ) from error
+        try:
+            with entries:
+                for entry in entries:
+                    if type(entry.name) is not str or entry.name in local_names:
+                        raise Experiment002RunAuthorityError(
+                            "worktree enumeration returned a duplicate or invalid name"
+                        )
+                    local_names.add(entry.name)
+                    visited_entry_count += 1
+                    if visited_entry_count > _MAX_WORKTREE_ENTRIES:
+                        raise Experiment002RunAuthorityError(
+                            "worktree contains too many filesystem entries"
+                        )
+                    if relative_directory == "" and entry.name == ".git":
+                        collected.append((entry.name, ".git", True))
+                        continue
+                    relative_path = (
+                        entry.name
+                        if relative_directory == ""
+                        else f"{relative_directory}/{entry.name}"
+                    )
+                    try:
+                        _require_relative_path(relative_path, "worktree entry")
+                    except UnicodeEncodeError as error:
+                        raise Experiment002RunAuthorityError(
+                            "worktree contains a non-UTF-8 filesystem entry"
+                        ) from error
+                    if (
+                        relative_path not in tracked_by_path
+                        and relative_path not in tracked_directories
+                    ):
+                        try:
+                            unexpected = os.stat(
+                                entry.name,
+                                dir_fd=directory_descriptor,
+                                follow_symlinks=False,
+                            )
+                        except OSError as error:
+                            raise Experiment002RunAuthorityError(
+                                f"worktree entry is inaccessible ({relative_path})"
+                            ) from error
+                        if stat.S_ISREG(unexpected.st_mode):
+                            kind = "regular file"
+                        elif stat.S_ISDIR(unexpected.st_mode):
+                            kind = "directory"
+                        else:
+                            kind = "symlink or special filesystem entry"
+                        raise Experiment002RunAuthorityError(
+                            f"worktree contains an untracked {kind} ({relative_path})"
+                        )
+                    collected.append((entry.name, relative_path, False))
+        finally:
+            try:
+                after = os.fstat(directory_descriptor)
+            except OSError as error:
+                raise Experiment002RunAuthorityError(
+                    "worktree directory changed while being enumerated"
+                ) from error
+            if _stat_frame(after) != before_frame:
+                raise Experiment002RunAuthorityError(
+                    "worktree directory changed while being enumerated"
+                )
+
+        for name, relative_path, is_git_metadata in sorted(
+            collected,
+            key=lambda item: item[0].encode("utf-8"),
+        ):
+            try:
+                metadata = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as error:
+                raise Experiment002RunAuthorityError(
+                    f"worktree entry is inaccessible ({relative_path})"
+                ) from error
+            metadata_frame = _stat_frame(metadata)
+            if is_git_metadata:
+                if (
+                    git_metadata_seen
+                    or git_metadata_frame is None
+                    or metadata_frame != git_metadata_frame
+                ):
+                    raise Experiment002RunAuthorityError(
+                        "top-level .git metadata changed during inventory"
+                    )
+                git_metadata_seen = True
+                continue
+            if relative_path in tracked_directories:
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise Experiment002RunAuthorityError(
+                        "tracked worktree directory became a non-directory "
+                        f"({relative_path})"
+                    )
+                if depth >= _MAX_WORKTREE_DEPTH:
+                    raise Experiment002RunAuthorityError(
+                        "worktree directory depth exceeds its limit"
+                    )
+                child_descriptor: int | None = None
+                try:
+                    child_descriptor = os.open(
+                        name,
+                        directory_flags,
+                        dir_fd=directory_descriptor,
+                    )
+                    opened = os.fstat(child_descriptor)
+                    identity = (opened.st_dev, opened.st_ino)
+                    if (
+                        not stat.S_ISDIR(opened.st_mode)
+                        or opened.st_dev != root_device
+                        or _stat_frame(opened) != metadata_frame
+                        or identity in visited_directory_identities
+                    ):
+                        raise Experiment002RunAuthorityError(
+                            f"worktree directory identity is invalid ({relative_path})"
+                        )
+                    visited_directory_identities.add(identity)
+                    visit_directory(
+                        child_descriptor,
+                        relative_path,
+                        depth + 1,
+                    )
+                    if _stat_frame(os.fstat(child_descriptor)) != metadata_frame:
+                        raise Experiment002RunAuthorityError(
+                            "worktree directory changed during traversal "
+                            f"({relative_path})"
+                        )
+                    require_named_frame(
+                        directory_descriptor,
+                        name,
+                        metadata_frame,
+                        relative_path,
+                    )
+                    observed_directories.add(relative_path)
+                except OSError as error:
+                    raise Experiment002RunAuthorityError(
+                        f"worktree directory cannot be opened safely ({relative_path})"
+                    ) from error
+                finally:
+                    if child_descriptor is not None:
+                        os.close(child_descriptor)
+                continue
+
+            tracked = tracked_by_path[relative_path]
+            if not stat.S_ISREG(metadata.st_mode):
+                raise Experiment002RunAuthorityError(
+                    "tracked worktree path is a symlink or special filesystem entry "
+                    f"({relative_path})"
+                )
+            file_descriptor: int | None = None
+            try:
+                file_descriptor = os.open(
+                    name,
+                    file_flags,
+                    dir_fd=directory_descriptor,
+                )
+                opened = os.fstat(file_descriptor)
+                opened_frame = _stat_frame(opened)
+                identity = (opened.st_dev, opened.st_ino)
+                executable = bool(opened.st_mode & 0o111)
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or opened.st_nlink != 1
+                    or opened.st_dev != root_device
+                    or opened.st_size != tracked.byte_count
+                    or opened_frame != metadata_frame
+                    or identity in visited_file_identities
+                    or executable != (tracked.identity.mode == "100755")
+                ):
+                    raise Experiment002RunAuthorityError(
+                        f"tracked worktree file identity is invalid ({relative_path})"
+                    )
+                visited_file_identities.add(identity)
+                blob = _load_preflighted_committed_blob(
+                    root,
+                    tracked.identity,
+                    tracked.path,
+                    declared_byte_count=tracked.byte_count,
+                )
+                require_descriptor_payload(
+                    file_descriptor,
+                    blob.payload,
+                    relative_path,
+                    opened_frame,
+                )
+                require_named_frame(
+                    directory_descriptor,
+                    name,
+                    opened_frame,
+                    relative_path,
+                )
+                observed_paths.add(relative_path)
+            except OSError as error:
+                raise Experiment002RunAuthorityError(
+                    f"tracked worktree file cannot be opened safely ({relative_path})"
+                ) from error
+            finally:
+                if file_descriptor is not None:
+                    os.close(file_descriptor)
+
+        try:
+            final_directory = os.fstat(directory_descriptor)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "worktree directory changed during traversal"
+            ) from error
+        if _stat_frame(final_directory) != before_frame:
+            raise Experiment002RunAuthorityError(
+                "worktree directory changed during traversal"
+            )
+
+    root_descriptor: int | None = None
+    git_descriptor: int | None = None
+    try:
+        root_before = root.lstat()
+        if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+            raise Experiment002RunAuthorityError(
+                "worktree root is not a nonsymlink directory"
+            )
+        root_descriptor = _open_absolute_nonsymlink_directory(root, directory_flags)
+        opened_root = os.fstat(root_descriptor)
+        if _stat_frame(opened_root) != _stat_frame(root_before):
+            raise Experiment002RunAuthorityError(
+                "worktree root identity changed before inventory"
+            )
+        root_device = opened_root.st_dev
+        visited_directory_identities.add((opened_root.st_dev, opened_root.st_ino))
+        try:
+            git_named = os.stat(
+                ".git",
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
+            git_descriptor = os.open(
+                ".git",
+                directory_flags,
+                dir_fd=root_descriptor,
+            )
+            git_opened = os.fstat(git_descriptor)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "top-level .git metadata cannot be opened safely"
+            ) from error
+        git_identity = (git_opened.st_dev, git_opened.st_ino)
+        git_metadata_frame = _stat_frame(git_opened)
+        if (
+            not stat.S_ISDIR(git_opened.st_mode)
+            or git_opened.st_dev != root_device
+            or git_metadata_frame != _stat_frame(git_named)
+            or git_identity in visited_directory_identities
+        ):
+            raise Experiment002RunAuthorityError(
+                "top-level .git metadata identity is invalid"
+            )
+        visited_directory_identities.add(git_identity)
+
+        visit_directory(root_descriptor, "", 0)
+        if not git_metadata_seen or git_metadata_frame is None:
+            raise Experiment002RunAuthorityError(
+                "worktree has no exact top-level .git metadata directory"
+            )
+        if _stat_frame(os.fstat(git_descriptor)) != git_metadata_frame:
+            raise Experiment002RunAuthorityError(
+                "top-level .git metadata changed during inventory"
+            )
+        require_named_frame(
+            root_descriptor,
+            ".git",
+            git_metadata_frame,
+            ".git",
+        )
+        root_after = root.lstat()
+        if _stat_frame(root_after) != _stat_frame(root_before):
+            raise Experiment002RunAuthorityError(
+                "worktree root path identity changed during inventory"
+            )
+        reopened_root = _open_absolute_nonsymlink_directory(root, directory_flags)
+        try:
+            if _stat_frame(os.fstat(reopened_root)) != _stat_frame(opened_root):
+                raise Experiment002RunAuthorityError(
+                    "worktree root component chain changed during inventory"
+                )
+        finally:
+            os.close(reopened_root)
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "worktree root cannot be opened safely"
+        ) from error
+    finally:
+        if git_descriptor is not None:
+            os.close(git_descriptor)
+        if root_descriptor is not None:
+            os.close(root_descriptor)
+    if observed_paths != set(tracked_by_path):
+        raise Experiment002RunAuthorityError(
+            "raw worktree inventory does not exactly equal the tracked tree"
+        )
+    if observed_directories != set(tracked_directories):
+        raise Experiment002RunAuthorityError(
+            "raw worktree inventory does not exactly equal tracked directories"
+        )
+
+
+def _open_absolute_nonsymlink_directory(path: Path, flags: int) -> int:
+    if type(path) is not _PATH_TYPE or not path.is_absolute():
+        raise Experiment002RunAuthorityError(
+            "anchored directory path is not an exact absolute pathlib path"
+        )
+    parts = path.parts
+    if not parts or parts[0] != os.sep:
+        raise Experiment002RunAuthorityError(
+            "anchored directory path has no filesystem root"
+        )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(os.sep, flags)
+        for part in parts[1:]:
+            named = os.stat(
+                part,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+            if not stat.S_ISDIR(named.st_mode):
+                raise Experiment002RunAuthorityError(
+                    "anchored directory path contains a symlink or nondirectory"
+                )
+            child = os.open(part, flags, dir_fd=descriptor)
+            try:
+                if _stat_frame(os.fstat(child)) != _stat_frame(named):
+                    raise Experiment002RunAuthorityError(
+                        "anchored directory component identity changed"
+                    )
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(descriptor)
+            descriptor = child
+        result = descriptor
+        descriptor = None
+        return result
+    except OSError as error:
+        raise Experiment002RunAuthorityError(
+            "anchored directory path cannot be opened safely"
+        ) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _index_entries(root: Path) -> tuple[tuple[bytes, bytes, bytes], ...]:
@@ -1493,7 +3194,10 @@ def _index_entries(root: Path) -> tuple[tuple[bytes, bytes, bytes], ...]:
     records = output.split(b"\0")
     if not records or records[-1] != b"":
         raise Experiment002RunAuthorityError("Git index output is ambiguous")
+    if len(records) - 1 > _MAX_TRACKED_FILES:
+        raise Experiment002RunAuthorityError("Git index contains too many entries")
     result: list[tuple[bytes, bytes, bytes]] = []
+    previous_path: bytes | None = None
     for record in records[:-1]:
         try:
             metadata, path = record.split(b"\t", maxsplit=1)
@@ -1506,7 +3210,18 @@ def _index_entries(root: Path) -> tuple[tuple[bytes, bytes, bytes], ...]:
             raise Experiment002RunAuthorityError(
                 "Git index contains a non-stage-zero or invalid entry"
             )
-        result.append((mode, oid, path))
+        validated = _validated_tracked_entry(
+            mode,
+            oid,
+            path,
+            name="Git index",
+        )
+        if previous_path is not None and path <= previous_path:
+            raise Experiment002RunAuthorityError(
+                "Git index paths are duplicated or not byte sorted"
+            )
+        previous_path = path
+        result.append(validated)
     return tuple(result)
 
 
@@ -1517,18 +3232,32 @@ def _tree_entries(
     records = output.split(b"\0")
     if not records or records[-1] != b"":
         raise Experiment002RunAuthorityError("Git HEAD tree output is ambiguous")
+    if len(records) - 1 > _MAX_TRACKED_FILES:
+        raise Experiment002RunAuthorityError("Git HEAD tree contains too many entries")
     result: list[tuple[bytes, bytes, bytes]] = []
+    previous_path: bytes | None = None
     for record in records[:-1]:
         try:
             metadata, path = record.split(b"\t", maxsplit=1)
-            mode, _object_type, oid = metadata.split(b" ", maxsplit=2)
+            mode, object_type, oid = metadata.split(b" ", maxsplit=2)
         except ValueError as error:
             raise Experiment002RunAuthorityError(
                 "Git HEAD tree entry is malformed"
             ) from error
-        if not path or b"\0" in path:
+        if object_type != b"blob" or not path or b"\0" in path:
             raise Experiment002RunAuthorityError("Git HEAD tree path is invalid")
-        result.append((mode, oid, path))
+        validated = _validated_tracked_entry(
+            mode,
+            oid,
+            path,
+            name="Git HEAD tree",
+        )
+        if previous_path is not None and path <= previous_path:
+            raise Experiment002RunAuthorityError(
+                "Git HEAD tree paths are duplicated or not byte sorted"
+            )
+        previous_path = path
+        result.append(validated)
     return tuple(result)
 
 
@@ -1601,6 +3330,8 @@ def _require_registration_commit_shape(
     changes = _git(
         root,
         "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
         "--no-commit-id",
         "--name-status",
         "-r",
@@ -1614,7 +3345,7 @@ def _require_registration_commit_shape(
         )
 
 
-def _committed_blob(root: Path, commit: str, path: str) -> _TreeBlob:
+def _committed_blob_identity(root: Path, commit: str, path: str) -> _TreeBlobIdentity:
     _require_relative_path(path, "committed path")
     output = _git(root, "ls-tree", "-z", commit, "--", path)
     if not output.endswith(b"\0") or output.count(b"\0") != 1:
@@ -1644,18 +3375,108 @@ def _committed_blob(root: Path, commit: str, path: str) -> _TreeBlob:
             f"committed blob ID is not ASCII ({path})"
         ) from error
     _require_hex(oid_text, length=40, name=f"blob ID for {path}")
-    payload = _git(root, "cat-file", "blob", oid_text)
-    if len(payload) > _MAX_SOURCE_FILE_BYTES and path not in {
-        binding_path for binding_path, _ in _frozen_file_bindings()
-    }:
+    return _TreeBlobIdentity(mode=mode.decode("ascii"), oid=oid_text)
+
+
+def _committed_blob(
+    root: Path,
+    commit: str,
+    path: str,
+    *,
+    maximum_bytes: int,
+) -> _TreeBlob:
+    identity = _committed_blob_identity(root, commit, path)
+    declared_byte_count = _preflight_committed_blob_size(
+        root,
+        identity,
+        path,
+        maximum_bytes=maximum_bytes,
+    )
+    return _load_preflighted_committed_blob(
+        root,
+        identity,
+        path,
+        declared_byte_count=declared_byte_count,
+    )
+
+
+def _preflight_committed_blob_size(
+    root: Path,
+    identity: _TreeBlobIdentity,
+    path: str,
+    *,
+    maximum_bytes: int,
+) -> int:
+    if (
+        type(maximum_bytes) is not int
+        or not 0 <= maximum_bytes <= _MAX_CHILD_BUNDLE_BYTES
+    ):
         raise Experiment002RunAuthorityError(
-            f"committed source blob is too large ({path})"
+            f"committed blob retained byte budget is invalid ({path})"
         )
-    return _TreeBlob(mode=mode.decode("ascii"), oid=oid_text, payload=payload)
+    if type(identity) is not _TreeBlobIdentity:
+        raise Experiment002RunAuthorityError(
+            f"committed blob identity is invalid ({path})"
+        )
+    declared_byte_count = _single_git_size_line(
+        _git(root, "cat-file", "-s", identity.oid),
+        name=f"blob size for {path}",
+    )
+    if declared_byte_count > maximum_bytes:
+        raise Experiment002RunAuthorityError(
+            f"committed blob exceeds its retained byte budget ({path})"
+        )
+    return declared_byte_count
 
 
-def _git(root: Path, *arguments: str) -> bytes:
-    return _git_process(root, arguments, allowed_returncodes=(0,)).stdout
+def _load_preflighted_committed_blob(
+    root: Path,
+    identity: _TreeBlobIdentity,
+    path: str,
+    *,
+    declared_byte_count: int,
+) -> _TreeBlob:
+    if (
+        type(identity) is not _TreeBlobIdentity
+        or type(declared_byte_count) is not int
+        or not 0 <= declared_byte_count <= _MAX_CHILD_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError(
+            f"committed blob preflight frame is invalid ({path})"
+        )
+    payload = _git(
+        root,
+        "cat-file",
+        "blob",
+        identity.oid,
+        maximum_stdout_bytes=declared_byte_count,
+    )
+    if len(payload) != declared_byte_count:
+        raise Experiment002RunAuthorityError(
+            f"committed blob differs from its size preflight ({path})"
+        )
+    object_digest = hashlib.sha1(usedforsecurity=False)
+    object_digest.update(b"blob " + str(len(payload)).encode("ascii") + b"\0")
+    object_digest.update(payload)
+    observed_oid = object_digest.hexdigest()
+    if observed_oid != identity.oid:
+        raise Experiment002RunAuthorityError(
+            f"committed blob payload does not match its Git object ID ({path})"
+        )
+    return _TreeBlob(mode=identity.mode, oid=identity.oid, payload=payload)
+
+
+def _git(
+    root: Path,
+    *arguments: str,
+    maximum_stdout_bytes: int = _MAX_GIT_OUTPUT_BYTES,
+) -> bytes:
+    return _git_process(
+        root,
+        arguments,
+        allowed_returncodes=(0,),
+        maximum_stdout_bytes=maximum_stdout_bytes,
+    ).stdout
 
 
 def _git_process(
@@ -1663,7 +3484,14 @@ def _git_process(
     arguments: tuple[str, ...],
     *,
     allowed_returncodes: tuple[int, ...],
+    maximum_stdout_bytes: int = _MAX_GIT_OUTPUT_BYTES,
 ) -> subprocess.CompletedProcess[bytes]:
+    if (
+        type(maximum_stdout_bytes) is not int
+        or maximum_stdout_bytes < 0
+        or maximum_stdout_bytes > _MAX_CHILD_BUNDLE_BYTES
+    ):
+        raise Experiment002RunAuthorityError("isolated Git output limit is invalid")
     executable = shutil.which("git", path="/usr/bin:/bin")
     if executable is None:
         raise Experiment002RunAuthorityError(
@@ -1686,6 +3514,7 @@ def _git_process(
         )
     command = (
         os.fspath(executable_path),
+        "--no-pager",
         "--literal-pathspecs",
         "-c",
         "core.fsmonitor=false",
@@ -1703,6 +3532,7 @@ def _git_process(
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_LITERAL_PATHSPECS": "1",
+        "GIT_NO_LAZY_FETCH": "1",
         "GIT_NO_REPLACE_OBJECTS": "1",
         "GIT_OPTIONAL_LOCKS": "0",
         "GIT_TERMINAL_PROMPT": "0",
@@ -1711,18 +3541,39 @@ def _git_process(
         "LC_ALL": "C",
         "XDG_CONFIG_HOME": "/nonexistent",
     }
+    process: subprocess.Popen[bytes] | None = None
+    process_descriptor: int | None = None
+    deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=root,
             env=environment,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
-            check=False,
-            timeout=_GIT_TIMEOUT_SECONDS,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            close_fds=True,
+            start_new_session=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+        process_descriptor = os.pidfd_open(process.pid, 0)
+        completed = _collect_bounded_git_process(
+            process,
+            process_descriptor=process_descriptor,
+            command=command,
+            deadline=deadline,
+            maximum_stdout_bytes=maximum_stdout_bytes,
+        )
+    except (AttributeError, OSError, subprocess.TimeoutExpired) as error:
         raise Experiment002RunAuthorityError("isolated Git command failed") from error
+    finally:
+        if process is not None:
+            _close_kill_and_reap_git_process(process)
+        if process_descriptor is not None:
+            try:
+                os.close(process_descriptor)
+            except OSError:
+                process_descriptor = None
     if (
         type(completed.returncode) is not int
         or completed.returncode not in allowed_returncodes
@@ -1733,11 +3584,125 @@ def _git_process(
     if type(completed.stdout) is not bytes or type(completed.stderr) is not bytes:
         raise Experiment002RunAuthorityError("isolated Git output type is invalid")
     if (
-        len(completed.stdout) > _MAX_GIT_OUTPUT_BYTES
+        len(completed.stdout) > maximum_stdout_bytes
         or len(completed.stderr) > _MAX_GIT_OUTPUT_BYTES
     ):
         raise Experiment002RunAuthorityError("isolated Git output is too large")
     return completed
+
+
+def _collect_bounded_git_process(
+    process: subprocess.Popen[bytes],
+    *,
+    process_descriptor: int,
+    command: tuple[str, ...],
+    deadline: float,
+    maximum_stdout_bytes: int,
+) -> subprocess.CompletedProcess[bytes]:
+    stdout = process.stdout
+    stderr = process.stderr
+    if stdout is None or stderr is None:
+        raise Experiment002RunAuthorityError("isolated Git pipes are unavailable")
+    stdout_bytes = bytearray()
+    stderr_bytes = bytearray()
+    selector = selectors.DefaultSelector()
+    try:
+        stdout_fd = stdout.fileno()
+        stderr_fd = stderr.fileno()
+        os.set_blocking(stdout_fd, False)
+        os.set_blocking(stderr_fd, False)
+        selector.register(stdout_fd, selectors.EVENT_READ, data="stdout")
+        selector.register(stderr_fd, selectors.EVENT_READ, data="stderr")
+        selector.register(
+            process_descriptor,
+            selectors.EVENT_READ,
+            data="process",
+        )
+        while selector.get_map():
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)
+            try:
+                events = selector.select(remaining_seconds)
+            except InterruptedError:
+                continue
+            if not events:
+                raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)
+            for key, _event_mask in events:
+                if key.data == "process":
+                    selector.unregister(key.fd)
+                    continue
+                if key.data == "stdout":
+                    target = stdout_bytes
+                    byte_limit = maximum_stdout_bytes
+                else:
+                    target = stderr_bytes
+                    byte_limit = _MAX_GIT_OUTPUT_BYTES
+                read_byte_count = min(1 << 20, byte_limit + 1 - len(target))
+                if read_byte_count < 1:
+                    read_byte_count = 1
+                try:
+                    chunk = os.read(key.fd, read_byte_count)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                if not chunk:
+                    selector.unregister(key.fd)
+                    continue
+                target.extend(chunk)
+                if len(target) > byte_limit:
+                    raise Experiment002RunAuthorityError(
+                        "isolated Git output is too large"
+                    )
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)
+        _kill_git_process_group(process)
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)
+        returncode = process.wait(timeout=remaining_seconds)
+    finally:
+        selector.close()
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout=bytes(stdout_bytes),
+        stderr=bytes(stderr_bytes),
+    )
+
+
+def _close_kill_and_reap_git_process(process: subprocess.Popen[bytes]) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                continue
+    if process.returncode is None:
+        _kill_git_process_group(process)
+    try:
+        process.wait(timeout=1.0)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+        except OSError as error:
+            del error
+        try:
+            process.wait(timeout=1.0)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            del error
+
+
+def _kill_git_process_group(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            return
 
 
 def _single_git_hex_line(output: bytes, *, length: int, name: str) -> str:
@@ -1748,6 +3713,21 @@ def _single_git_hex_line(output: bytes, *, length: int, name: str) -> str:
     except UnicodeDecodeError as error:
         raise Experiment002RunAuthorityError(f"{name} is not ASCII") from error
     return _require_hex(text, length=length, name=name)
+
+
+def _single_git_size_line(output: bytes, *, name: str) -> int:
+    if not output.endswith(b"\n") or output.count(b"\n") != 1 or b"\0" in output:
+        raise Experiment002RunAuthorityError(f"{name} output is ambiguous")
+    try:
+        text = output[:-1].decode("ascii", errors="strict")
+    except UnicodeDecodeError as error:
+        raise Experiment002RunAuthorityError(f"{name} is not ASCII") from error
+    if not text or not text.isdecimal() or (len(text) > 1 and text.startswith("0")):
+        raise Experiment002RunAuthorityError(f"{name} is not canonical decimal")
+    value = int(text)
+    if str(value) != text or value > _MAX_CHILD_BUNDLE_BYTES:
+        raise Experiment002RunAuthorityError(f"{name} exceeds the absolute byte cap")
+    return value
 
 
 def _require_path_list(value: object, name: str) -> tuple[str, ...]:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import copy
+import errno
+import fcntl
 import hashlib
 import importlib.metadata
 import inspect
@@ -9,13 +11,19 @@ import json
 import os
 import pickle
 import platform
+import select
 import shutil
+import signal
+import socket
+import stat
 import struct
 import subprocess
 import sys
 import threading
+import time
 import warnings
 import weakref
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
@@ -31,6 +39,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUN_CONFIG_PATH = Path("configs/experiment-002-run.json")
 SOURCE_DOMAIN = b"falsewake-exp002-source-bundle-v1\0"
 RUNTIME_DOMAIN = b"falsewake-exp002-runtime-v1\0"
+BUNDLE_MAGIC = b"FW2CHLD1"
+BUNDLE_VERSION = 1
+BUNDLE_HEADER = struct.Struct("<8sI40s40s64s64sIQQ")
 PYTHON_EXECUTABLE = "/home/ubuntu/gitcode/.t/falsewake-venv/bin/python"
 RUNTIME_SYS_PATH_ROOTS = (
     "/usr/lib/python312.zip",
@@ -123,7 +134,7 @@ def _worktree_snapshot(repository: Path) -> tuple[tuple[str, str, int, str], ...
     return tuple(result)
 
 
-def _source_digest(repository: Path, source_paths: tuple[str, ...]) -> tuple[int, str]:
+def _source_payload(repository: Path, source_paths: tuple[str, ...]) -> bytes:
     payload = bytearray(struct.pack("<I", len(source_paths)))
     for path in source_paths:
         path_bytes = path.encode("utf-8")
@@ -132,7 +143,76 @@ def _source_digest(repository: Path, source_paths: tuple[str, ...]) -> tuple[int
         payload.extend(path_bytes)
         payload.extend(struct.pack("<Q", len(blob)))
         payload.extend(blob)
+    return bytes(payload)
+
+
+def _source_digest(repository: Path, source_paths: tuple[str, ...]) -> tuple[int, str]:
+    payload = _source_payload(repository, source_paths)
     return len(payload), hashlib.sha256(SOURCE_DOMAIN + payload).hexdigest()
+
+
+def _blob_payload(blobs: tuple[tuple[str, bytes], ...]) -> bytes:
+    payload = bytearray(struct.pack("<I", len(blobs)))
+    for path, blob in blobs:
+        path_bytes = path.encode("utf-8")
+        payload.extend(struct.pack("<I", len(path_bytes)))
+        payload.extend(path_bytes)
+        payload.extend(struct.pack("<Q", len(blob)))
+        payload.extend(blob)
+    return bytes(payload)
+
+
+def _frozen_payload(repository: Path) -> bytes:
+    return _blob_payload(
+        tuple((path, (repository / path).read_bytes()) for path in FROZEN_FILE_PATHS)
+    )
+
+
+def _bundle_oracle(case: RepositoryCase) -> bytes:
+    registration = (case.root / RUN_CONFIG_PATH).read_bytes()
+    source = _source_payload(case.root, case.source_paths)
+    frozen = _frozen_payload(case.root)
+    return b"".join(
+        (
+            BUNDLE_HEADER.pack(
+                BUNDLE_MAGIC,
+                BUNDLE_VERSION,
+                case.head_commit.encode("ascii"),
+                case.implementation_commit.encode("ascii"),
+                hashlib.sha256(registration).hexdigest().encode("ascii"),
+                hashlib.sha256(SOURCE_DOMAIN + source).hexdigest().encode("ascii"),
+                len(registration),
+                len(source),
+                len(frozen),
+            ),
+            registration,
+            source,
+            frozen,
+        )
+    )
+
+
+def _independent_bundle_sections(
+    payload: bytes,
+) -> tuple[tuple[bytes | int, ...], bytes, bytes, bytes]:
+    assert len(payload) >= BUNDLE_HEADER.size
+    header = BUNDLE_HEADER.unpack_from(payload)
+    registration_size = cast(int, header[6])
+    source_size = cast(int, header[7])
+    frozen_size = cast(int, header[8])
+    expected_size = BUNDLE_HEADER.size + registration_size + source_size + frozen_size
+    assert len(payload) == expected_size
+    offset = BUNDLE_HEADER.size
+    registration = payload[offset : offset + registration_size]
+    offset += registration_size
+    source = payload[offset : offset + source_size]
+    offset += source_size
+    frozen = payload[offset:]
+    return header, registration, source, frozen
+
+
+def _open_descriptors() -> set[str]:
+    return set(os.listdir("/proc/self/fd"))
 
 
 def _runtime() -> dict[str, Any]:
@@ -254,6 +334,10 @@ def _implementation_repository(tmp_path: Path) -> tuple[Path, str]:
 
 def _valid_repository(tmp_path: Path) -> RepositoryCase:
     repository, implementation = _implementation_repository(tmp_path)
+    return _register_repository(repository, implementation)
+
+
+def _register_repository(repository: Path, implementation: str) -> RepositoryCase:
     import_roots = ("src/falsewake",)
     source_paths = tuple(
         sorted(
@@ -351,18 +435,22 @@ def test_source_is_strictly_standard_library_only() -> None:
     assert imported_roots == {
         "__future__",
         "dataclasses",
+        "fcntl",
         "hashlib",
         "importlib",
         "json",
         "os",
         "pathlib",
         "platform",
+        "selectors",
         "shutil",
+        "signal",
         "stat",
         "struct",
         "subprocess",
         "sys",
         "threading",
+        "time",
         "typing",
         "weakref",
     }
@@ -440,6 +528,14 @@ def test_isolated_committed_source_success_is_explicitly_noncapability(
     assert snapshot.implementation_commit == case.implementation_commit
     assert snapshot.source_paths == case.source_paths
     assert snapshot.source_bundle_sha256 == case.source_sha256
+    assert snapshot.registration_bytes == (case.root / RUN_CONFIG_PATH).read_bytes()
+    assert snapshot.source_bundle_payload == _source_payload(
+        case.root, case.source_paths
+    )
+    assert tuple(blob.path for blob in snapshot.frozen_blobs) == FROZEN_FILE_PATHS
+    assert tuple(blob.payload for blob in snapshot.frozen_blobs) == tuple(
+        (case.root / path).read_bytes() for path in FROZEN_FILE_PATHS
+    )
     assert len(authority._ISSUED) == issued_before
     assert not isinstance(snapshot, authority.VerifiedRunRegistration)
     assert _git(case.root, "status", "--porcelain=v1", "-z") == status_before == b""
@@ -453,6 +549,519 @@ def test_source_bundle_framing_matches_an_independent_oracle(tmp_path: Path) -> 
     byte_count, digest = authority._source_bundle_digest(sources)
     assert byte_count == case.source_payload_byte_count
     assert digest == case.source_sha256
+    assert authority._source_bundle_payload(sources) == _source_payload(
+        case.root, case.source_paths
+    )
+
+
+def test_child_bundle_api_is_positional_only_and_exactly_sealed_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signature = inspect.signature(
+        authority._create_sealed_experiment_002_child_bundle_fd
+    )
+    assert tuple(signature.parameters) == ("registration",)
+    parameter = signature.parameters["registration"]
+    assert parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    original_reverify = authority.reverify_verified_run_registration
+    reverify_calls = 0
+
+    def counted_reverify(
+        registration: authority.VerifiedRunRegistration,
+    ) -> None:
+        nonlocal reverify_calls
+        reverify_calls += 1
+        original_reverify(registration)
+
+    monkeypatch.setattr(
+        authority,
+        "reverify_verified_run_registration",
+        counted_reverify,
+    )
+    descriptor = authority._create_sealed_experiment_002_child_bundle_fd(capability)
+    try:
+        expected = _bundle_oracle(case)
+        metadata = os.fstat(descriptor)
+        observed = os.pread(descriptor, metadata.st_size, 0)
+        assert observed == expected
+        header, registration, source, frozen = _independent_bundle_sections(observed)
+        assert header[:6] == (
+            BUNDLE_MAGIC,
+            BUNDLE_VERSION,
+            case.head_commit.encode("ascii"),
+            case.implementation_commit.encode("ascii"),
+            hashlib.sha256(registration).hexdigest().encode("ascii"),
+            hashlib.sha256(SOURCE_DOMAIN + source).hexdigest().encode("ascii"),
+        )
+        assert registration == (case.root / RUN_CONFIG_PATH).read_bytes()
+        assert source == _source_payload(case.root, case.source_paths)
+        assert frozen == _frozen_payload(case.root)
+        assert stat.S_ISREG(metadata.st_mode)
+        assert stat.S_IMODE(metadata.st_mode) == 0o400
+        assert metadata.st_nlink == 0
+        assert fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+        assert fcntl.fcntl(descriptor, fcntl.F_GETFD) & fcntl.FD_CLOEXEC
+        expected_seals = (
+            fcntl.F_SEAL_WRITE
+            | fcntl.F_SEAL_GROW
+            | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_SEAL
+        )
+        assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) == expected_seals
+        assert not os.get_inheritable(descriptor)
+        with pytest.raises(OSError) as write_error:
+            os.write(descriptor, b"x")
+        assert write_error.value.errno == errno.EBADF
+        with pytest.raises(OSError) as truncate_error:
+            os.ftruncate(descriptor, 0)
+        assert truncate_error.value.errno in {errno.EBADF, errno.EINVAL}
+
+        with pytest.raises(OSError) as writable_open_error:
+            os.open(f"/proc/self/fd/{descriptor}", os.O_RDWR | os.O_CLOEXEC)
+        assert writable_open_error.value.errno in {errno.EACCES, errno.EPERM}
+    finally:
+        os.close(descriptor)
+    assert reverify_calls == 2
+
+    state = authority._ISSUED[capability]
+    guard = authority._ISSUED_GUARDS[capability]
+    assert state.registration_bytes == guard.registration_bytes
+    assert state.source_bundle_payload == guard.source_bundle_payload
+    assert state.frozen_blobs == guard.frozen_blobs
+    assert state.frozen_blobs is not guard.frozen_blobs
+    assert all(
+        state_blob is not guard_blob
+        for state_blob, guard_blob in zip(
+            state.frozen_blobs, guard.frozen_blobs, strict=True
+        )
+    )
+
+
+def test_child_bundle_mode_is_verified_at_return_and_rechecked_after_chmod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    descriptor = authority._create_sealed_experiment_002_child_bundle_fd(capability)
+    try:
+        expected = _bundle_oracle(case)
+        state = authority._ISSUED[capability]
+        _, required_seals = authority._memfd_requirements()
+        assert stat.S_IMODE(os.fstat(descriptor).st_mode) == 0o400
+        os.fchmod(descriptor, 0o700)
+        assert stat.S_IMODE(os.fstat(descriptor).st_mode) == 0o700
+        assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) == required_seals
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="stat frame is invalid",
+        ):
+            authority._verify_sealed_bundle_descriptor(
+                descriptor,
+                expected_bytes=expected,
+                state=state,
+                required_seals=required_seals,
+                expected_access_mode=os.O_RDONLY,
+            )
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "magic",
+        "version",
+        "implementation",
+        "registration_sha256",
+        "source_sha256",
+        "registration_payload",
+        "source_payload",
+        "frozen_payload",
+        "truncate",
+        "trailing",
+        "oversize_registration",
+        "oversize_source",
+        "oversize_frozen",
+        "oversize_total",
+    ],
+)
+def test_child_bundle_parser_rejects_corruption_and_nonexact_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    original = _bundle_oracle(case)
+    header, registration, source, _frozen = _independent_bundle_sections(original)
+    registration_offset = BUNDLE_HEADER.size
+    source_offset = registration_offset + len(registration)
+    frozen_offset = source_offset + len(source)
+    mutated = bytearray(original)
+    if mutation == "magic":
+        mutated[0] ^= 1
+    elif mutation == "version":
+        struct.pack_into("<I", mutated, 8, BUNDLE_VERSION + 1)
+    elif mutation == "implementation":
+        implementation_offset = 8 + 4 + 40
+        mutated[implementation_offset] = (
+            ord("0") if mutated[implementation_offset] != ord("0") else ord("1")
+        )
+    elif mutation == "registration_sha256":
+        registration_sha_offset = 8 + 4 + 40 + 40
+        mutated[registration_sha_offset] = (
+            ord("0") if mutated[registration_sha_offset] != ord("0") else ord("1")
+        )
+    elif mutation == "source_sha256":
+        source_sha_offset = 8 + 4 + 40 + 40 + 64
+        mutated[source_sha_offset] = (
+            ord("0") if mutated[source_sha_offset] != ord("0") else ord("1")
+        )
+    elif mutation == "registration_payload":
+        mutated[registration_offset] ^= 1
+    elif mutation == "source_payload":
+        mutated[source_offset + len(source) - 1] ^= 1
+    elif mutation == "frozen_payload":
+        mutated[-1] ^= 1
+    elif mutation == "truncate":
+        mutated = mutated[:-1]
+    elif mutation == "trailing":
+        mutated.extend(b"x")
+    elif mutation == "oversize_registration":
+        registration_size_offset = struct.calcsize("<8sI40s40s64s64s")
+        struct.pack_into("<I", mutated, registration_size_offset, (1 << 20) + 1)
+    elif mutation == "oversize_source":
+        source_size_offset = struct.calcsize("<8sI40s40s64s64sI")
+        struct.pack_into("<Q", mutated, source_size_offset, (256 << 20) + 1)
+    elif mutation == "oversize_frozen":
+        frozen_size_offset = struct.calcsize("<8sI40s40s64s64sIQ")
+        struct.pack_into("<Q", mutated, frozen_size_offset, (256 << 20) + 1)
+    else:
+        registration_size_offset = struct.calcsize("<8sI40s40s64s64s")
+        source_size_offset = struct.calcsize("<8sI40s40s64s64sI")
+        frozen_size_offset = struct.calcsize("<8sI40s40s64s64sIQ")
+        struct.pack_into("<I", mutated, registration_size_offset, 1)
+        struct.pack_into("<Q", mutated, source_size_offset, 128 << 20)
+        struct.pack_into("<Q", mutated, frozen_size_offset, 128 << 20)
+    assert cast(bytes, header[0]) == BUNDLE_MAGIC
+    assert frozen_offset < len(original)
+    with pytest.raises(authority.Experiment002RunAuthorityError):
+        authority._parse_experiment_002_child_bundle(bytes(mutated))
+
+
+def test_child_bundle_exact_total_limit_boundary_and_overflow_oracle() -> None:
+    exact_limit = 256 << 20
+    independent_header_size = struct.calcsize("<8sI40s40s64s64sIQQ")
+    final_component_at_boundary = exact_limit - independent_header_size - 2
+    assert exact_limit == authority._MAX_CHILD_BUNDLE_BYTES
+    assert independent_header_size == authority._CHILD_BUNDLE_HEADER.size
+    assert (
+        authority._require_child_bundle_total_byte_count(
+            1,
+            1,
+            final_component_at_boundary,
+        )
+        == exact_limit
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="exact total byte limit",
+    ):
+        authority._require_child_bundle_total_byte_count(
+            1,
+            1,
+            final_component_at_boundary + 1,
+        )
+
+
+def test_child_bundle_total_gate_runs_before_capability_is_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+
+    def reject_total(
+        registration_byte_count: int,
+        source_payload_byte_count: int,
+        frozen_payload_byte_count: int,
+    ) -> int:
+        del (
+            registration_byte_count,
+            source_payload_byte_count,
+            frozen_payload_byte_count,
+        )
+        raise authority.Experiment002RunAuthorityError(
+            "injected exact total byte limit rejection"
+        )
+
+    monkeypatch.setattr(
+        authority,
+        "_require_child_bundle_total_byte_count",
+        reject_total,
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="exact total byte limit rejection",
+    ):
+        authority._issue_controlled_snapshot_for_tests(snapshot)
+    assert not authority._ISSUANCE_COMPLETE
+    assert len(authority._ISSUED) == 0
+    assert len(authority._ISSUED_GUARDS) == 0
+
+
+def test_child_bundle_head_is_checked_against_immutable_authority_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    mutated = bytearray(_bundle_oracle(case))
+    head_offset = 8 + 4
+    mutated[head_offset] = ord("0") if mutated[head_offset] != ord("0") else ord("1")
+    frame = authority._parse_experiment_002_child_bundle(bytes(mutated))
+    assert frame.head_commit != case.head_commit
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="does not exactly match",
+    ):
+        authority._require_child_bundle_matches_state(
+            frame, authority._ISSUED[capability]
+        )
+
+
+@pytest.mark.parametrize("bundle_kind", ["source", "frozen"])
+@pytest.mark.parametrize("mutation", ["unsorted", "duplicate", "oversize"])
+def test_blob_frame_parsers_reject_order_duplicates_and_oversize(
+    tmp_path: Path,
+    bundle_kind: str,
+    mutation: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    if bundle_kind == "source":
+        blobs = tuple(
+            (path, (case.root / path).read_bytes()) for path in case.source_paths
+        )
+        parser = authority._parse_source_bundle_payload
+        maximum_file_bytes = 64 << 20
+    else:
+        blobs = tuple(
+            (path, (case.root / path).read_bytes()) for path in FROZEN_FILE_PATHS
+        )
+        parser = authority._parse_frozen_blob_payload
+        maximum_file_bytes = 64 << 20
+    if mutation == "unsorted":
+        malformed = _blob_payload(tuple(reversed(blobs)))
+    elif mutation == "duplicate":
+        malformed = _blob_payload((blobs[0], blobs[0], *blobs[2:]))
+    else:
+        path_bytes = blobs[0][0].encode("utf-8")
+        malformed = b"".join(
+            (
+                struct.pack("<I", 1),
+                struct.pack("<I", len(path_bytes)),
+                path_bytes,
+                struct.pack("<Q", maximum_file_bytes + 1),
+            )
+        )
+    with pytest.raises(authority.Experiment002RunAuthorityError):
+        parser(malformed)
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["write", "seal", "reopen", "post_reverify"],
+)
+def test_child_bundle_failure_paths_close_every_owned_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    descriptors_before = _open_descriptors()
+    if failure_stage == "write":
+
+        def injected_write(descriptor: int, payload: object) -> int:
+            del descriptor, payload
+            raise OSError(errno.EIO, "injected memfd write failure")
+
+        monkeypatch.setattr(os, "write", injected_write)
+        expected_message = "write failed"
+    elif failure_stage == "seal":
+        original_fcntl = fcntl.fcntl
+
+        def injected_fcntl(descriptor: int, command: int, argument: int = 0) -> int:
+            if command == fcntl.F_ADD_SEALS:
+                raise OSError(errno.EIO, "injected sealing failure")
+            return original_fcntl(descriptor, command, argument)
+
+        monkeypatch.setattr(fcntl, "fcntl", injected_fcntl)
+        expected_message = "finalized and sealed"
+    elif failure_stage == "reopen":
+        original_open = os.open
+
+        def injected_open(
+            path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if type(path) is str and path.startswith("/proc/self/fd/"):
+                raise OSError(errno.EIO, "injected read-only reopen failure")
+            if dir_fd is None:
+                return original_open(path, flags, mode)
+            return original_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(os, "open", injected_open)
+        expected_message = "reopened read-only"
+    else:
+        original_reverify = authority.reverify_verified_run_registration
+        calls = 0
+
+        def injected_reverify(
+            registration: authority.VerifiedRunRegistration,
+        ) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise authority.Experiment002RunAuthorityError(
+                    "injected post-creation reverification failure"
+                )
+            original_reverify(registration)
+
+        monkeypatch.setattr(
+            authority,
+            "reverify_verified_run_registration",
+            injected_reverify,
+        )
+        expected_message = "post-creation reverification"
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match=expected_message,
+    ):
+        authority._create_sealed_experiment_002_child_bundle_fd(capability)
+    assert _open_descriptors() == descriptors_before
+
+
+def test_child_bundle_rejects_forged_and_stale_capabilities_without_fd_leaks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forged = object.__new__(authority.VerifiedRunRegistration)
+    descriptors_before = _open_descriptors()
+    with pytest.raises(authority.Experiment002RunAuthorityError, match="not issued"):
+        authority._create_sealed_experiment_002_child_bundle_fd(forged)
+    assert _open_descriptors() == descriptors_before
+
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    entrypoint = case.root / ENTRYPOINT_PATH
+    original = entrypoint.read_bytes()
+    entrypoint.write_bytes(b"STALE_BEFORE_BUNDLE = True\n")
+    try:
+        with pytest.raises(authority.Experiment002RunAuthorityError):
+            authority._create_sealed_experiment_002_child_bundle_fd(capability)
+    finally:
+        entrypoint.write_bytes(original)
+    assert _open_descriptors() == descriptors_before
+    with pytest.raises(authority.Experiment002RunAuthorityError, match="not issued"):
+        authority._create_sealed_experiment_002_child_bundle_fd(capability)
+    assert _open_descriptors() == descriptors_before
+
+
+def test_concurrent_child_bundle_creation_returns_distinct_identical_memfds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    barrier = threading.Barrier(3)
+
+    def create_bundle() -> int:
+        barrier.wait()
+        return authority._create_sealed_experiment_002_child_bundle_fd(capability)
+
+    descriptors: list[int] = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(create_bundle) for _ in range(2)]
+        barrier.wait()
+        descriptors = [future.result() for future in futures]
+    try:
+        assert descriptors[0] != descriptors[1]
+        metadata = tuple(os.fstat(descriptor) for descriptor in descriptors)
+        assert (metadata[0].st_dev, metadata[0].st_ino) != (
+            metadata[1].st_dev,
+            metadata[1].st_ino,
+        )
+        payloads = tuple(
+            os.pread(descriptor, item.st_size, 0)
+            for descriptor, item in zip(descriptors, metadata, strict=True)
+        )
+        assert payloads == (_bundle_oracle(case),) * 2
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+@pytest.mark.parametrize("tamper_target", ["state", "guard"])
+@pytest.mark.parametrize(
+    "material",
+    ["registration_bytes", "source_bundle_payload", "frozen_blobs"],
+)
+def test_controlled_capability_poisoned_by_retained_material_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper_target: str,
+    material: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    original_state = authority._ISSUED[capability]
+    original_guard = authority._ISSUED_GUARDS[capability]
+    original = original_state if tamper_target == "state" else original_guard
+    if material == "registration_bytes":
+        mutated = dataclass_replace(
+            original,
+            registration_bytes=original.registration_bytes + b" ",
+        )
+    elif material == "source_bundle_payload":
+        mutated = dataclass_replace(
+            original,
+            source_bundle_payload=original.source_bundle_payload[:-1] + b"!",
+        )
+    else:
+        first = original.frozen_blobs[0]
+        mutated_blobs = (
+            authority._FrozenBlob(path=first.path, payload=first.payload + b"!"),
+            *original.frozen_blobs[1:],
+        )
+        mutated = dataclass_replace(original, frozen_blobs=mutated_blobs)
+    if tamper_target == "state":
+        authority._ISSUED[capability] = cast(authority._VerifiedState, mutated)
+    else:
+        authority._ISSUED_GUARDS[capability] = cast(authority._IssuedGuard, mutated)
+    with pytest.raises(authority.Experiment002RunAuthorityError, match="not issued"):
+        authority._verified_state(capability)
+
+    authority._ISSUED[capability] = original_state
+    authority._ISSUED_GUARDS[capability] = original_guard
+    with pytest.raises(authority.Experiment002RunAuthorityError, match="not issued"):
+        authority._verified_state(capability)
 
 
 def test_verified_registration_is_opaque_noncopyable_and_nonpickleable() -> None:
@@ -537,6 +1146,118 @@ def test_controlled_capability_is_process_local_across_fork(
     assert os.WEXITSTATUS(status) == 0
     assert observed == b"rejected"
     assert capability.head_commit == case.head_commit
+
+
+def test_forked_authority_fails_fast_while_another_thread_holds_issuer_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not hasattr(os, "fork"):
+        pytest.skip("fork is required for the inherited-lock liveness test")
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    lock_held = threading.Event()
+    release_lock = threading.Event()
+
+    def hold_issuer_lock() -> None:
+        with authority._ISSUED_LOCK:
+            lock_held.set()
+            release_lock.wait()
+
+    holder = threading.Thread(target=hold_issuer_lock, daemon=True)
+    holder.start()
+    assert lock_held.wait(timeout=2.0)
+
+    read_descriptor, write_descriptor = os.pipe()
+    child_pid = -1
+    child_reaped = False
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"This process .* is multi-threaded, use of fork\(\)",
+                category=DeprecationWarning,
+            )
+            child_pid = os.fork()
+        if child_pid == 0:
+            os.close(read_descriptor)
+            if not authority._ISSUED_LOCK.acquire(blocking=False):
+                os.write(write_descriptor, b"inherited-locked-rlock")
+                os.close(write_descriptor)
+                os._exit(90)
+            authority._ISSUED_LOCK.release()
+            rejected = 0
+            for action in (
+                "property",
+                "verify",
+                "reverify",
+                "bundle",
+                "controlled_issue",
+                "public_issue",
+            ):
+                try:
+                    if action == "property":
+                        _ = capability.head_commit
+                    elif action == "verify":
+                        authority.verify_verified_run_registration(capability)
+                    elif action == "reverify":
+                        authority.reverify_verified_run_registration(capability)
+                    elif action == "bundle":
+                        authority._create_sealed_experiment_002_child_bundle_fd(
+                            capability
+                        )
+                    elif action == "controlled_issue":
+                        authority._issue_controlled_snapshot_for_tests(snapshot)
+                    else:
+                        authority.verify_and_issue_experiment_002_run_registration()
+                except authority.Experiment002RunAuthorityError:
+                    rejected += 1
+                except BaseException:
+                    os.write(write_descriptor, b"unexpected-error")
+                    os.close(write_descriptor)
+                    os._exit(91)
+                else:
+                    os.write(write_descriptor, b"accepted")
+                    os.close(write_descriptor)
+                    os._exit(92)
+            os.write(write_descriptor, str(rejected).encode("ascii"))
+            os.close(write_descriptor)
+            os._exit(0)
+
+        os.close(write_descriptor)
+        write_descriptor = -1
+        readable, _, _ = select.select([read_descriptor], [], [], 3.0)
+        if not readable:
+            os.kill(child_pid, 9)
+            os.waitpid(child_pid, 0)
+            child_reaped = True
+            pytest.fail("forked authority blocked on the inherited issuer lock")
+        observed = os.read(read_descriptor, 64)
+        waited_pid, status = os.waitpid(child_pid, 0)
+        child_reaped = True
+        assert waited_pid == child_pid
+        assert os.WIFEXITED(status)
+        assert os.WEXITSTATUS(status) == 0
+        assert observed == b"6"
+    finally:
+        release_lock.set()
+        holder.join(timeout=3.0)
+        os.close(read_descriptor)
+        if write_descriptor >= 0:
+            os.close(write_descriptor)
+        if child_pid > 0 and not child_reaped:
+            try:
+                os.kill(child_pid, 9)
+            except ProcessLookupError:
+                child_reaped = True
+            try:
+                os.waitpid(child_pid, 0)
+            except ChildProcessError:
+                child_reaped = True
+    assert not holder.is_alive()
+    assert capability.head_commit == case.head_commit
+    authority.verify_verified_run_registration(capability)
 
 
 def test_stale_public_reverification_permanently_poisons_capability(
@@ -734,7 +1455,13 @@ def test_dirty_or_untracked_worktree_is_rejected(tmp_path: Path, kind: str) -> N
         _git(case.root, "add", ENTRYPOINT_PATH)
     else:
         (case.root / "untracked.txt").write_text("untracked\n", encoding="utf-8")
-    with pytest.raises(authority.Experiment002RunAuthorityError, match="not clean"):
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match=(
+            "worktree file differs|tracked worktree file identity|"
+            "stage-zero index|untracked regular file"
+        ),
+    ):
         authority._verify_synthetic_repository_for_tests(case.root)
 
 
@@ -746,9 +1473,580 @@ def test_ignored_extra_file_inside_import_root_is_rejected(tmp_path: Path) -> No
     assert _git(case.root, "status", "--porcelain=v1", "-z") == b""
     with pytest.raises(
         authority.Experiment002RunAuthorityError,
-        match="do not exactly cover",
+        match="untracked regular file|do not exactly cover",
     ):
         authority._verify_synthetic_repository_for_tests(case.root)
+
+
+@pytest.mark.parametrize("attributes_source", ["git-info", "tracked"])
+def test_clean_filter_cannot_hide_same_length_raw_mutation_or_execute(
+    tmp_path: Path,
+    attributes_source: str,
+) -> None:
+    if attributes_source == "git-info":
+        case = _valid_repository(tmp_path)
+        attributes = case.root / ".git/info/attributes"
+        attributes.write_text(".gitignore filter=evil\n", encoding="utf-8")
+    else:
+        repository, _implementation = _implementation_repository(tmp_path)
+        (repository / ".gitattributes").write_text(
+            ".gitignore filter=evil\n",
+            encoding="utf-8",
+        )
+        _git(repository, "add", ".gitattributes")
+        _git(repository, "commit", "--quiet", "--amend", "--no-edit")
+        implementation = _git(repository, "rev-parse", "HEAD").decode().strip()
+        case = _register_repository(repository, implementation)
+    marker = case.root / ".git/filter-clean-ran"
+    helper = case.root / ".git/evil-clean"
+    helper.write_text(
+        "#!/bin/sh\n"
+        "/bin/cat >/dev/null\n"
+        "printf invoked > .git/filter-clean-ran\n"
+        "printf '%s\\n' '*.ignored'\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    _git(case.root, "config", "filter.evil.clean", "./.git/evil-clean")
+    original = (case.root / ".gitignore").read_bytes()
+    mutation = b"*.changed\n"
+    assert len(original) == len(mutation)
+    (case.root / ".gitignore").write_bytes(mutation)
+
+    assert (
+        _git(
+            case.root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+        == b""
+    )
+    assert marker.read_bytes() == b"invoked"
+    marker.unlink()
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="worktree file differs from committed HEAD blob",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert not marker.exists()
+
+
+def test_filter_process_from_local_config_is_never_executed(tmp_path: Path) -> None:
+    case = _valid_repository(tmp_path)
+    (case.root / ".git/info/attributes").write_text(
+        "*.py filter=process-probe\n",
+        encoding="utf-8",
+    )
+    marker = case.root / ".git/filter-process-ran"
+    helper = case.root / ".git/evil-process"
+    helper.write_text(
+        "#!/bin/sh\nprintf invoked > .git/filter-process-ran\nexit 91\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    _git(
+        case.root,
+        "config",
+        "filter.process-probe.process",
+        "./.git/evil-process",
+    )
+
+    snapshot = authority._verify_synthetic_repository_for_tests(case.root)
+
+    assert snapshot.head_commit == case.head_commit
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("mechanism", ["gitignore", "info", "core"])
+def test_raw_inventory_rejects_files_hidden_by_every_exclude_layer(
+    tmp_path: Path,
+    mechanism: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    if mechanism == "gitignore":
+        relative_path = "hidden.ignored"
+    elif mechanism == "info":
+        relative_path = "hidden.info"
+        (case.root / ".git/info/exclude").write_text(
+            f"{relative_path}\n",
+            encoding="utf-8",
+        )
+    else:
+        relative_path = "hidden.global"
+        excludes = case.root / ".git/global-excludes"
+        excludes.write_text(f"{relative_path}\n", encoding="utf-8")
+        _git(case.root, "config", "core.excludesFile", os.fspath(excludes))
+    (case.root / relative_path).write_text("hidden\n", encoding="utf-8")
+    assert (
+        _git(
+            case.root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+        == b""
+    )
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="untracked regular file",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "fifo", "socket"])
+def test_raw_inventory_rejects_untracked_symlink_or_special_leaf(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    path = case.root / f"untracked-{kind}"
+    listener: socket.socket | None = None
+    directory_descriptor: int | None = None
+    try:
+        if kind == "symlink":
+            path.symlink_to(".gitignore")
+        elif kind == "fifo":
+            os.mkfifo(path)
+        else:
+            directory_descriptor = os.open(
+                case.root,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC,
+            )
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(f"/proc/self/fd/{directory_descriptor}/{path.name}")
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="symlink or special filesystem entry",
+        ):
+            authority._verify_synthetic_repository_for_tests(case.root)
+    finally:
+        if listener is not None:
+            listener.close()
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+
+
+def test_raw_inventory_rejects_untracked_empty_directory(tmp_path: Path) -> None:
+    case = _valid_repository(tmp_path)
+    (case.root / "empty-untracked-directory").mkdir()
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="untracked directory",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_tracked_hardlink_alias_is_rejected(tmp_path: Path) -> None:
+    case = _valid_repository(tmp_path)
+    tracked = case.root / ENTRYPOINT_PATH
+    alias = case.root / ".git/tracked-hardlink-alias"
+    alias.write_bytes(tracked.read_bytes())
+    tracked.unlink()
+    os.link(alias, tracked)
+    assert tracked.stat().st_nlink == 2
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="singly-linked|multiply-linked|file identity is invalid",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_corrupt_loose_blob_is_rejected_by_full_verifier(tmp_path: Path) -> None:
+    case = _valid_repository(tmp_path)
+    path = ".gitignore"
+    old_oid = _git(case.root, "rev-parse", f"HEAD:{path}").decode().strip()
+    old_payload = (case.root / path).read_bytes()
+    replacement = b"*.changed\n"
+    assert len(old_payload) == len(replacement)
+    replacement_frame = (
+        b"blob " + str(len(replacement)).encode("ascii") + b"\0" + replacement
+    )
+    replacement_oid = hashlib.sha1(
+        replacement_frame,
+        usedforsecurity=False,
+    ).hexdigest()
+    assert replacement_oid != old_oid
+    loose_object = case.root / ".git/objects" / old_oid[:2] / old_oid[2:]
+    assert loose_object.is_file()
+    loose_object.chmod(stat.S_IMODE(loose_object.stat().st_mode) | stat.S_IWUSR)
+    loose_object.write_bytes(zlib.compress(replacement_frame))
+    (case.root / path).write_bytes(replacement)
+    assert _git(case.root, "cat-file", "blob", old_oid) == replacement
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="does not match its Git object ID",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_tracked_entry_count_is_bounded_before_object_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = tuple(
+        (b"100644", b"0" * 40, f"path-{index:04d}".encode("ascii"))
+        for index in range(4_097)
+    )
+    object_read = False
+
+    def forbidden_preflight(*args: object, **kwargs: object) -> int:
+        nonlocal object_read
+        del args, kwargs
+        object_read = True
+        raise AssertionError("tracked entry count must reject before object reads")
+
+    monkeypatch.setattr(
+        authority,
+        "_preflight_committed_blob_size",
+        forbidden_preflight,
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="tracked tree entry count",
+    ):
+        authority._require_raw_tracked_worktree(tmp_path, entries)
+    assert not object_read
+
+
+def test_tracked_cumulative_budget_is_checked_before_any_payload_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entries = tuple(
+        (b"100644", b"0" * 40, f"path-{index}".encode("ascii")) for index in range(5)
+    )
+    preflight_count = 0
+    payload_loaded = False
+
+    def maximum_preflight(*args: object, **kwargs: object) -> int:
+        nonlocal preflight_count
+        del args, kwargs
+        preflight_count += 1
+        return 64 << 20
+
+    def forbidden_load(*args: object, **kwargs: object) -> authority._TreeBlob:
+        nonlocal payload_loaded
+        del args, kwargs
+        payload_loaded = True
+        raise AssertionError("aggregate size must reject before payload loading")
+
+    monkeypatch.setattr(
+        authority,
+        "_preflight_committed_blob_size",
+        maximum_preflight,
+    )
+    monkeypatch.setattr(
+        authority,
+        "_load_preflighted_committed_blob",
+        forbidden_load,
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="cumulative raw byte budget",
+    ):
+        authority._require_raw_tracked_worktree(tmp_path, entries)
+    assert preflight_count == 5
+    assert not payload_loaded
+
+
+@pytest.mark.parametrize("kind", ["gitdir-file", "symlink"])
+def test_noncanonical_top_level_git_indirection_is_rejected(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    case = _valid_repository(tmp_path)
+    git_directory = case.root / ".git"
+    external_git_directory = tmp_path / f"external-{kind}-metadata"
+    git_directory.rename(external_git_directory)
+    if kind == "gitdir-file":
+        git_directory.write_text(
+            f"gitdir: {external_git_directory}\n",
+            encoding="utf-8",
+        )
+    else:
+        git_directory.symlink_to(external_git_directory, target_is_directory=True)
+    assert _git(case.root, "rev-parse", "HEAD").decode().strip() == case.head_commit
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match=r"metadata directory|top-level \.git|opened safely",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_external_git_common_directory_is_rejected(tmp_path: Path) -> None:
+    case = _valid_repository(tmp_path)
+    git_directory = case.root / ".git"
+    common_directory = tmp_path / "external-common-metadata"
+    git_directory.rename(common_directory)
+    git_directory.mkdir()
+    shutil.move(common_directory / "HEAD", git_directory / "HEAD")
+    shutil.move(common_directory / "index", git_directory / "index")
+    (git_directory / "commondir").write_text(
+        f"{common_directory}\n",
+        encoding="utf-8",
+    )
+    assert _git(case.root, "rev-parse", "HEAD").decode().strip() == case.head_commit
+    assert _git(
+        case.root,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    ).decode().strip() == os.fspath(common_directory)
+
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="common metadata directory",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+
+@pytest.mark.parametrize("resource", ["depth", "directory-prefixes"])
+def test_tracked_directory_resources_reject_before_object_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resource: str,
+) -> None:
+    paths: tuple[str, ...]
+    if resource == "depth":
+        paths = ("/".join((*(["d"] * 65), "file")),)
+    else:
+        paths = tuple(f"d{index:04d}/nested/file" for index in range(4_096))
+    entries = tuple((b"100644", b"0" * 40, path.encode("ascii")) for path in paths)
+    object_read = False
+
+    def forbidden_preflight(*args: object, **kwargs: object) -> int:
+        nonlocal object_read
+        del args, kwargs
+        object_read = True
+        raise AssertionError("directory resources must reject before object reads")
+
+    monkeypatch.setattr(
+        authority,
+        "_preflight_committed_blob_size",
+        forbidden_preflight,
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="depth limit|too many directory prefixes",
+    ):
+        authority._require_raw_tracked_worktree(tmp_path, entries)
+    assert not object_read
+
+
+def test_fd_walk_detects_atomic_tracked_file_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    original_load = authority._load_preflighted_committed_blob
+    replaced = False
+
+    def replace_after_open(
+        root: Path,
+        identity: authority._TreeBlobIdentity,
+        path: str,
+        *,
+        declared_byte_count: int,
+    ) -> authority._TreeBlob:
+        nonlocal replaced
+        blob = original_load(
+            root,
+            identity,
+            path,
+            declared_byte_count=declared_byte_count,
+        )
+        if path == ENTRYPOINT_PATH and not replaced:
+            replacement = root / "src/falsewake/.replacement"
+            replacement.write_bytes(blob.payload)
+            os.replace(replacement, root / path)
+            replaced = True
+        return blob
+
+    monkeypatch.setattr(
+        authority,
+        "_load_preflighted_committed_blob",
+        replace_after_open,
+    )
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="name changed|directory changed|file changed",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert replaced
+
+
+def test_fd_walk_regular_to_fifo_race_is_nonblocking_and_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    original_open = os.open
+    target_name = Path(ENTRYPOINT_PATH).name
+    swapped = False
+
+    def swap_before_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if path == target_name and dir_fd is not None and flags & os.O_NONBLOCK:
+            assert flags & os.O_NOFOLLOW
+            os.unlink(path, dir_fd=dir_fd)
+            os.mkfifo(path, dir_fd=dir_fd)
+            swapped = True
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", swap_before_open)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="file identity is invalid|symlink or special",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert swapped
+
+
+@pytest.mark.parametrize("injected_failure", [False, True])
+def test_fd_walk_closes_every_descriptor_on_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    injected_failure: bool,
+) -> None:
+    case = _valid_repository(tmp_path)
+    if injected_failure:
+        original_load = authority._load_preflighted_committed_blob
+
+        def fail_after_descriptors_open(
+            root: Path,
+            identity: authority._TreeBlobIdentity,
+            path: str,
+            *,
+            declared_byte_count: int,
+        ) -> authority._TreeBlob:
+            if path == ENTRYPOINT_PATH:
+                raise authority.Experiment002RunAuthorityError(
+                    "injected descriptor cleanup failure"
+                )
+            return original_load(
+                root,
+                identity,
+                path,
+                declared_byte_count=declared_byte_count,
+            )
+
+        monkeypatch.setattr(
+            authority,
+            "_load_preflighted_committed_blob",
+            fail_after_descriptors_open,
+        )
+    descriptors_before = set(os.listdir("/proc/self/fd"))
+
+    if injected_failure:
+        with pytest.raises(
+            authority.Experiment002RunAuthorityError,
+            match="injected descriptor cleanup failure",
+        ):
+            authority._verify_synthetic_repository_for_tests(case.root)
+    else:
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+    assert set(os.listdir("/proc/self/fd")) == descriptors_before
+
+
+def test_final_head_check_follows_the_last_git_topology_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    original_git = authority._git
+    topology_call_count = 0
+    mutated = False
+
+    def mutate_during_last_topology(
+        root: Path,
+        *arguments: str,
+        maximum_stdout_bytes: int = 32 << 20,
+    ) -> bytes:
+        nonlocal mutated, topology_call_count
+        output = original_git(
+            root,
+            *arguments,
+            maximum_stdout_bytes=maximum_stdout_bytes,
+        )
+        if arguments == (
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+        ):
+            topology_call_count += 1
+            if topology_call_count == 6:
+                _git(root, "update-ref", "HEAD", case.implementation_commit)
+                mutated = True
+        return output
+
+    monkeypatch.setattr(authority, "_git", mutate_during_last_topology)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="HEAD changed during final topology verification",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+
+    assert topology_call_count == 6
+    assert mutated
+    assert _git(case.root, "rev-parse", "HEAD").decode().strip() == (
+        case.implementation_commit
+    )
+
+
+def test_import_root_count_is_bounded_before_overlap_or_git_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    document = copy.deepcopy(case.document)
+    source = cast(dict[str, Any], document["source_bundle"])
+    source["import_roots"] = [f"roots/r{index:04d}" for index in range(4_097)]
+    _amend_document(case, document)
+    git_called = False
+
+    def forbidden_git(*args: object, **kwargs: object) -> bytes:
+        nonlocal git_called
+        del args, kwargs
+        git_called = True
+        raise AssertionError("import-root count must fail before Git")
+
+    monkeypatch.setattr(authority, "_git", forbidden_git)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="too many registered import roots",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert not git_called
+
+
+def test_import_root_enumeration_counts_empty_directories_cumulatively(
+    tmp_path: Path,
+) -> None:
+    import_root = tmp_path / "roots"
+    import_root.mkdir()
+    for index in range(4_097):
+        (import_root / f"d{index:04d}").mkdir()
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="too many entries",
+    ):
+        authority._enumerate_import_roots(tmp_path, ("roots",))
 
 
 @pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
@@ -796,6 +2094,116 @@ def test_invalid_source_registration_fails_closed(
     _amend_document(case, document)
     with pytest.raises(authority.Experiment002RunAuthorityError):
         authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_declared_source_overflow_fails_before_any_git_object_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    document = copy.deepcopy(case.document)
+    source = cast(dict[str, Any], document["source_bundle"])
+    source["payload_byte_count"] = 256 << 20
+    _amend_document(case, document)
+    git_called = False
+
+    def forbidden_git(*args: object, **kwargs: object) -> bytes:
+        nonlocal git_called
+        del args, kwargs
+        git_called = True
+        raise AssertionError("declared total overflow must fail before Git")
+
+    monkeypatch.setattr(authority, "_git", forbidden_git)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="exact total byte limit",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert not git_called
+
+
+def test_oversized_tree_blob_fails_size_preflight_before_payload_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    runner_oid = (
+        _git(
+            case.root,
+            "rev-parse",
+            f"{case.implementation_commit}:{ENTRYPOINT_PATH}",
+        )
+        .decode("ascii")
+        .strip()
+    )
+    original_git = authority._git
+    size_preflighted = False
+    payload_requested = False
+
+    def declared_oversized_blob(
+        root: Path,
+        *arguments: str,
+        maximum_stdout_bytes: int = 32 << 20,
+    ) -> bytes:
+        nonlocal size_preflighted, payload_requested
+        if arguments == ("cat-file", "-s", runner_oid):
+            size_preflighted = True
+            return f"{(64 << 20) + 1}\n".encode("ascii")
+        if arguments == ("cat-file", "blob", runner_oid):
+            payload_requested = True
+            raise AssertionError("oversized blob payload must not be requested")
+        return original_git(
+            root,
+            *arguments,
+            maximum_stdout_bytes=maximum_stdout_bytes,
+        )
+
+    monkeypatch.setattr(authority, "_git", declared_oversized_blob)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="exceeds its retained byte budget",
+    ):
+        authority._verify_synthetic_repository_for_tests(case.root)
+    assert size_preflighted
+    assert not payload_requested
+
+
+def test_head_identity_check_reuses_one_preflighted_source_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    runner_oid = (
+        _git(
+            case.root,
+            "rev-parse",
+            f"{case.implementation_commit}:{ENTRYPOINT_PATH}",
+        )
+        .decode("ascii")
+        .strip()
+    )
+    original_git = authority._git
+    events: list[str] = []
+
+    def observed_git(
+        root: Path,
+        *arguments: str,
+        maximum_stdout_bytes: int = 32 << 20,
+    ) -> bytes:
+        if arguments == ("cat-file", "-s", runner_oid):
+            events.append("size")
+        elif arguments == ("cat-file", "blob", runner_oid):
+            events.append("payload")
+        return original_git(
+            root,
+            *arguments,
+            maximum_stdout_bytes=maximum_stdout_bytes,
+        )
+
+    monkeypatch.setattr(authority, "_git", observed_git)
+    snapshot = authority._verify_synthetic_repository_for_tests(case.root)
+    assert snapshot.source_paths == case.source_paths
+    assert events == ["size", "payload"] * 3
 
 
 def test_frozen_binding_cannot_be_overridden_in_config(tmp_path: Path) -> None:
@@ -944,23 +2352,202 @@ def test_subprocess_output_ambiguity_fails_closed(
 ) -> None:
     case = _valid_repository(tmp_path)
 
-    def ambiguous(
-        *args: object, **kwargs: object
-    ) -> subprocess.CompletedProcess[bytes]:
-        del args, kwargs
-        return subprocess.CompletedProcess(
-            args=("git",),
-            returncode=0,
-            stdout=b"/first\n/second\n",
-            stderr=b"",
-        )
+    def ambiguous_git(
+        root: Path,
+        *arguments: str,
+        maximum_stdout_bytes: int = 32 << 20,
+    ) -> bytes:
+        del root, arguments, maximum_stdout_bytes
+        return b"/first\n/second\n"
 
-    monkeypatch.setattr(subprocess, "run", ambiguous)
+    monkeypatch.setattr(authority, "_git", ambiguous_git)
     with pytest.raises(
         authority.Experiment002RunAuthorityError,
         match="ambiguous",
     ):
         authority._verify_synthetic_repository_for_tests(case.root)
+
+
+def test_bounded_git_stdout_overflow_kills_and_reaps_incremental_producer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid_path = tmp_path / "overflow.pid"
+    executable = tmp_path / "fake-git-overflow"
+    executable.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$$\" > {os.fspath(pid_path)!r}\n"
+        "while :; do printf '0123456789abcdef0123456789abcdef'; done\n",
+        encoding="ascii",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    started = time.monotonic()
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="output is too large",
+    ):
+        authority._git_process(
+            tmp_path,
+            ("ignored",),
+            allowed_returncodes=(0,),
+            maximum_stdout_bytes=1_024,
+        )
+    assert time.monotonic() - started < 2.0
+    producer_pid = int(pid_path.read_text(encoding="ascii"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(producer_pid, 0)
+
+
+def test_bounded_git_timeout_kills_and_reaps_process_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid_path = tmp_path / "timeout.pid"
+    executable = tmp_path / "fake-git-timeout"
+    executable.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$$\" > {os.fspath(pid_path)!r}\n"
+        "exec /bin/sleep 60\n",
+        encoding="ascii",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    monkeypatch.setattr(authority, "_GIT_TIMEOUT_SECONDS", 0.2)
+    started = time.monotonic()
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="isolated Git command failed",
+    ):
+        authority._git_process(
+            tmp_path,
+            ("ignored",),
+            allowed_returncodes=(0,),
+            maximum_stdout_bytes=1_024,
+        )
+    assert time.monotonic() - started < 2.0
+    producer_pid = int(pid_path.read_text(encoding="ascii"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(producer_pid, 0)
+
+
+def test_bounded_git_drains_stdout_and_stderr_without_pipe_deadlock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "fake-git-dual-stream"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "(/usr/bin/head -c 131072 /dev/zero) &\n"
+        "(/usr/bin/head -c 131072 /dev/zero >&2) &\n"
+        "wait\n",
+        encoding="ascii",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    completed = authority._git_process(
+        tmp_path,
+        ("ignored",),
+        allowed_returncodes=(0,),
+        maximum_stdout_bytes=131_072,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout == b"\0" * 131_072
+    assert completed.stderr == b"\0" * 131_072
+
+
+def test_bounded_git_kills_same_group_descendant_after_clean_leader_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descendant_pid_path = tmp_path / "descendant.pid"
+    executable = tmp_path / "fake-git-descendant"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "/bin/sleep 60 </dev/null >/dev/null 2>&1 &\n"
+        f"printf '%s\\n' \"$!\" > {os.fspath(descendant_pid_path)!r}\n"
+        "exit 0\n",
+        encoding="ascii",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    completed = authority._git_process(
+        tmp_path,
+        ("ignored",),
+        allowed_returncodes=(0,),
+        maximum_stdout_bytes=1_024,
+    )
+    assert completed.returncode == 0
+    descendant_pid = int(descendant_pid_path.read_text(encoding="ascii"))
+    deadline = time.monotonic() + 2.0
+    while Path(f"/proc/{descendant_pid}").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not Path(f"/proc/{descendant_pid}").exists()
+
+
+def test_successful_git_process_group_is_killed_once_before_leader_reap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "fake-git-clean-exit"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    original_killpg = os.killpg
+    calls: list[tuple[int, int, bool]] = []
+
+    def observed_killpg(process_group: int, supplied_signal: int) -> None:
+        calls.append(
+            (
+                process_group,
+                supplied_signal,
+                Path(f"/proc/{process_group}").exists(),
+            )
+        )
+        original_killpg(process_group, supplied_signal)
+
+    monkeypatch.setattr(os, "killpg", observed_killpg)
+    completed = authority._git_process(
+        tmp_path,
+        ("ignored",),
+        allowed_returncodes=(0,),
+        maximum_stdout_bytes=1_024,
+    )
+    assert completed.returncode == 0
+    assert len(calls) == 1
+    process_group, supplied_signal, leader_existed = calls[0]
+    assert supplied_signal == signal.SIGKILL
+    assert leader_existed
+    assert not Path(f"/proc/{process_group}").exists()
+
+
+def test_isolated_git_disables_lazy_fetch_and_pager_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment_path = tmp_path / "git-environment.txt"
+    arguments_path = tmp_path / "git-arguments.txt"
+    executable = tmp_path / "fake-git-environment"
+    executable.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$GIT_NO_LAZY_FETCH\" > {os.fspath(environment_path)!r}\n"
+        f"printf '%s\\n' \"$@\" > {os.fspath(arguments_path)!r}\n"
+        "exit 0\n",
+        encoding="ascii",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    completed = authority._git_process(
+        tmp_path,
+        ("ignored",),
+        allowed_returncodes=(0,),
+        maximum_stdout_bytes=1_024,
+    )
+    assert completed.returncode == 0
+    assert environment_path.read_text(encoding="ascii") == "1\n"
+    arguments = arguments_path.read_text(encoding="ascii").splitlines()
+    assert arguments[0] == "--no-pager"
+    assert "--literal-pathspecs" in arguments
 
 
 def test_synthetic_root_rejects_path_subclasses_before_execution(
