@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
-from types import FrameType
+from types import FrameType, FunctionType
 from typing import Any, cast
 
 import pytest
@@ -255,6 +255,35 @@ def _write(path: Path, case: _Case) -> None:
     )
 
 
+def _expected_snapshot(
+    case: _Case,
+    envelope_bytes: bytes,
+) -> tuple[object, ...]:
+    return (
+        case.binding.role,
+        case.binding.ordinal,
+        case.binding.seed,
+        case.binding.registration_head_commit,
+        case.binding.implementation_commit,
+        case.binding.registration_sha256,
+        case.binding.source_bundle_sha256,
+        case.history,
+        len(case.history),
+        case.history_sha256,
+        case.safetensors,
+        len(case.safetensors),
+        case.safetensors_sha256,
+        envelope_bytes,
+        len(envelope_bytes),
+        hashlib.sha256(_ENVELOPE_DOMAIN + envelope_bytes).hexdigest(),
+        case.winner_epoch,
+        1,
+        1,
+        (0.25).hex(),
+        case.model_tensor_sha256,
+    )
+
+
 def _envelope_path(path: Path) -> Path:
     return path / child_result._ENVELOPE_FILENAME
 
@@ -351,6 +380,389 @@ def test_public_surface_is_fixed_opaque_and_standard_library_only() -> None:
     assert "os.link" not in source
     assert "os.rename" not in source
     assert "tempfile" not in source
+
+
+def test_private_authority_snapshot_surface_is_exact_and_unexported() -> None:
+    route = cast(FunctionType, child_result._snapshot_verified_child_result)
+    signature = inspect.signature(route)
+    parameters = list(signature.parameters.values())
+    assert len(parameters) == 1
+    assert parameters[0].name == "result"
+    assert parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
+    assert parameters[0].default is inspect.Parameter.empty
+    assert route.__name__ == "snapshot_route"
+    assert route.__module__ == "falsewake.experiment_002_child_result"
+    assert "_snapshot_verified_child_result" not in child_result.__all__
+
+
+@pytest.mark.parametrize(
+    ("role", "ordinal"),
+    [("training_seed", 0), ("selected_seed_rerun", 3)],
+)
+def test_authority_snapshot_is_exact_deeply_immutable_canonical_truth(
+    scratch_directory: Path,
+    role: str,
+    ordinal: int,
+) -> None:
+    case = _case(role=role, ordinal=ordinal)
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    envelope_bytes = _envelope_path(scratch_directory).read_bytes()
+
+    first = child_result._snapshot_verified_child_result(result)
+    second = child_result._snapshot_verified_child_result(result)
+
+    assert type(first) is tuple
+    assert len(first) == 21
+    assert first == second == _expected_snapshot(case, envelope_bytes)
+    assert first is not second
+    assert tuple(type(value) for value in first) == (
+        str,
+        int,
+        int,
+        str,
+        str,
+        str,
+        str,
+        bytes,
+        int,
+        str,
+        bytes,
+        int,
+        str,
+        bytes,
+        int,
+        str,
+        int,
+        int,
+        int,
+        str,
+        str,
+    )
+    assert first[8] == len(first[7])
+    assert first[9] == hashlib.sha256(_HISTORY_DOMAIN + first[7]).hexdigest()
+    assert first[11] == len(first[10])
+    assert first[12] == hashlib.sha256(first[10]).hexdigest()
+    assert first[14] == len(first[13])
+    assert first[15] == hashlib.sha256(_ENVELOPE_DOMAIN + first[13]).hexdigest()
+    with pytest.raises(TypeError):
+        cast(Any, first)[0] = "changed"
+
+
+def test_authority_snapshot_ignores_every_public_result_descriptor(
+    scratch_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    expected = _expected_snapshot(
+        case,
+        _envelope_path(scratch_directory).read_bytes(),
+    )
+    descriptor_spoofs: dict[str, object] = {
+        "binding": object(),
+        "role": "selected_seed_rerun",
+        "ordinal": 3,
+        "seed": 20_260_721,
+        "registration_head_commit": "0" * 40,
+        "implementation_commit": "1" * 40,
+        "registration_sha256": "2" * 64,
+        "source_bundle_sha256": "3" * 64,
+        "history_sha256": "4" * 64,
+        "history_byte_count": 1,
+        "safetensors_sha256": "5" * 64,
+        "safetensors_byte_count": 1,
+        "winner_epoch": 29,
+        "winner_macro_f1": Fraction(0, 1),
+        "winner_validation_cross_entropy": float("nan"),
+        "model_tensor_sha256": "6" * 64,
+        "envelope_sha256": "7" * 64,
+        "canonical_history_bytes": b"forged history",
+        "safetensors_bytes": b"forged tensors",
+        "canonical_envelope_bytes": b"forged envelope",
+    }
+
+    def constant_property(value: object) -> property:
+        def read(_result: child_result.VerifiedChildResult) -> object:
+            return value
+
+        return property(read)
+
+    for name, spoof in descriptor_spoofs.items():
+        monkeypatch.setattr(
+            child_result.VerifiedChildResult,
+            name,
+            constant_property(spoof),
+        )
+
+    def forbidden_public_route(
+        _result: child_result.VerifiedChildResult,
+        /,
+    ) -> None:
+        raise AssertionError("mutable public result route was used")
+
+    monkeypatch.setattr(
+        child_result,
+        "verify_verified_child_result",
+        forbidden_public_route,
+    )
+    monkeypatch.setattr(
+        child_result,
+        "_bootstrap_verified_state",
+        forbidden_public_route,
+    )
+    assert child_result._snapshot_verified_child_result(result) == expected
+
+
+@pytest.mark.parametrize(
+    ("property_name", "spoof"),
+    [
+        ("winner_epoch", True),
+        ("winner_epoch", 30),
+        ("winner_macro_f1", Fraction(2, 1)),
+        ("winner_validation_cross_entropy", float("nan")),
+        ("winner_validation_cross_entropy", float("inf")),
+        ("winner_validation_cross_entropy", -0.0),
+    ],
+    ids=("epoch-bool", "epoch-bound", "f1-range", "ce-nan", "ce-inf", "ce-negzero"),
+)
+def test_authority_snapshot_ignores_invalid_public_rank_spoofs(
+    scratch_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    property_name: str,
+    spoof: object,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    expected = _expected_snapshot(
+        case,
+        _envelope_path(scratch_directory).read_bytes(),
+    )
+    monkeypatch.setattr(
+        child_result.VerifiedChildResult,
+        property_name,
+        property(lambda _result: spoof),
+    )
+    assert child_result._snapshot_verified_child_result(result) == expected
+
+
+def test_authority_snapshot_rejects_forged_and_subclassed_results() -> None:
+    class ResultSubclass(child_result.VerifiedChildResult):
+        pass
+
+    forged = object.__new__(child_result.VerifiedChildResult)
+    subclassed = object.__new__(ResultSubclass)
+    for value in (object(), forged, subclassed):
+        with pytest.raises(
+            (TypeError, child_result.Experiment002ChildResultError),
+        ):
+            child_result._snapshot_verified_child_result(cast(Any, value))
+
+
+def test_authority_snapshot_ignores_module_global_cache_replacement(
+    scratch_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    expected = _expected_snapshot(
+        case,
+        _envelope_path(scratch_directory).read_bytes(),
+    )
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
+    forged_summary = replace(
+        state.history_summary,
+        winner_epoch=29,
+        winner_macro_f1_numerator=0,
+        winner_validation_cross_entropy_float64_hex=(99.0).hex(),
+    )
+    monkeypatch.setattr(
+        child_result,
+        "_ISSUED",
+        {result: replace(state, history_summary=forged_summary)},
+    )
+    monkeypatch.setattr(
+        child_result,
+        "_GUARDS",
+        {result: replace(guard, history_summary=replace(forged_summary))},
+    )
+    monkeypatch.setattr(child_result, "_FAILED", {result})
+
+    assert child_result._snapshot_verified_child_result(result) == expected
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "epoch_bool",
+        "epoch_bound",
+        "f1_bool",
+        "f1_integer_subclass",
+        "f1_unreduced",
+        "ce_nan",
+        "ce_inf",
+        "ce_negative_zero",
+        "model_digest",
+    ),
+)
+def test_authority_snapshot_rank_tamper_is_terminal(
+    scratch_directory: Path,
+    tamper: str,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
+    for summary in (state.history_summary, guard.history_summary):
+        if tamper == "epoch_bool":
+            object.__setattr__(summary, "winner_epoch", True)
+        elif tamper == "epoch_bound":
+            object.__setattr__(summary, "winner_epoch", 30)
+        elif tamper == "f1_bool":
+            object.__setattr__(summary, "winner_macro_f1_numerator", True)
+        elif tamper == "f1_integer_subclass":
+            object.__setattr__(
+                summary,
+                "winner_macro_f1_denominator",
+                EqualIntegerSubclass(1),
+            )
+        elif tamper == "f1_unreduced":
+            object.__setattr__(summary, "winner_macro_f1_numerator", 2)
+            object.__setattr__(summary, "winner_macro_f1_denominator", 2)
+        elif tamper == "ce_nan":
+            object.__setattr__(
+                summary,
+                "winner_validation_cross_entropy_float64_hex",
+                float("nan").hex(),
+            )
+        elif tamper == "ce_inf":
+            object.__setattr__(
+                summary,
+                "winner_validation_cross_entropy_float64_hex",
+                float("inf").hex(),
+            )
+        elif tamper == "ce_negative_zero":
+            object.__setattr__(
+                summary,
+                "winner_validation_cross_entropy_float64_hex",
+                (-0.0).hex(),
+            )
+        else:
+            object.__setattr__(
+                summary,
+                "winner_model_tensor_sha256",
+                "0" * 64,
+            )
+
+    with pytest.raises(child_result.Experiment002ChildResultError):
+        child_result._snapshot_verified_child_result(result)
+    with pytest.raises(
+        child_result.Experiment002ChildResultError,
+        match="terminally",
+    ):
+        child_result._snapshot_verified_child_result(result)
+
+
+def test_authority_snapshot_coherent_payload_cache_mutation_is_terminal(
+    scratch_directory: Path,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    state = child_result._ISSUED[result]
+    guard = child_result._GUARDS[result]
+    changed_history = state.history_bytes + b" "
+    changed_digest = hashlib.sha256(_HISTORY_DOMAIN + changed_history).hexdigest()
+    for authority_value in (state, guard):
+        object.__setattr__(authority_value, "history_bytes", changed_history)
+        object.__setattr__(authority_value, "history_sha256", changed_digest)
+
+    with pytest.raises(child_result.Experiment002ChildResultError):
+        child_result._snapshot_verified_child_result(result)
+    with pytest.raises(
+        child_result.Experiment002ChildResultError,
+        match="terminally",
+    ):
+        child_result._snapshot_verified_child_result(result)
+
+
+def test_authority_snapshot_does_not_read_internal_state_after_truth_capture(
+    scratch_directory: Path,
+) -> None:
+    case = _case()
+    _write(scratch_directory, case)
+    result = child_result.load_registered_child_result(
+        scratch_directory,
+        case.binding,
+    )
+    expected = _expected_snapshot(
+        case,
+        _envelope_path(scratch_directory).read_bytes(),
+    )
+    route = cast(FunctionType, child_result._snapshot_verified_child_result)
+    descriptors = {
+        "history_bytes": vars(child_result._VerifiedState)["history_bytes"],
+        "history_summary": vars(child_result._VerifiedState)["history_summary"],
+    }
+    interposed = False
+
+    def forbidden_descriptor(_state: object) -> object:
+        raise AssertionError("internal state descriptor was read after truth capture")
+
+    def interpose_after_truth(
+        frame: FrameType,
+        event: str,
+        _argument: object,
+    ) -> Any:
+        nonlocal interposed
+        if (
+            event == "line"
+            and frame.f_code is route.__code__
+            and "values" in frame.f_locals
+            and not interposed
+        ):
+            interposed = True
+            for name in descriptors:
+                setattr(
+                    child_result._VerifiedState,
+                    name,
+                    property(forbidden_descriptor),
+                )
+            sys.settrace(None)
+        return interpose_after_truth
+
+    sys.settrace(interpose_after_truth)
+    try:
+        observed = route(result)
+    finally:
+        sys.settrace(None)
+        for name, descriptor in descriptors.items():
+            setattr(child_result._VerifiedState, name, descriptor)
+    assert interposed
+    assert observed == expected
 
 
 @pytest.mark.parametrize(

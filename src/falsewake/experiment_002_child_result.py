@@ -345,6 +345,29 @@ class _OwnedFile:
 
 
 type _AuthorityFrame = tuple[object, ...]
+type _VerifiedChildResultSnapshot = tuple[
+    str,
+    int,
+    int,
+    str,
+    str,
+    str,
+    str,
+    bytes,
+    int,
+    str,
+    bytes,
+    int,
+    str,
+    bytes,
+    int,
+    str,
+    int,
+    int,
+    int,
+    str,
+    str,
+]
 
 
 class _ResultIssuer(Protocol):
@@ -398,6 +421,14 @@ class _ResultVerifier(Protocol):
 
 class _VerifiedStateSupplier(Protocol):
     def __call__(self, result: VerifiedChildResult, /) -> _VerifiedState: ...
+
+
+class _ResultSnapshotter(Protocol):
+    def __call__(
+        self,
+        result: VerifiedChildResult,
+        /,
+    ) -> _VerifiedChildResultSnapshot: ...
 
 
 _ISSUED: weakref.WeakKeyDictionary[VerifiedChildResult, _VerifiedState] = (
@@ -1699,6 +1730,7 @@ def _make_result_routes() -> tuple[
     _ResultLoader,
     _ResultVerifier,
     _VerifiedStateSupplier,
+    _ResultSnapshotter,
 ]:
     """Bind parser issuance and every later read to hidden immutable truth."""
 
@@ -1717,6 +1749,53 @@ def _make_result_routes() -> tuple[
     state_type = _VerifiedState
     guard_type = _VerifiedGuard
     state_marker = _STATE_MARKER
+    tuple_type = tuple
+    str_type = str
+    int_type = int
+    bytes_type = bytes
+    float_type = float
+    length = len
+    any_value = any
+    zip_values = zip
+    type_cast = cast
+    sha256 = hashlib.sha256
+    history_domain = _HISTORY_DOMAIN
+    envelope_domain = _ENVELOPE_DOMAIN
+    registered_seeds = _REGISTERED_SEEDS
+    epoch_count = _EPOCH_COUNT
+    max_history_bytes = _MAX_HISTORY_BYTES
+    registered_safetensors_bytes = _REGISTERED_SAFETENSORS_BYTES
+    max_envelope_bytes = _MAX_ENVELOPE_BYTES
+    lower_hex = frozenset("0123456789abcdef")
+    parse_float_hex = float.fromhex
+    format_float_hex = float.hex
+    finite = math.isfinite
+    sign = math.copysign
+    greatest_common_divisor = math.gcd
+    invalid_float_errors = (OverflowError, ValueError)
+    base_exception_type = BaseException
+    error_type = Experiment002ChildResultError
+    authority_value_types = (
+        str_type,
+        int_type,
+        int_type,
+        str_type,
+        str_type,
+        str_type,
+        str_type,
+        bytes_type,
+        bytes_type,
+        bytes_type,
+        str_type,
+        str_type,
+        str_type,
+        int_type,
+        int_type,
+        str_type,
+        int_type,
+        int_type,
+        str_type,
+    )
     authority: weakref.WeakKeyDictionary[
         VerifiedChildResult,
         tuple[
@@ -1823,52 +1902,33 @@ def _make_result_routes() -> tuple[
         )
         return result
 
-    def materialize(truth: _AuthorityFrame) -> _VerifiedState:
+    def authority_values(truth: _AuthorityFrame) -> tuple[object, ...]:
         if (
-            exact_type(truth) is not tuple
-            or len(truth) != 20
+            exact_type(truth) is not tuple_type
+            or length(truth) != 20
             or truth[0] is not state_marker
         ):
-            raise Experiment002ChildResultError(
-                "verified result authority truth is malformed"
-            )
-        expected_types = (
-            str,
-            int,
-            int,
-            str,
-            str,
-            str,
-            str,
-            bytes,
-            bytes,
-            bytes,
-            str,
-            str,
-            str,
-            int,
-            int,
-            str,
-            int,
-            int,
-            str,
-        )
+            raise error_type("verified result authority truth is malformed")
         values: list[object] = []
-        for pair, expected_type in zip(truth[1:], expected_types, strict=True):
-            if exact_type(pair) is not tuple:
-                raise Experiment002ChildResultError(
-                    "verified result authority truth is malformed"
-                )
-            typed_pair = cast(tuple[object, ...], pair)
+        for pair, expected_type in zip_values(
+            truth[1:],
+            authority_value_types,
+            strict=True,
+        ):
+            if exact_type(pair) is not tuple_type:
+                raise error_type("verified result authority truth is malformed")
+            typed_pair = type_cast(tuple[object, ...], pair)
             if (
-                len(typed_pair) != 2
+                length(typed_pair) != 2
                 or typed_pair[0] is not expected_type
                 or exact_type(typed_pair[1]) is not expected_type
             ):
-                raise Experiment002ChildResultError(
-                    "verified result authority truth is malformed"
-                )
+                raise error_type("verified result authority truth is malformed")
             values.append(typed_pair[1])
+        return tuple_type(values)
+
+    def materialize(truth: _AuthorityFrame) -> _VerifiedState:
+        values = authority_values(truth)
 
         binding = allocate(binding_type)
         assign(binding, "role", values[0])
@@ -1900,9 +1960,7 @@ def _make_result_routes() -> tuple[
         assign(detached, "envelope_sha256", values[12])
         assign(detached, "history_summary", summary)
         if frame(detached) != truth:
-            raise Experiment002ChildResultError(
-                "verified result authority truth failed reconstruction"
-            )
+            raise error_type("verified result authority truth failed reconstruction")
         return detached
 
     def issuer(
@@ -1999,7 +2057,7 @@ def _make_result_routes() -> tuple[
         try:
             state_frame = frame(state)
             guard_frame = frame(guard)
-        except BaseException:
+        except base_exception_type:
             return None
         with authority_lock:
             record = authority.get(result)
@@ -2021,13 +2079,172 @@ def _make_result_routes() -> tuple[
             with cache_lock:
                 failed_cache.add(result)
 
+    def verified_truth(
+        result: VerifiedChildResult,
+        /,
+    ) -> _AuthorityFrame:
+        try:
+            return verify_impl(result, reader, validator, failure)
+        except base_exception_type:
+            failure(result)
+            raise
+
     def verified_state(
         result: VerifiedChildResult,
         /,
     ) -> _VerifiedState:
         try:
-            return materialize(verify_impl(result, reader, validator, failure))
-        except BaseException:
+            return materialize(verified_truth(result))
+        except base_exception_type:
+            failure(result)
+            raise
+
+    def snapshot_route(
+        result: VerifiedChildResult,
+        /,
+    ) -> _VerifiedChildResultSnapshot:
+        """Return one descriptor-free immutable view of hidden result truth."""
+
+        try:
+            values = authority_values(verified_truth(result))
+            role = type_cast(str_type, values[0])
+            ordinal = type_cast(int_type, values[1])
+            seed = type_cast(int_type, values[2])
+            registration_head_commit = type_cast(str_type, values[3])
+            implementation_commit = type_cast(str_type, values[4])
+            registration_sha256 = type_cast(str_type, values[5])
+            source_bundle_sha256 = type_cast(str_type, values[6])
+            history_bytes = type_cast(bytes_type, values[7])
+            safetensors_bytes = type_cast(bytes_type, values[8])
+            envelope_bytes = type_cast(bytes_type, values[9])
+            history_sha256 = type_cast(str_type, values[10])
+            safetensors_sha256 = type_cast(str_type, values[11])
+            envelope_sha256 = type_cast(str_type, values[12])
+            summary_seed = type_cast(int_type, values[13])
+            winner_epoch = type_cast(int_type, values[14])
+            model_tensor_sha256 = type_cast(str_type, values[15])
+            winner_macro_f1_numerator = type_cast(int_type, values[16])
+            winner_macro_f1_denominator = type_cast(int_type, values[17])
+            winner_validation_cross_entropy_hex = type_cast(str_type, values[18])
+
+            if role == "training_seed":
+                binding_is_registered = (
+                    0 <= ordinal < length(registered_seeds)
+                    and seed == registered_seeds[ordinal]
+                )
+            else:
+                binding_is_registered = (
+                    role == "selected_seed_rerun"
+                    and ordinal == length(registered_seeds)
+                    and seed in registered_seeds
+                )
+            if not binding_is_registered or summary_seed != seed:
+                raise error_type("verified result snapshot binding is not registered")
+
+            def require_lower_hex(
+                value: str,
+                expected_length: int,
+                name: str,
+            ) -> None:
+                if length(value) != expected_length or any_value(
+                    character not in lower_hex for character in value
+                ):
+                    raise error_type(
+                        f"verified result snapshot {name} is not canonical"
+                    )
+
+            require_lower_hex(
+                registration_head_commit,
+                40,
+                "registration commit",
+            )
+            require_lower_hex(
+                implementation_commit,
+                40,
+                "implementation commit",
+            )
+            require_lower_hex(registration_sha256, 64, "registration digest")
+            require_lower_hex(source_bundle_sha256, 64, "source-bundle digest")
+            require_lower_hex(history_sha256, 64, "history digest")
+            require_lower_hex(safetensors_sha256, 64, "safetensors digest")
+            require_lower_hex(envelope_sha256, 64, "envelope digest")
+            require_lower_hex(model_tensor_sha256, 64, "model-tensor digest")
+            if registration_head_commit == implementation_commit:
+                raise error_type("verified result snapshot commit binding is invalid")
+
+            history_byte_count = length(history_bytes)
+            safetensors_byte_count = length(safetensors_bytes)
+            envelope_byte_count = length(envelope_bytes)
+            if (
+                not 0 < history_byte_count <= max_history_bytes
+                or safetensors_byte_count != registered_safetensors_bytes
+                or not 0 < envelope_byte_count <= max_envelope_bytes
+                or sha256(history_domain + history_bytes).hexdigest() != history_sha256
+                or sha256(safetensors_bytes).hexdigest() != safetensors_sha256
+                or sha256(envelope_domain + envelope_bytes).hexdigest()
+                != envelope_sha256
+            ):
+                raise error_type("verified result snapshot bytes or digests changed")
+
+            if (
+                not 0 <= winner_epoch < epoch_count
+                or winner_macro_f1_numerator < 0
+                or winner_macro_f1_denominator <= 0
+                or winner_macro_f1_numerator > winner_macro_f1_denominator
+                or greatest_common_divisor(
+                    winner_macro_f1_numerator,
+                    winner_macro_f1_denominator,
+                )
+                != 1
+            ):
+                raise error_type("verified result snapshot winner rank is invalid")
+            try:
+                winner_validation_cross_entropy = parse_float_hex(
+                    winner_validation_cross_entropy_hex
+                )
+            except invalid_float_errors as error:
+                raise error_type(
+                    "verified result snapshot validation loss is invalid"
+                ) from error
+            if (
+                exact_type(winner_validation_cross_entropy) is not float_type
+                or not finite(winner_validation_cross_entropy)
+                or winner_validation_cross_entropy < 0.0
+                or sign(1.0, winner_validation_cross_entropy) < 0.0
+                or format_float_hex(winner_validation_cross_entropy)
+                != winner_validation_cross_entropy_hex
+            ):
+                raise error_type(
+                    "verified result snapshot validation loss is not canonical"
+                )
+
+            snapshot = (
+                role,
+                ordinal,
+                seed,
+                registration_head_commit,
+                implementation_commit,
+                registration_sha256,
+                source_bundle_sha256,
+                history_bytes,
+                history_byte_count,
+                history_sha256,
+                safetensors_bytes,
+                safetensors_byte_count,
+                safetensors_sha256,
+                envelope_bytes,
+                envelope_byte_count,
+                envelope_sha256,
+                winner_epoch,
+                winner_macro_f1_numerator,
+                winner_macro_f1_denominator,
+                winner_validation_cross_entropy_hex,
+                model_tensor_sha256,
+            )
+            if exact_type(snapshot) is not tuple_type or length(snapshot) != 21:
+                raise error_type("verified result snapshot shape changed")
+            return snapshot
+        except base_exception_type:
             failure(result)
             raise
 
@@ -2071,7 +2288,7 @@ def _make_result_routes() -> tuple[
     def verify_route(result: VerifiedChildResult, /) -> None:
         verified_state(result)
 
-    return load_route, verify_route, verified_state
+    return load_route, verify_route, verified_state, snapshot_route
 
 
 def _install_lexical_result_properties(
@@ -2222,6 +2439,7 @@ def _install_lexical_result_properties(
     load_registered_child_result,
     verify_verified_child_result,
     _LEXICAL_VERIFIED_STATE,
+    _snapshot_verified_child_result,
 ) = _make_result_routes()
 _install_lexical_result_properties(_LEXICAL_VERIFIED_STATE)
 del _LEXICAL_VERIFIED_STATE
