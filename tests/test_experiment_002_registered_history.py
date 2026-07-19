@@ -68,6 +68,10 @@ class _StrSubclass(str):
     pass
 
 
+class _CompletedHistorySubclass(history.RegisteredCompletedTrainingHistory):
+    pass
+
+
 def _perfect_confusion() -> ConfusionMatrix:
     return tuple(
         tuple(_SUPPORT[row] if row == column else 0 for column in range(12))
@@ -322,6 +326,108 @@ def _counterfeit_accepted_history() -> tuple[
     return owner, state, bound
 
 
+def _counterfeit_final_boundary() -> tuple[
+    history.RegisteredTrainingHistory,
+    history._HistoryState,
+    history.RegisteredHistoryBarrier,
+    history._BarrierState,
+    tuple[history._BoundEpochRecord, ...],
+]:
+    owner, state = _counterfeit_history()
+    defaults = history._complete_registered_training_history.__defaults__
+    assert defaults is not None and len(defaults) == 1
+    transition = cast(Any, defaults[0])
+    accepted: list[history._BoundEpochRecord] = []
+    final_barrier: history.RegisteredHistoryBarrier | None = None
+    barrier_state: history._BarrierState | None = None
+    for epoch in range(EPOCH_COUNT):
+        bound = _counterfeit_bound(state, epoch=epoch)
+        active_barrier = None
+        active_token = None
+        if epoch == EPOCH_COUNT - 1:
+            final_barrier = history._issue_registered_barrier(owner, state, bound)
+            barrier_state = history._issued_barrier_state(final_barrier)
+            active_barrier = final_barrier
+            active_token = barrier_state.token
+        transition(
+            owner,
+            state,
+            history._HISTORY_GUARDS[owner],
+            expected_phase="OPEN",
+            phase="OPEN",
+            records=(*accepted, bound),
+            active_barrier=active_barrier,
+            active_barrier_token=active_token,
+            completed_history=None,
+        )
+        accepted.append(bound)
+        state.records = list(accepted)
+        state.active_barrier = active_barrier
+        state.active_barrier_token = active_token
+        history._HISTORY_LIFECYCLES[owner] = history._lifecycle_from_state(state)
+    assert type(final_barrier) is history.RegisteredHistoryBarrier
+    assert type(barrier_state) is history._BarrierState
+    assert history._issued_history_state(owner) is state
+    assert history._issued_barrier_state(final_barrier) is barrier_state
+    return owner, state, final_barrier, barrier_state, tuple(accepted)
+
+
+def _counterfeit_final_completion() -> tuple[
+    history.RegisteredTrainingHistory,
+    history._HistoryState,
+    history.RegisteredHistoryBarrier,
+    history._BarrierState,
+    history.RegisteredCompletedTrainingHistory,
+    history._CompletedState,
+]:
+    owner, state, final_barrier, barrier_state, records = _counterfeit_final_boundary()
+    epoch_records = tuple(bound.record for bound in records)
+    canonical = history._canonical_registered_history_bytes(
+        seed=state.seed,
+        validation_inputs_sha256=state.validation_inputs_sha256,
+        complete_update_trace_sha256=_COMPLETE_TRACE_DIGEST,
+        records=epoch_records,
+    )
+    ranks = history._rank_registered_records(epoch_records)
+    result = history._issue_completed_history(
+        history=owner,
+        state=state,
+        complete_update_trace=object.__new__(CompleteUpdateTraceEvidence),
+        records=records,
+        canonical_json_bytes=canonical,
+        ranked_epochs=ranks,
+        winner=records[ranks[0].zero_based_epoch].evaluated_epoch,
+    )
+    history._transition_barrier(final_barrier, barrier_state, phase="RETIRED")
+    defaults = history._complete_registered_training_history.__defaults__
+    assert defaults is not None and len(defaults) == 1
+    transition = cast(Any, defaults[0])
+    transition(
+        owner,
+        state,
+        history._HISTORY_GUARDS[owner],
+        expected_phase="OPEN",
+        phase="COMPLETE",
+        records=records,
+        active_barrier=None,
+        active_barrier_token=None,
+        completed_history=result,
+    )
+    state.phase = "COMPLETE"
+    state.active_barrier = None
+    state.active_barrier_token = None
+    state.completed = result
+    history._HISTORY_LIFECYCLES[owner] = history._lifecycle_from_state(state)
+    return (
+        owner,
+        state,
+        final_barrier,
+        barrier_state,
+        result,
+        history._issued_completed_state(result),
+    )
+
+
 def test_source_is_history_only_and_has_no_filesystem_publication_route() -> None:
     path = Path("src/falsewake/experiment_002_registered_history.py")
     source = path.read_text(encoding="utf-8")
@@ -366,6 +472,9 @@ def test_public_api_has_no_callback_or_generic_barrier_seam() -> None:
     complete = inspect.signature(history.complete_registered_training_history)
     barrier = inspect.signature(history._consume_registered_history_barrier)
     abort = inspect.signature(history._abort_consumed_registered_history_barrier)
+    final_abort = inspect.signature(
+        history._abort_attempted_registered_history_completion
+    )
     assert tuple(consume.parameters) == ("history", "evaluated_epoch")
     assert tuple(complete.parameters) == (
         "history",
@@ -374,6 +483,12 @@ def test_public_api_has_no_callback_or_generic_barrier_seam() -> None:
     )
     assert tuple(barrier.parameters) == ("registration", "executor", "barrier")
     assert tuple(abort.parameters) == ("registration", "executor", "barrier")
+    assert tuple(final_abort.parameters) == (
+        "registration",
+        "executor",
+        "final_barrier",
+        "completed",
+    )
     assert not hasattr(history, "_build_independent_authority_truth")
 
 
@@ -398,8 +513,8 @@ def test_exact_consumed_barrier_abort_is_local_and_terminal(
         state.executor,
         barrier,
     )
-    assert state.phase == "FAILED"
-    assert barrier_state.phase == "FAILED"
+    assert cast(str, state.phase) == "FAILED"
+    assert cast(str, barrier_state.phase) == "FAILED"
     assert owner in history._FAILED_HISTORIES
     assert barrier in history._FAILED_BARRIERS
     history._abort_consumed_registered_history_barrier(
@@ -427,6 +542,230 @@ def test_consumed_barrier_abort_wrong_executor_fails_closed() -> None:
         )
     assert state.phase == "FAILED"
     assert barrier_state.phase == "FAILED"
+
+
+def test_attempted_final_completion_abort_is_local_preissue_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, state, final_barrier, barrier_state, _ = _counterfeit_final_boundary()
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("final abort crossed into executor/evaluator verification")
+
+    monkeypatch.setattr(history, "_registered_executor_snapshot", forbidden)
+    monkeypatch.setattr(history, "_registered_evaluated_epoch_snapshot", forbidden)
+    monkeypatch.setattr(history, "_registered_epoch_handoff_snapshot", forbidden)
+    monkeypatch.setattr(history, "verify_registered_history_barrier", forbidden)
+    monkeypatch.setattr(
+        history,
+        "verify_registered_completed_training_history",
+        forbidden,
+    )
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
+    assert cast(str, state.phase) == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert owner in history._FAILED_HISTORIES
+    assert final_barrier in history._FAILED_BARRIERS
+
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
+
+
+@pytest.mark.parametrize("post_complete", [False, True])
+def test_attempted_final_completion_abort_repairs_prefailed_barrier(
+    post_complete: bool,
+) -> None:
+    result: history.RegisteredCompletedTrainingHistory | None = None
+    if post_complete:
+        (
+            owner,
+            state,
+            final_barrier,
+            barrier_state,
+            result,
+            _,
+        ) = _counterfeit_final_completion()
+    else:
+        owner, state, final_barrier, barrier_state, _ = _counterfeit_final_boundary()
+    history._terminal_fail_barrier(final_barrier, barrier_state)
+    assert barrier_state.phase == "FAILED"
+    assert state.phase == ("COMPLETE" if post_complete else "OPEN")
+
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
+    assert cast(str, state.phase) == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert owner in history._FAILED_HISTORIES
+    if result is not None:
+        assert result in history._FAILED_COMPLETED
+
+
+def test_attempted_final_completion_abort_repairs_failed_history_issued_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, state, final_barrier, barrier_state, _ = _counterfeit_final_boundary()
+
+    def interrupt_barrier_failure(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise RuntimeError("between history and barrier failure")
+
+    with monkeypatch.context() as local:
+        local.setattr(history, "_terminal_fail_barrier", interrupt_barrier_failure)
+        with pytest.raises(RuntimeError, match="between history"):
+            history._terminal_fail_history(owner, state)
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "ISSUED"
+
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
+    assert state.phase == "FAILED"
+    assert cast(str, barrier_state.phase) == "FAILED"
+    assert final_barrier in history._FAILED_BARRIERS
+
+
+def test_attempted_final_completion_abort_resolves_result_and_is_idempotent() -> None:
+    (
+        owner,
+        state,
+        final_barrier,
+        barrier_state,
+        result,
+        result_state,
+    ) = _counterfeit_final_completion()
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert result in history._FAILED_COMPLETED
+    assert history._COMPLETED_LIFECYCLES[result] == history._CompletedLifecycle(
+        token=result_state.token,
+        process_id=result_state.process_id,
+        phase="FAILED",
+    )
+    assert owner in history._FAILED_HISTORIES
+    assert final_barrier in history._FAILED_BARRIERS
+
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        result,
+    )
+
+
+def test_attempted_final_completion_abort_rejects_subclass_without_mutation() -> None:
+    owner, state, final_barrier, barrier_state, _ = _counterfeit_final_boundary()
+    counterfeit = object.__new__(_CompletedHistorySubclass)
+    with pytest.raises(TypeError, match="completed"):
+        history._abort_attempted_registered_history_completion(
+            state.registration,
+            state.executor,
+            final_barrier,
+            counterfeit,
+        )
+    assert state.phase == "OPEN"
+    assert barrier_state.phase == "ISSUED"
+    assert owner not in history._FAILED_HISTORIES
+    assert final_barrier not in history._FAILED_BARRIERS
+
+
+def test_attempted_final_completion_abort_wrong_result_fails_exact_boundary() -> None:
+    (
+        owner,
+        state,
+        final_barrier,
+        barrier_state,
+        result,
+        _,
+    ) = _counterfeit_final_completion()
+    foreign = object.__new__(history.RegisteredCompletedTrainingHistory)
+    with pytest.raises(
+        history.Experiment002RegisteredHistoryError,
+        match="differs",
+    ):
+        history._abort_attempted_registered_history_completion(
+            state.registration,
+            state.executor,
+            final_barrier,
+            foreign,
+        )
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    assert result in history._FAILED_COMPLETED
+    assert owner in history._FAILED_HISTORIES
+    assert foreign not in history._FAILED_COMPLETED
+
+
+def test_completion_failure_after_hidden_result_issuance_fails_local_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, state, final_barrier, barrier_state, _ = _counterfeit_final_boundary()
+    complete_trace = object.__new__(CompleteUpdateTraceEvidence)
+    issued: list[history.RegisteredCompletedTrainingHistory] = []
+    original_issue = history._issue_completed_history
+
+    monkeypatch.setattr(history, "_verify_history_bindings", lambda value: None)
+    monkeypatch.setattr(
+        history,
+        "_verify_bound_epoch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        history,
+        "_require_complete_trace_binding",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        CompleteUpdateTraceEvidence,
+        "sha256",
+        property(lambda value: _COMPLETE_TRACE_DIGEST),
+    )
+
+    def issue_then_fail(**kwargs: object) -> history.RegisteredCompletedTrainingHistory:
+        result = original_issue(**cast(Any, kwargs))
+        issued.append(result)
+        raise RuntimeError("after hidden result issuance")
+
+    monkeypatch.setattr(history, "_issue_completed_history", issue_then_fail)
+    with pytest.raises(RuntimeError, match="hidden result"):
+        history._complete_registered_training_history(
+            owner,
+            final_barrier,
+            complete_trace,
+        )
+    assert len(issued) == 1
+    assert issued[0] in history._FAILED_COMPLETED
+    assert history._COMPLETED_LIFECYCLES[issued[0]].phase == "FAILED"
+    assert state.phase == "FAILED"
+    assert barrier_state.phase == "FAILED"
+    history._abort_attempted_registered_history_completion(
+        state.registration,
+        state.executor,
+        final_barrier,
+        None,
+    )
 
 
 @pytest.mark.parametrize("pre_failed", [False, True])

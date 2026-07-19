@@ -58,10 +58,12 @@ from falsewake.experiment_002_training_bridge import (
     _transition_snapshot,
 )
 from falsewake.experiment_002_training_evidence import (
+    CompleteUpdateTraceEvidence,
     EpochUpdateTraceEvidence,
     UpdateTraceAccumulator,
     _fail_registered_trace,
     registered_learning_rate,
+    verify_registered_complete_update_trace,
     verify_registered_epoch_update_trace,
 )
 from falsewake.experiment_002_training_population import (
@@ -89,12 +91,14 @@ from falsewake.experiment_002_training_population import (
 if TYPE_CHECKING:
     from falsewake.experiment_002_registered_evaluator import RegisteredEvaluatedEpoch
     from falsewake.experiment_002_registered_history import (
+        RegisteredCompletedTrainingHistory,
         RegisteredHistoryBarrier,
+        RegisteredTrainingHistory,
         _RegisteredHistoryBarrierSnapshot,
     )
 
 type RegisteredExecutorPhase = Literal[
-    "READY_TO_TRAIN", "TRAINING", "AWAITING_EVALUATION", "FAILED"
+    "READY_TO_TRAIN", "TRAINING", "AWAITING_EVALUATION", "COMPLETE", "FAILED"
 ]
 
 _REGISTERED_ROUTE: Final = object()
@@ -108,6 +112,18 @@ _EVENT_TYPE: Final = type(threading.Event())
 
 class Experiment002RegisteredExecutorError(ValueError):
     """The source-bound registered executor violated its authority contract."""
+
+
+class _BoundaryAdmissionConflict(Experiment002RegisteredExecutorError):
+    """A different admitted boundary owns the executor without poisoning it."""
+
+
+class _BoundaryTruthCorruption(Experiment002RegisteredExecutorError):
+    """Retained boundary truth changed after its terminal publication."""
+
+
+class _FinalBarrierRequiresCompletion(Experiment002RegisteredExecutorError):
+    """A valid epoch-29 barrier was deliberately routed away from advance."""
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -201,6 +217,10 @@ class _RegisteredExecutorLifecycle:
     active_handoff: RegisteredExecutorEpochHandoff | None
     previous_history_barrier: object | None
     continuation_reservation: _ContinuationReservation | None
+    finalization_reservation: _FinalizationReservation | None
+    final_barrier: RegisteredHistoryBarrier | None
+    complete_update_trace: CompleteUpdateTraceEvidence | None
+    completed_history: RegisteredCompletedTrainingHistory | None
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -236,6 +256,10 @@ class _RegisteredExecutorState:
     active_handoff: RegisteredExecutorEpochHandoff | None = None
     previous_history_barrier: object | None = None
     continuation_reservation: _ContinuationReservation | None = None
+    finalization_reservation: _FinalizationReservation | None = None
+    final_barrier: RegisteredHistoryBarrier | None = None
+    complete_update_trace: CompleteUpdateTraceEvidence | None = None
+    completed_history: RegisteredCompletedTrainingHistory | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +274,9 @@ class _RegisteredExecutorSnapshot:
     optimizer_sha256: str
     rng_sha256: str
     previous_history_barrier: object | None
+    final_barrier: RegisteredHistoryBarrier | None
+    complete_update_trace: CompleteUpdateTraceEvidence | None
+    completed_history: RegisteredCompletedTrainingHistory | None
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -403,6 +430,68 @@ class _RetiredHandoffBinding:
     one_shot_token: object
 
 
+type _FinalizationPhase = Literal[
+    "RESERVED", "TRACE_COMPLETE", "HISTORY_COMPLETE", "COMMITTED", "FAILED"
+]
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _FinalizationReservation:
+    """Exact epoch-29 boundary reserved before any irreversible completion."""
+
+    token: object
+    executor: RegisteredTrainingExecutor
+    executor_ticket: _ExecutorIssuanceTicket
+    handoff: RegisteredExecutorEpochHandoff
+    handoff_ticket: _HandoffIssuanceTicket
+    final_barrier: RegisteredHistoryBarrier
+    barrier_type: type[RegisteredHistoryBarrier]
+    history: RegisteredTrainingHistory
+    history_type: type[RegisteredTrainingHistory]
+    evaluated_epoch: RegisteredEvaluatedEpoch
+    evaluated_epoch_type: type[RegisteredEvaluatedEpoch]
+    evaluated_authority_sha256: str
+    registration: VerifiedRunRegistration
+    validation_inputs: RegisteredValidationInputs
+    process_id: int
+    seed: int
+    zero_based_epoch: int
+    optimizer_generation: int
+    runtime_digests: _numeric._RuntimeDigests
+    previous_history_barrier: object
+    handoff_token: object
+    one_shot_token: object
+    trace: UpdateTraceAccumulator
+    epoch_traces: tuple[EpochUpdateTraceEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _FinalizedHandoffBinding:
+    """Immutable epoch-29 authority retained after full history completion."""
+
+    reservation: _FinalizationReservation
+    executor: RegisteredTrainingExecutor
+    handoff: RegisteredExecutorEpochHandoff
+    final_barrier: RegisteredHistoryBarrier
+    history: RegisteredTrainingHistory
+    evaluated_epoch: RegisteredEvaluatedEpoch
+    evaluated_authority_sha256: str
+    complete_update_trace: CompleteUpdateTraceEvidence
+    complete_update_trace_type: type[CompleteUpdateTraceEvidence]
+    completed_history: RegisteredCompletedTrainingHistory
+    completed_history_type: type[RegisteredCompletedTrainingHistory]
+    registration: VerifiedRunRegistration
+    validation_inputs: RegisteredValidationInputs
+    process_id: int
+    seed: int
+    zero_based_epoch: int
+    optimizer_generation: int
+    runtime_digests: _numeric._RuntimeDigests
+    previous_history_barrier: object
+    handoff_token: object
+    one_shot_token: object
+
+
 @dataclass(frozen=True, slots=True)
 class _AdvanceAdmission:
     """Serialize public callers before any caller can consume history."""
@@ -413,6 +502,33 @@ class _AdvanceAdmission:
     leader: bool
     completed: threading.Event
     outcome: list[BaseException | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletionOutcome:
+    result: RegisteredCompletedTrainingHistory | None
+    error: BaseException | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletionAdmission:
+    """Serialize one exact epoch-29 completion with every boundary operation."""
+
+    token: object
+    executor: RegisteredTrainingExecutor
+    barrier: RegisteredHistoryBarrier
+    leader: bool
+    completed: threading.Event
+    outcome: list[_CompletionOutcome]
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundaryAdmissionState:
+    kind: Literal["ADVANCE", "COMPLETE"]
+    barrier: RegisteredHistoryBarrier
+    token: object
+    completed: threading.Event
+    outcome: list[BaseException | None] | list[_CompletionOutcome]
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,6 +621,9 @@ _HANDOFFS_LOCK = threading.RLock()
 _CONTINUATION_PHASES: dict[_ContinuationReservation, _ContinuationPhase] = {}
 _CONTINUATION_HISTORY: list[_ContinuationReservation] = []
 _RETIRED_HANDOFFS: dict[RegisteredExecutorEpochHandoff, _RetiredHandoffBinding] = {}
+_FINALIZATION_PHASES: dict[_FinalizationReservation, _FinalizationPhase] = {}
+_FINALIZATION_HISTORY: list[_FinalizationReservation] = []
+_FINALIZED_HANDOFFS: dict[RegisteredExecutorEpochHandoff, _FinalizedHandoffBinding] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,9 +672,38 @@ class _AuthorityTruthRoutes:
         [_HandoffIssuanceTicket, Literal["USED", "FAILED"]], bool
     ]
     begin_advance: Callable[
-        [RegisteredTrainingExecutor, RegisteredHistoryBarrier], _AdvanceAdmission
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _AdvanceAdmission,
+    ]
+    recover_advance: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _AdvanceAdmission | None,
+    ]
+    recover_retained_advance: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier],
+        _AdvanceAdmission | None,
     ]
     finish_advance: Callable[[_AdvanceAdmission, BaseException | None], None]
+    begin_completion: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _CompletionAdmission,
+    ]
+    recover_completion: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _CompletionAdmission | None,
+    ]
+    recover_retained_completion: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier],
+        _CompletionAdmission | None,
+    ]
+    finish_completion: Callable[
+        [
+            _CompletionAdmission,
+            RegisteredCompletedTrainingHistory | None,
+            BaseException | None,
+        ],
+        None,
+    ]
     reserve_continuation: Callable[[_ContinuationReservation], None]
     validate_continuation: Callable[
         [_ContinuationReservation, _ContinuationPhase], bool
@@ -569,6 +717,23 @@ class _AuthorityTruthRoutes:
     ]
     retired_handoff: Callable[
         [RegisteredExecutorEpochHandoff], _RetiredHandoffBinding | None
+    ]
+    reserve_finalization: Callable[[_FinalizationReservation], None]
+    validate_finalization: Callable[
+        [_FinalizationReservation, _FinalizationPhase], bool
+    ]
+    transition_finalization: Callable[
+        [_FinalizationReservation, _FinalizationPhase, _FinalizationPhase], None
+    ]
+    fail_finalization: Callable[[_FinalizationReservation], None]
+    executor_finalization: Callable[
+        [RegisteredTrainingExecutor], _FinalizationReservation | None
+    ]
+    commit_finalization: Callable[
+        [_FinalizationReservation, _FinalizedHandoffBinding], None
+    ]
+    finalized_handoff: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
     ]
 
 
@@ -586,23 +751,27 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
     handoff_events: set[tuple[_HandoffIssuanceTicket, Literal["USED", "FAILED"]]] = (
         set()
     )
-    active_advances: dict[
-        RegisteredTrainingExecutor,
-        tuple[
-            RegisteredHistoryBarrier,
-            object,
-            threading.Event,
-            list[BaseException | None],
-        ],
-    ] = {}
+    active_boundaries: dict[RegisteredTrainingExecutor, _BoundaryAdmissionState] = {}
     completed_advances: dict[
         RegisteredTrainingExecutor,
         list[
             tuple[
                 RegisteredHistoryBarrier,
+                object,
                 threading.Event,
                 list[BaseException | None],
+                tuple[object, ...],
             ]
+        ],
+    ] = {}
+    completed_completions: dict[
+        RegisteredTrainingExecutor,
+        tuple[
+            RegisteredHistoryBarrier,
+            object,
+            threading.Event,
+            list[_CompletionOutcome],
+            tuple[object, ...],
         ],
     ] = {}
     continuations: dict[
@@ -612,6 +781,16 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
         RegisteredTrainingExecutor, list[_ContinuationReservation]
     ] = {}
     retired_handoffs: dict[RegisteredExecutorEpochHandoff, _RetiredHandoffBinding] = {}
+    finalizations: dict[
+        _FinalizationReservation, tuple[tuple[object, ...], _FinalizationPhase]
+    ] = {}
+    executor_finalizations: dict[
+        RegisteredTrainingExecutor, _FinalizationReservation
+    ] = {}
+    finalized_handoffs: dict[
+        RegisteredExecutorEpochHandoff,
+        tuple[_FinalizedHandoffBinding, tuple[object, ...]],
+    ] = {}
     lock = threading.RLock()
 
     def executor_frame(lifecycle: _RegisteredExecutorLifecycle) -> tuple[object, ...]:
@@ -636,6 +815,16 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
                 type(lifecycle.continuation_reservation),
                 id(lifecycle.continuation_reservation),
             ),
+            (
+                type(lifecycle.finalization_reservation),
+                id(lifecycle.finalization_reservation),
+            ),
+            (type(lifecycle.final_barrier), id(lifecycle.final_barrier)),
+            (
+                type(lifecycle.complete_update_trace),
+                id(lifecycle.complete_update_trace),
+            ),
+            (type(lifecycle.completed_history), id(lifecycle.completed_history)),
         )
 
     def executor_ticket_frame(
@@ -845,90 +1034,532 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
             (type(binding.one_shot_token), id(binding.one_shot_token)),
         )
 
+    def finalization_frame(
+        reservation: _FinalizationReservation,
+    ) -> tuple[object, ...]:
+        runtime = reservation.runtime_digests
+        return (
+            (type(reservation.token), id(reservation.token)),
+            (type(reservation.executor), id(reservation.executor)),
+            (type(reservation.executor_ticket), id(reservation.executor_ticket)),
+            (type(reservation.handoff), id(reservation.handoff)),
+            (type(reservation.handoff_ticket), id(reservation.handoff_ticket)),
+            (type(reservation.final_barrier), id(reservation.final_barrier)),
+            (type(reservation.barrier_type), id(reservation.barrier_type)),
+            (type(reservation.history), id(reservation.history)),
+            (type(reservation.history_type), id(reservation.history_type)),
+            (type(reservation.evaluated_epoch), id(reservation.evaluated_epoch)),
+            (
+                type(reservation.evaluated_epoch_type),
+                id(reservation.evaluated_epoch_type),
+            ),
+            (
+                type(reservation.evaluated_authority_sha256),
+                reservation.evaluated_authority_sha256,
+            ),
+            (type(reservation.registration), id(reservation.registration)),
+            (type(reservation.validation_inputs), id(reservation.validation_inputs)),
+            (type(reservation.process_id), reservation.process_id),
+            (type(reservation.seed), reservation.seed),
+            (type(reservation.zero_based_epoch), reservation.zero_based_epoch),
+            (type(reservation.optimizer_generation), reservation.optimizer_generation),
+            (type(runtime.model_sha256), runtime.model_sha256),
+            (type(runtime.optimizer_sha256), runtime.optimizer_sha256),
+            (type(runtime.rng_sha256), runtime.rng_sha256),
+            (type(runtime.rng_state), runtime.rng_state),
+            (
+                type(reservation.previous_history_barrier),
+                id(reservation.previous_history_barrier),
+            ),
+            (type(reservation.handoff_token), id(reservation.handoff_token)),
+            (type(reservation.one_shot_token), id(reservation.one_shot_token)),
+            (type(reservation.trace), id(reservation.trace)),
+            type(reservation.epoch_traces),
+            tuple(
+                (type(epoch_trace), id(epoch_trace))
+                for epoch_trace in reservation.epoch_traces
+            ),
+        )
+
+    def finalized_frame(binding: _FinalizedHandoffBinding) -> tuple[object, ...]:
+        runtime = binding.runtime_digests
+        return (
+            (type(binding.reservation), id(binding.reservation)),
+            (type(binding.executor), id(binding.executor)),
+            (type(binding.handoff), id(binding.handoff)),
+            (type(binding.final_barrier), id(binding.final_barrier)),
+            (type(binding.history), id(binding.history)),
+            (type(binding.evaluated_epoch), id(binding.evaluated_epoch)),
+            (
+                type(binding.evaluated_authority_sha256),
+                binding.evaluated_authority_sha256,
+            ),
+            (type(binding.complete_update_trace), id(binding.complete_update_trace)),
+            (
+                type(binding.complete_update_trace_type),
+                id(binding.complete_update_trace_type),
+            ),
+            (type(binding.completed_history), id(binding.completed_history)),
+            (
+                type(binding.completed_history_type),
+                id(binding.completed_history_type),
+            ),
+            (type(binding.registration), id(binding.registration)),
+            (type(binding.validation_inputs), id(binding.validation_inputs)),
+            (type(binding.process_id), binding.process_id),
+            (type(binding.seed), binding.seed),
+            (type(binding.zero_based_epoch), binding.zero_based_epoch),
+            (type(binding.optimizer_generation), binding.optimizer_generation),
+            (type(runtime.model_sha256), runtime.model_sha256),
+            (type(runtime.optimizer_sha256), runtime.optimizer_sha256),
+            (type(runtime.rng_sha256), runtime.rng_sha256),
+            (type(runtime.rng_state), runtime.rng_state),
+            (
+                type(binding.previous_history_barrier),
+                id(binding.previous_history_barrier),
+            ),
+            (type(binding.handoff_token), id(binding.handoff_token)),
+            (type(binding.one_shot_token), id(binding.one_shot_token)),
+        )
+
+    def advance_outcome_frame(
+        outcome: list[BaseException | None],
+    ) -> tuple[object, ...] | None:
+        if type(outcome) is not list or len(outcome) != 1:
+            return None
+        value = outcome[0]
+        return (type(value), id(value))
+
+    def completion_outcome_frame(
+        outcome: list[_CompletionOutcome],
+    ) -> tuple[object, ...] | None:
+        if (
+            type(outcome) is not list
+            or len(outcome) != 1
+            or type(outcome[0]) is not _CompletionOutcome
+        ):
+            return None
+        value = outcome[0]
+        return (
+            (type(value), id(value)),
+            (type(value.result), id(value.result)),
+            (type(value.error), id(value.error)),
+        )
+
     def begin_advance(
         executor: RegisteredTrainingExecutor,
         barrier: RegisteredHistoryBarrier,
+        caller_token: object,
     ) -> _AdvanceAdmission:
         with lock:
             for (
                 completed_barrier,
+                completed_token,
                 completed,
                 retained_outcome,
+                retained_frame,
             ) in completed_advances.get(executor, []):
                 if completed_barrier is barrier:
+                    if type(completed) is not _EVENT_TYPE or not completed.is_set():
+                        raise _BoundaryTruthCorruption(
+                            "retained continuation event authority changed"
+                        )
+                    if advance_outcome_frame(retained_outcome) != retained_frame:
+                        raise _BoundaryTruthCorruption(
+                            "retained continuation outcome authority changed"
+                        )
                     return _AdvanceAdmission(
-                        object(),
+                        completed_token,
                         executor,
                         barrier,
                         False,
                         completed,
                         retained_outcome,
                     )
-            active = active_advances.get(executor)
+            if executor in completed_completions:
+                raise _BoundaryAdmissionConflict(
+                    "completed executor rejects a new advance boundary"
+                )
+            active = active_boundaries.get(executor)
             if active is None:
-                token = object()
                 completed = threading.Event()
                 outcome: list[BaseException | None] = []
-                active_advances[executor] = (barrier, token, completed, outcome)
+                active_boundaries[executor] = _BoundaryAdmissionState(
+                    "ADVANCE", barrier, caller_token, completed, outcome
+                )
                 return _AdvanceAdmission(
-                    token,
+                    caller_token,
                     executor,
                     barrier,
                     True,
                     completed,
                     outcome,
                 )
-            active_barrier, token, completed, active_outcome = active
-            if active_barrier is not barrier:
-                raise Experiment002RegisteredExecutorError(
-                    "a different continuation is already active"
+            if active.kind != "ADVANCE" or active.barrier is not barrier:
+                raise _BoundaryAdmissionConflict(
+                    "a different executor boundary is already active"
                 )
+            active_outcome = cast(list[BaseException | None], active.outcome)
             return _AdvanceAdmission(
-                token,
+                active.token,
                 executor,
                 barrier,
                 False,
-                completed,
+                active.completed,
                 active_outcome,
             )
+
+    def recover_advance(
+        executor: RegisteredTrainingExecutor,
+        barrier: RegisteredHistoryBarrier,
+        caller_token: object,
+    ) -> _AdvanceAdmission | None:
+        with lock:
+            active = active_boundaries.get(executor)
+            if (
+                active is not None
+                and active.kind == "ADVANCE"
+                and active.barrier is barrier
+                and active.token is caller_token
+            ):
+                return _AdvanceAdmission(
+                    caller_token,
+                    executor,
+                    barrier,
+                    True,
+                    active.completed,
+                    cast(list[BaseException | None], active.outcome),
+                )
+            for (
+                completed_barrier,
+                completed_token,
+                completed,
+                retained_outcome,
+                _retained_frame,
+            ) in completed_advances.get(executor, []):
+                if completed_barrier is barrier and completed_token is caller_token:
+                    return _AdvanceAdmission(
+                        caller_token,
+                        executor,
+                        barrier,
+                        True,
+                        completed,
+                        retained_outcome,
+                    )
+            return None
+
+    def recover_retained_advance(
+        executor: RegisteredTrainingExecutor,
+        barrier: RegisteredHistoryBarrier,
+    ) -> _AdvanceAdmission | None:
+        with lock:
+            for (
+                completed_barrier,
+                completed_token,
+                completed,
+                retained_outcome,
+                _retained_frame,
+            ) in completed_advances.get(executor, []):
+                if completed_barrier is barrier:
+                    return _AdvanceAdmission(
+                        completed_token,
+                        executor,
+                        barrier,
+                        True,
+                        completed,
+                        retained_outcome,
+                    )
+            return None
 
     def finish_advance(
         admission: _AdvanceAdmission,
         outcome: BaseException | None,
     ) -> None:
-        with lock:
-            if type(admission.leader) is not bool or admission.leader is not True:
-                raise Experiment002RegisteredExecutorError(
-                    "only the continuation leader may publish its outcome"
+        try:
+            with lock:
+                if type(admission.leader) is not bool or admission.leader is not True:
+                    raise Experiment002RegisteredExecutorError(
+                        "only the continuation leader may publish its outcome"
+                    )
+                retained = completed_advances.setdefault(admission.executor, [])
+                exact_retained_index = next(
+                    (
+                        index
+                        for index, item in enumerate(retained)
+                        if item[0] is admission.barrier and item[1] is admission.token
+                    ),
+                    None,
                 )
-            active = active_advances.get(admission.executor)
-            if (
-                active is None
-                or active[0] is not admission.barrier
-                or active[1] is not admission.token
-                or active[2] is not admission.completed
-                or active[3] is not admission.outcome
-            ):
-                admission.outcome[:] = [
-                    Experiment002RegisteredExecutorError(
+                active = active_boundaries.get(admission.executor)
+                if exact_retained_index is not None:
+                    exact_retained = retained[exact_retained_index]
+                    if (
+                        exact_retained[2] is not admission.completed
+                        or exact_retained[3] is not admission.outcome
+                    ):
+                        raise Experiment002RegisteredExecutorError(
+                            "retained continuation admission truth changed"
+                        )
+                    admission.outcome[:] = [outcome]
+                    frame = advance_outcome_frame(admission.outcome)
+                    assert frame is not None
+                    retained[exact_retained_index] = (
+                        admission.barrier,
+                        admission.token,
+                        admission.completed,
+                        admission.outcome,
+                        frame,
+                    )
+                    if (
+                        active is not None
+                        and active.kind == "ADVANCE"
+                        and active.token is admission.token
+                    ):
+                        del active_boundaries[admission.executor]
+                    return
+                if (
+                    active is None
+                    or active.kind != "ADVANCE"
+                    or active.barrier is not admission.barrier
+                    or active.token is not admission.token
+                    or active.completed is not admission.completed
+                    or active.outcome is not admission.outcome
+                ):
+                    raise Experiment002RegisteredExecutorError(
                         "continuation admission truth changed"
                     )
-                ]
-                admission.completed.set()
-                return
-            admission.outcome[:] = [outcome]
-            del active_advances[admission.executor]
-            retained = completed_advances.setdefault(admission.executor, [])
-            if len(retained) >= _REGISTERED_EPOCH_COUNT - 1:
-                admission.outcome[:] = [
-                    Experiment002RegisteredExecutorError(
-                        "too many retained continuation outcomes"
+                admission.outcome[:] = [outcome]
+                if len(retained) >= _REGISTERED_EPOCH_COUNT - 1:
+                    admission.outcome[:] = [
+                        Experiment002RegisteredExecutorError(
+                            "too many retained continuation outcomes"
+                        )
+                    ]
+                else:
+                    frame = advance_outcome_frame(admission.outcome)
+                    assert frame is not None
+                    retained.append(
+                        (
+                            admission.barrier,
+                            admission.token,
+                            admission.completed,
+                            admission.outcome,
+                            frame,
+                        )
                     )
-                ]
-            else:
-                retained.append(
-                    (admission.barrier, admission.completed, admission.outcome)
+                del active_boundaries[admission.executor]
+        finally:
+            admission.completed.set()
+
+    def begin_completion(
+        executor: RegisteredTrainingExecutor,
+        barrier: RegisteredHistoryBarrier,
+        caller_token: object,
+    ) -> _CompletionAdmission:
+        with lock:
+            retained = completed_completions.get(executor)
+            if retained is not None:
+                (
+                    retained_barrier,
+                    retained_token,
+                    completed,
+                    outcome,
+                    retained_frame,
+                ) = retained
+                if retained_barrier is not barrier:
+                    raise _BoundaryAdmissionConflict(
+                        "executor already completed a different final boundary"
+                    )
+                if type(completed) is not _EVENT_TYPE or not completed.is_set():
+                    raise _BoundaryTruthCorruption(
+                        "retained completion event authority changed"
+                    )
+                if completion_outcome_frame(outcome) != retained_frame:
+                    raise _BoundaryTruthCorruption(
+                        "retained completion outcome authority changed"
+                    )
+                return _CompletionAdmission(
+                    retained_token,
+                    executor,
+                    barrier,
+                    False,
+                    completed,
+                    outcome,
                 )
+            active = active_boundaries.get(executor)
+            if active is None:
+                completed = threading.Event()
+                completion_outcome: list[_CompletionOutcome] = []
+                active_boundaries[executor] = _BoundaryAdmissionState(
+                    "COMPLETE",
+                    barrier,
+                    caller_token,
+                    completed,
+                    completion_outcome,
+                )
+                return _CompletionAdmission(
+                    caller_token,
+                    executor,
+                    barrier,
+                    True,
+                    completed,
+                    completion_outcome,
+                )
+            if active.kind != "COMPLETE" or active.barrier is not barrier:
+                raise _BoundaryAdmissionConflict(
+                    "a different executor boundary is already active"
+                )
+            active_outcome = cast(list[_CompletionOutcome], active.outcome)
+            return _CompletionAdmission(
+                active.token,
+                executor,
+                barrier,
+                False,
+                active.completed,
+                active_outcome,
+            )
+
+    def recover_completion(
+        executor: RegisteredTrainingExecutor,
+        barrier: RegisteredHistoryBarrier,
+        caller_token: object,
+    ) -> _CompletionAdmission | None:
+        with lock:
+            retained = completed_completions.get(executor)
+            if retained is not None:
+                (
+                    retained_barrier,
+                    retained_token,
+                    completed,
+                    outcome,
+                    _retained_frame,
+                ) = retained
+                if retained_barrier is barrier and retained_token is caller_token:
+                    return _CompletionAdmission(
+                        caller_token,
+                        executor,
+                        barrier,
+                        True,
+                        completed,
+                        outcome,
+                    )
+            active = active_boundaries.get(executor)
+            if (
+                active is not None
+                and active.kind == "COMPLETE"
+                and active.barrier is barrier
+                and active.token is caller_token
+            ):
+                return _CompletionAdmission(
+                    caller_token,
+                    executor,
+                    barrier,
+                    True,
+                    active.completed,
+                    cast(list[_CompletionOutcome], active.outcome),
+                )
+            return None
+
+    def recover_retained_completion(
+        executor: RegisteredTrainingExecutor,
+        barrier: RegisteredHistoryBarrier,
+    ) -> _CompletionAdmission | None:
+        with lock:
+            retained = completed_completions.get(executor)
+            if retained is None:
+                return None
+            (
+                retained_barrier,
+                retained_token,
+                completed,
+                outcome,
+                _retained_frame,
+            ) = retained
+            if retained_barrier is not barrier:
+                return None
+            return _CompletionAdmission(
+                retained_token,
+                executor,
+                barrier,
+                True,
+                completed,
+                outcome,
+            )
+
+    def finish_completion(
+        admission: _CompletionAdmission,
+        result: RegisteredCompletedTrainingHistory | None,
+        error: BaseException | None,
+    ) -> None:
+        try:
+            with lock:
+                if type(admission.leader) is not bool or admission.leader is not True:
+                    raise Experiment002RegisteredExecutorError(
+                        "only the completion leader may publish its outcome"
+                    )
+                if (result is None) == (error is None):
+                    raise Experiment002RegisteredExecutorError(
+                        "completion published an invalid outcome"
+                    )
+                retained = completed_completions.get(admission.executor)
+                active = active_boundaries.get(admission.executor)
+                if retained is not None:
+                    (
+                        retained_barrier,
+                        retained_token,
+                        retained_completed,
+                        retained_outcome,
+                        _retained_frame,
+                    ) = retained
+                    if (
+                        retained_barrier is not admission.barrier
+                        or retained_token is not admission.token
+                        or retained_completed is not admission.completed
+                        or retained_outcome is not admission.outcome
+                    ):
+                        raise Experiment002RegisteredExecutorError(
+                            "retained completion admission truth changed"
+                        )
+                    admission.outcome[:] = [_CompletionOutcome(result, error)]
+                    frame = completion_outcome_frame(admission.outcome)
+                    assert frame is not None
+                    completed_completions[admission.executor] = (
+                        admission.barrier,
+                        admission.token,
+                        admission.completed,
+                        admission.outcome,
+                        frame,
+                    )
+                    if (
+                        active is not None
+                        and active.kind == "COMPLETE"
+                        and active.token is admission.token
+                    ):
+                        del active_boundaries[admission.executor]
+                    return
+                if (
+                    active is None
+                    or active.kind != "COMPLETE"
+                    or active.barrier is not admission.barrier
+                    or active.token is not admission.token
+                    or active.completed is not admission.completed
+                    or active.outcome is not admission.outcome
+                ):
+                    raise Experiment002RegisteredExecutorError(
+                        "completion admission truth changed"
+                    )
+                admission.outcome[:] = [_CompletionOutcome(result, error)]
+                frame = completion_outcome_frame(admission.outcome)
+                assert frame is not None
+                completed_completions[admission.executor] = (
+                    admission.barrier,
+                    admission.token,
+                    admission.completed,
+                    admission.outcome,
+                    frame,
+                )
+                del active_boundaries[admission.executor]
+        finally:
             admission.completed.set()
 
     def reserve_continuation(reservation: _ContinuationReservation) -> None:
@@ -1037,6 +1668,165 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
                 return None
             return binding
 
+    def reserve_finalization(reservation: _FinalizationReservation) -> None:
+        with lock:
+            if (
+                reservation in finalizations
+                or reservation.executor in executor_finalizations
+            ):
+                raise Experiment002RegisteredExecutorError(
+                    "executor finalization was already reserved"
+                )
+            prior = executor_continuations.get(reservation.executor, [])
+            if len(prior) != _REGISTERED_EPOCH_COUNT - 1:
+                raise Experiment002RegisteredExecutorError(
+                    "finalization lacks all non-final continuation truth"
+                )
+            previous_barrier: RegisteredHistoryBarrier | None = None
+            for expected_epoch, previous in enumerate(prior):
+                previous_truth = continuations.get(previous)
+                if (
+                    previous_truth != (continuation_frame(previous), "COMMITTED")
+                    or previous.executor is not reservation.executor
+                    or previous.executor_ticket is not reservation.executor_ticket
+                    or previous.registration is not reservation.registration
+                    or previous.validation_inputs is not reservation.validation_inputs
+                    or previous.process_id != reservation.process_id
+                    or previous.seed != reservation.seed
+                    or previous.zero_based_epoch != expected_epoch
+                    or previous.optimizer_generation
+                    != (expected_epoch + 1) * _UPDATES_PER_EPOCH
+                    or previous.previous_history_barrier is not previous_barrier
+                    or previous.barrier_type is not reservation.barrier_type
+                ):
+                    raise Experiment002RegisteredExecutorError(
+                        "finalization lacks an exact committed continuation chain"
+                    )
+                previous_barrier = previous.barrier
+            if reservation.previous_history_barrier is not previous_barrier:
+                raise Experiment002RegisteredExecutorError(
+                    "finalization does not follow the exact epoch-28 barrier"
+                )
+            finalizations[reservation] = (
+                finalization_frame(reservation),
+                "RESERVED",
+            )
+            executor_finalizations[reservation.executor] = reservation
+
+    def validate_finalization(
+        reservation: _FinalizationReservation,
+        phase: _FinalizationPhase,
+    ) -> bool:
+        with lock:
+            return finalizations.get(reservation) == (
+                finalization_frame(reservation),
+                phase,
+            )
+
+    def transition_finalization(
+        reservation: _FinalizationReservation,
+        expected: _FinalizationPhase,
+        phase: _FinalizationPhase,
+    ) -> None:
+        with lock:
+            truth = finalizations.get(reservation)
+            if truth != (finalization_frame(reservation), expected):
+                raise Experiment002RegisteredExecutorError(
+                    "finalization lifecycle lost closure-owned continuity"
+                )
+            allowed = {
+                ("RESERVED", "TRACE_COMPLETE"),
+                ("TRACE_COMPLETE", "HISTORY_COMPLETE"),
+                ("HISTORY_COMPLETE", "COMMITTED"),
+                ("RESERVED", "FAILED"),
+                ("TRACE_COMPLETE", "FAILED"),
+                ("HISTORY_COMPLETE", "FAILED"),
+                ("COMMITTED", "FAILED"),
+            }
+            if (expected, phase) not in allowed:
+                raise Experiment002RegisteredExecutorError(
+                    "finalization lifecycle transition is invalid"
+                )
+            finalizations[reservation] = (truth[0], phase)
+
+    def fail_finalization(reservation: _FinalizationReservation) -> None:
+        with lock:
+            truth = finalizations.get(reservation)
+            if truth is None or truth[1] == "FAILED":
+                return
+            finalizations[reservation] = (truth[0], "FAILED")
+
+    def executor_finalization(
+        executor: RegisteredTrainingExecutor,
+    ) -> _FinalizationReservation | None:
+        with lock:
+            candidates = [
+                reservation
+                for reservation, (frame, _phase) in finalizations.items()
+                if reservation.executor is executor
+                and frame == finalization_frame(reservation)
+            ]
+            if len(candidates) != 1:
+                return None
+            reservation = candidates[0]
+            mapped = executor_finalizations.get(executor)
+            if mapped is not None and mapped is not reservation:
+                return None
+            return reservation
+
+    def commit_finalization(
+        reservation: _FinalizationReservation,
+        binding: _FinalizedHandoffBinding,
+    ) -> None:
+        with lock:
+            truth = finalizations.get(reservation)
+            if truth != (finalization_frame(reservation), "HISTORY_COMPLETE"):
+                raise Experiment002RegisteredExecutorError(
+                    "history is not complete before finalized handoff publication"
+                )
+            expected = _finalized_from_reservation(
+                reservation,
+                binding.complete_update_trace,
+                binding.completed_history,
+            )
+            if (
+                binding.reservation is not reservation
+                or binding.handoff is not reservation.handoff
+                or finalized_frame(binding) != finalized_frame(expected)
+                or binding.handoff in finalized_handoffs
+                or binding.handoff in retired_handoffs
+            ):
+                raise Experiment002RegisteredExecutorError(
+                    "finalized handoff binding differs from its reservation"
+                )
+            finalized_handoffs[binding.handoff] = (
+                binding,
+                finalized_frame(binding),
+            )
+            finalizations[reservation] = (truth[0], "COMMITTED")
+
+    def finalized_handoff(
+        handoff: RegisteredExecutorEpochHandoff,
+    ) -> _FinalizedHandoffBinding | None:
+        with lock:
+            retained = finalized_handoffs.get(handoff)
+            if retained is None:
+                return None
+            binding, committed_frame = retained
+            expected = _finalized_from_reservation(
+                binding.reservation,
+                binding.complete_update_trace,
+                binding.completed_history,
+            )
+            if finalized_frame(
+                binding
+            ) != committed_frame or committed_frame != finalized_frame(expected):
+                return None
+            truth = finalizations.get(binding.reservation)
+            if truth is None or truth[1] != "COMMITTED":
+                return None
+            return binding
+
     return _AuthorityTruthRoutes(
         issue_executor=issue_executor,
         validate_executor_ticket=validate_executor_ticket,
@@ -1051,13 +1841,26 @@ def _build_authority_truth() -> _AuthorityTruthRoutes:
         record_handoff_event=record_handoff_event,
         handoff_has_event=handoff_has_event,
         begin_advance=begin_advance,
+        recover_advance=recover_advance,
+        recover_retained_advance=recover_retained_advance,
         finish_advance=finish_advance,
+        begin_completion=begin_completion,
+        recover_completion=recover_completion,
+        recover_retained_completion=recover_retained_completion,
+        finish_completion=finish_completion,
         reserve_continuation=reserve_continuation,
         validate_continuation=validate_continuation,
         transition_continuation=transition_continuation,
         fail_continuation=fail_continuation,
         commit_retirement=commit_retirement,
         retired_handoff=retired_handoff,
+        reserve_finalization=reserve_finalization,
+        validate_finalization=validate_finalization,
+        transition_finalization=transition_finalization,
+        fail_finalization=fail_finalization,
+        executor_finalization=executor_finalization,
+        commit_finalization=commit_finalization,
+        finalized_handoff=finalized_handoff,
     )
 
 
@@ -1267,11 +2070,27 @@ def advance_registered_training_executor(
         raise TypeError("executor must be a RegisteredTrainingExecutor")
     if type(barrier) is not RegisteredHistoryBarrier:
         raise TypeError("barrier must be a RegisteredHistoryBarrier")
+    caller_token = object()
     admission: _AdvanceAdmission | None = None
     try:
-        admission = _begin_advance_admission(executor, barrier)
+        admission = _begin_advance_admission(executor, barrier, caller_token)
         _require_advance_admission(admission, executor=executor, barrier=barrier)
+    except _BoundaryAdmissionConflict:
+        raise
     except BaseException as admission_error:
+        if admission is None:
+            admission = _recover_advance_admission(
+                executor,
+                barrier,
+                caller_token,
+            )
+        if admission is None and isinstance(
+            admission_error,
+            _BoundaryTruthCorruption,
+        ):
+            admission = _recover_retained_advance_admission(executor, barrier)
+        if admission is None or not admission.leader:
+            raise
         try:
             _terminal_fail_registered_continuation(
                 executor,
@@ -1279,8 +2098,14 @@ def advance_registered_training_executor(
                 reservation=None,
             )
         finally:
-            if admission is not None and admission.leader:
-                _finish_advance_admission(admission, admission_error)
+            _publish_advance_admission(
+                admission,
+                admission_error,
+                caller_token=caller_token,
+                handoff=None,
+                reservation=None,
+                history_attempted=False,
+            )
         raise
     assert admission is not None
     if not admission.leader:
@@ -1328,6 +2153,9 @@ def advance_registered_training_executor(
             consumed_snapshot,
         )
         _registered_epoch_handoff_snapshot(handoff)
+    except _FinalBarrierRequiresCompletion as error:
+        outcome = error
+        raise
     except BaseException as error:
         final_error = error
         try:
@@ -1354,17 +2182,296 @@ def advance_registered_training_executor(
             raise final_error from error
         raise
     finally:
-        _finish_advance_admission(admission, outcome)
+        _publish_advance_admission(
+            admission,
+            outcome,
+            caller_token=caller_token,
+            handoff=handoff,
+            reservation=reservation,
+            history_attempted=history_attempted,
+        )
+
+
+def complete_registered_training_executor(
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+) -> RegisteredCompletedTrainingHistory:
+    """Complete the exact epoch-29 boundary and return its canonical history."""
+
+    from falsewake.experiment_002_registered_history import (
+        RegisteredCompletedTrainingHistory,
+        RegisteredHistoryBarrier,
+    )
+
+    if type(executor) is not RegisteredTrainingExecutor:
+        raise TypeError("executor must be a RegisteredTrainingExecutor")
+    if type(final_barrier) is not RegisteredHistoryBarrier:
+        raise TypeError("final_barrier must be a RegisteredHistoryBarrier")
+
+    caller_token = object()
+    admission: _CompletionAdmission | None = None
+    try:
+        admission = _begin_completion_admission(
+            executor,
+            final_barrier,
+            caller_token,
+        )
+        _require_completion_admission(
+            admission,
+            executor=executor,
+            barrier=final_barrier,
+        )
+    except _BoundaryAdmissionConflict:
+        raise
+    except BaseException as admission_error:
+        if admission is None:
+            admission = _recover_completion_admission(
+                executor,
+                final_barrier,
+                caller_token,
+            )
+        if admission is None and isinstance(
+            admission_error,
+            _BoundaryTruthCorruption,
+        ):
+            admission = _recover_retained_completion_admission(
+                executor,
+                final_barrier,
+            )
+        cleanup_error: BaseException = admission_error
+        if admission is not None and admission.leader:
+            local_terminal = False
+            try:
+                _ensure_terminal_fail_registered_finalization(
+                    executor,
+                    handoff=None,
+                    reservation=None,
+                )
+                local_terminal = True
+            except BaseException as terminal_error:
+                cleanup_error = terminal_error
+            if local_terminal:
+                try:
+                    _ensure_attempted_registered_history_completion_aborted(
+                        executor,
+                        final_barrier,
+                        None,
+                    )
+                except BaseException as abort_error:
+                    cleanup_error = abort_error
+            _publish_completion_admission(
+                admission,
+                None,
+                cleanup_error,
+                executor=executor,
+                final_barrier=final_barrier,
+                caller_token=caller_token,
+            )
+        if cleanup_error is not admission_error:
+            raise cleanup_error from admission_error
+        raise
+
+    assert admission is not None
+    if not admission.leader:
+        admission.completed.wait()
+        if len(admission.outcome) != 1:
+            raise Experiment002RegisteredExecutorError(
+                "the leading completion did not publish an outcome"
+            )
+        leader_outcome = admission.outcome[0]
+        if (
+            type(leader_outcome) is _CompletionOutcome
+            and leader_outcome.error is None
+            and type(leader_outcome.result) is RegisteredCompletedTrainingHistory
+        ):
+            return _reverify_retained_registered_completion(
+                executor,
+                final_barrier,
+                leader_outcome.result,
+            )
+        error = (
+            leader_outcome.error if type(leader_outcome) is _CompletionOutcome else None
+        )
+        raise Experiment002RegisteredExecutorError(
+            "the concurrent completion leader failed terminally"
+        ) from error
+
+    handoff: RegisteredExecutorEpochHandoff | None = None
+    reservation: _FinalizationReservation | None = None
+    complete_trace: CompleteUpdateTraceEvidence | None = None
+    completed_history: RegisteredCompletedTrainingHistory | None = None
+    outcome_error: BaseException | None = None
+    try:
+        issued_snapshot = _preflight_registered_final_history_barrier(
+            executor,
+            final_barrier,
+        )
+        handoff = issued_snapshot.evaluated_handoff
+        reservation = _reserve_registered_finalization(
+            executor,
+            handoff,
+            final_barrier,
+            issued_snapshot,
+        )
+        complete_trace = _finish_registered_finalization_trace(reservation)
+        _mark_registered_finalization_trace_complete(
+            reservation,
+            complete_trace,
+        )
+        completed_history = _complete_registered_finalization_history(
+            reservation,
+            complete_trace,
+        )
+        _mark_registered_finalization_history_complete(
+            reservation,
+            complete_trace,
+            completed_history,
+        )
+        _commit_registered_finalization(
+            executor,
+            handoff,
+            final_barrier,
+            reservation,
+            complete_trace,
+            completed_history,
+        )
+        _verify_registered_finalization(
+            executor,
+            reservation,
+            complete_trace,
+            completed_history,
+        )
+    except BaseException as error:
+        final_error: BaseException = error
+        local_terminal = False
+        try:
+            _ensure_terminal_fail_registered_finalization(
+                executor,
+                handoff=handoff,
+                reservation=reservation,
+            )
+            local_terminal = True
+        except BaseException as terminal_error:
+            final_error = terminal_error
+        if local_terminal:
+            try:
+                _ensure_attempted_registered_history_completion_aborted(
+                    executor,
+                    final_barrier,
+                    completed_history,
+                )
+            except BaseException as abort_error:
+                final_error = abort_error
+        outcome_error = final_error
+        if final_error is not error:
+            raise final_error from error
+        raise
+    finally:
+        _publish_completion_admission(
+            admission,
+            completed_history if outcome_error is None else None,
+            outcome_error,
+            executor=executor,
+            final_barrier=final_barrier,
+            caller_token=caller_token,
+        )
+
+    assert completed_history is not None
+    return completed_history
+
+
+def _reverify_retained_registered_completion(
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+    completed_history: RegisteredCompletedTrainingHistory,
+) -> RegisteredCompletedTrainingHistory:
+    """Revalidate a concurrent or late exact completion before returning it."""
+
+    reservation: _FinalizationReservation | None = None
+    try:
+        state = _issued_executor_state(executor)
+        with _trusted_executor_lock(executor, state):
+            _validate_executor_or_fail(executor, state)
+            reservation = state.finalization_reservation
+            complete_trace = state.complete_update_trace
+            if (
+                state.phase != "COMPLETE"
+                or type(reservation) is not _FinalizationReservation
+                or type(complete_trace) is not CompleteUpdateTraceEvidence
+                or state.final_barrier is not final_barrier
+                or state.completed_history is not completed_history
+            ):
+                raise Experiment002RegisteredExecutorError(
+                    "retained completion differs from executor authority"
+                )
+        _verify_registered_finalization(
+            executor,
+            reservation,
+            complete_trace,
+            completed_history,
+        )
+    except BaseException as error:
+        final_error: BaseException = error
+        local_terminal = False
+        try:
+            _ensure_terminal_fail_registered_finalization(
+                executor,
+                handoff=reservation.handoff if reservation is not None else None,
+                reservation=reservation,
+            )
+            local_terminal = True
+        except BaseException as terminal_error:
+            final_error = terminal_error
+        if local_terminal:
+            try:
+                _ensure_attempted_registered_history_completion_aborted(
+                    executor,
+                    final_barrier,
+                    completed_history,
+                )
+            except BaseException as abort_error:
+                final_error = abort_error
+        if final_error is not error:
+            raise final_error from error
+        raise
+    return completed_history
 
 
 def _begin_advance_admission(
     executor: RegisteredTrainingExecutor,
     barrier: RegisteredHistoryBarrier,
+    caller_token: object | None = None,
     _truth_begin: Callable[
-        [RegisteredTrainingExecutor, RegisteredHistoryBarrier], _AdvanceAdmission
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _AdvanceAdmission,
     ] = _AUTHORITY_TRUTH.begin_advance,
 ) -> _AdvanceAdmission:
-    return _truth_begin(executor, barrier)
+    if caller_token is None:
+        caller_token = object()
+    return _truth_begin(executor, barrier, caller_token)
+
+
+def _recover_advance_admission(
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+    caller_token: object,
+    _truth_recover: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _AdvanceAdmission | None,
+    ] = _AUTHORITY_TRUTH.recover_advance,
+) -> _AdvanceAdmission | None:
+    return _truth_recover(executor, barrier, caller_token)
+
+
+def _recover_retained_advance_admission(
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+    _truth_recover: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier],
+        _AdvanceAdmission | None,
+    ] = _AUTHORITY_TRUTH.recover_retained_advance,
+) -> _AdvanceAdmission | None:
+    return _truth_recover(executor, barrier)
 
 
 def _finish_advance_admission(
@@ -1375,6 +2482,79 @@ def _finish_advance_admission(
     ),
 ) -> None:
     _truth_finish(admission, outcome)
+
+
+def _recover_finish_advance_admission(
+    admission: _AdvanceAdmission,
+    outcome: BaseException | None,
+    _truth_finish: Callable[[_AdvanceAdmission, BaseException | None], None] = (
+        _AUTHORITY_TRUTH.finish_advance
+    ),
+) -> None:
+    _truth_finish(admission, outcome)
+
+
+def _publish_advance_admission(
+    admission: _AdvanceAdmission,
+    outcome: BaseException | None,
+    *,
+    caller_token: object,
+    handoff: RegisteredExecutorEpochHandoff | None,
+    reservation: _ContinuationReservation | None,
+    history_attempted: bool,
+) -> None:
+    try:
+        _finish_advance_admission(admission, outcome)
+    except BaseException as publication_error:
+        recovered = _recover_advance_admission(
+            admission.executor,
+            admission.barrier,
+            caller_token,
+        )
+        target = recovered if recovered is not None else admission
+        if len(target.outcome) == 1 and target.outcome[0] is outcome:
+            try:
+                _recover_finish_advance_admission(target, outcome)
+            finally:
+                target.completed.set()
+                admission.completed.set()
+            raise
+        if not isinstance(publication_error, Exception):
+            try:
+                _recover_finish_advance_admission(target, outcome)
+            finally:
+                target.completed.set()
+                admission.completed.set()
+            raise
+        final_error: BaseException = publication_error
+        try:
+            _terminal_fail_registered_continuation(
+                admission.executor,
+                handoff=handoff,
+                reservation=reservation,
+            )
+        except BaseException as terminal_error:
+            final_error = terminal_error
+        if history_attempted and reservation is not None:
+            try:
+                _abort_consumed_registered_history(
+                    reservation.registration,
+                    admission.executor,
+                    admission.barrier,
+                )
+            except BaseException as abort_error:
+                final_error = abort_error
+        try:
+            _recover_finish_advance_admission(target, final_error)
+        except BaseException as recovery_error:
+            final_error = recovery_error
+            target.outcome[:] = [final_error]
+        finally:
+            target.completed.set()
+            admission.completed.set()
+        if final_error is not publication_error:
+            raise final_error from publication_error
+        raise
 
 
 def _require_advance_admission(
@@ -1396,6 +2576,177 @@ def _require_advance_admission(
     ):
         raise Experiment002RegisteredExecutorError(
             "continuation admission authority changed"
+        )
+
+
+def _begin_completion_admission(
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+    caller_token: object | None = None,
+    _truth_begin: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _CompletionAdmission,
+    ] = _AUTHORITY_TRUTH.begin_completion,
+) -> _CompletionAdmission:
+    if caller_token is None:
+        caller_token = object()
+    return _truth_begin(executor, barrier, caller_token)
+
+
+def _recover_completion_admission(
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+    caller_token: object,
+    _truth_recover: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier, object],
+        _CompletionAdmission | None,
+    ] = _AUTHORITY_TRUTH.recover_completion,
+) -> _CompletionAdmission | None:
+    return _truth_recover(executor, barrier, caller_token)
+
+
+def _recover_retained_completion_admission(
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+    _truth_recover: Callable[
+        [RegisteredTrainingExecutor, RegisteredHistoryBarrier],
+        _CompletionAdmission | None,
+    ] = _AUTHORITY_TRUTH.recover_retained_completion,
+) -> _CompletionAdmission | None:
+    return _truth_recover(executor, barrier)
+
+
+def _finish_completion_admission(
+    admission: _CompletionAdmission,
+    result: RegisteredCompletedTrainingHistory | None,
+    error: BaseException | None,
+    _truth_finish: Callable[
+        [
+            _CompletionAdmission,
+            RegisteredCompletedTrainingHistory | None,
+            BaseException | None,
+        ],
+        None,
+    ] = _AUTHORITY_TRUTH.finish_completion,
+) -> None:
+    _truth_finish(admission, result, error)
+
+
+def _recover_finish_completion_admission(
+    admission: _CompletionAdmission,
+    result: RegisteredCompletedTrainingHistory | None,
+    error: BaseException | None,
+    _truth_finish: Callable[
+        [
+            _CompletionAdmission,
+            RegisteredCompletedTrainingHistory | None,
+            BaseException | None,
+        ],
+        None,
+    ] = _AUTHORITY_TRUTH.finish_completion,
+) -> None:
+    _truth_finish(admission, result, error)
+
+
+def _publish_completion_admission(
+    admission: _CompletionAdmission,
+    result: RegisteredCompletedTrainingHistory | None,
+    error: BaseException | None,
+    *,
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+    caller_token: object,
+) -> None:
+    try:
+        _finish_completion_admission(admission, result, error)
+    except BaseException as publication_error:
+        recovered = _recover_completion_admission(
+            executor,
+            final_barrier,
+            caller_token,
+        )
+        target = recovered if recovered is not None else admission
+        if (
+            len(target.outcome) == 1
+            and type(target.outcome[0]) is _CompletionOutcome
+            and target.outcome[0].result is result
+            and target.outcome[0].error is error
+        ):
+            try:
+                _recover_finish_completion_admission(target, result, error)
+            finally:
+                target.completed.set()
+                admission.completed.set()
+            raise
+        if not isinstance(publication_error, Exception):
+            try:
+                _recover_finish_completion_admission(target, result, error)
+            finally:
+                target.completed.set()
+                admission.completed.set()
+            raise
+        final_error: BaseException = publication_error
+        local_terminal = False
+        try:
+            _ensure_terminal_fail_registered_finalization(
+                executor,
+                handoff=None,
+                reservation=None,
+            )
+            local_terminal = True
+        except BaseException as terminal_error:
+            final_error = terminal_error
+        if local_terminal:
+            try:
+                _ensure_attempted_registered_history_completion_aborted(
+                    executor,
+                    final_barrier,
+                    result,
+                )
+            except BaseException as abort_error:
+                final_error = abort_error
+        recovered = _recover_completion_admission(
+            executor,
+            final_barrier,
+            caller_token,
+        )
+        target = recovered if recovered is not None else admission
+        try:
+            _recover_finish_completion_admission(
+                target,
+                None,
+                final_error,
+            )
+        except BaseException as recovery_error:
+            final_error = recovery_error
+            target.outcome[:] = [_CompletionOutcome(None, final_error)]
+        finally:
+            target.completed.set()
+            admission.completed.set()
+        if final_error is not publication_error:
+            raise final_error from publication_error
+        raise
+
+
+def _require_completion_admission(
+    admission: _CompletionAdmission,
+    *,
+    executor: RegisteredTrainingExecutor,
+    barrier: RegisteredHistoryBarrier,
+) -> None:
+    if (
+        type(admission) is not _CompletionAdmission
+        or type(admission.token) is not object
+        or admission.executor is not executor
+        or admission.barrier is not barrier
+        or type(admission.leader) is not bool
+        or type(admission.completed) is not _EVENT_TYPE
+        or type(admission.outcome) is not list
+        or (admission.leader and bool(admission.outcome))
+        or (not admission.leader and len(admission.outcome) > 1)
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "completion admission authority changed"
         )
 
 
@@ -1422,12 +2773,61 @@ def _preflight_registered_history_barrier(
         snapshot.executor is not executor
         or type(snapshot.evaluated_epoch) is not RegisteredEvaluatedEpoch
         or snapshot.phase != "ISSUED"
-        or snapshot.next_zero_based_epoch is None
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "history barrier is not an issued non-final executor boundary"
+        )
+    if (
+        snapshot.accepted_epoch == _REGISTERED_EPOCH_COUNT - 1
+        and snapshot.next_zero_based_epoch is None
+    ):
+        raise _FinalBarrierRequiresCompletion(
+            "epoch-29 is not a non-final boundary and belongs to completion"
+        )
+    if (
+        snapshot.next_zero_based_epoch is None
         or not 0 <= snapshot.accepted_epoch < _REGISTERED_EPOCH_COUNT - 1
         or snapshot.next_zero_based_epoch != snapshot.accepted_epoch + 1
     ):
         raise Experiment002RegisteredExecutorError(
             "history barrier is not an issued non-final executor boundary"
+        )
+    _require_lower_sha256(
+        snapshot.evaluated_authority_sha256,
+        "evaluated_authority_sha256",
+    )
+    return snapshot
+
+
+def _preflight_registered_final_history_barrier(
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+) -> _RegisteredHistoryBarrierSnapshot:
+    """Verify the final history boundary with every executor lock released."""
+
+    from falsewake.experiment_002_registered_evaluator import RegisteredEvaluatedEpoch
+    from falsewake.experiment_002_registered_history import (
+        _registered_history_barrier_snapshot,
+        _RegisteredHistoryBarrierSnapshot,
+        verify_registered_history_barrier,
+    )
+
+    verify_registered_history_barrier(final_barrier)
+    snapshot = _registered_history_barrier_snapshot(final_barrier)
+    if type(snapshot) is not _RegisteredHistoryBarrierSnapshot:
+        raise Experiment002RegisteredExecutorError(
+            "history returned an invalid final barrier snapshot"
+        )
+    if (
+        snapshot.executor is not executor
+        or type(snapshot.evaluated_epoch) is not RegisteredEvaluatedEpoch
+        or type(snapshot.evaluated_handoff) is not RegisteredExecutorEpochHandoff
+        or snapshot.phase != "ISSUED"
+        or snapshot.accepted_epoch != _REGISTERED_EPOCH_COUNT - 1
+        or snapshot.next_zero_based_epoch is not None
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "history barrier is not the issued epoch-29 completion boundary"
         )
     _require_lower_sha256(
         snapshot.evaluated_authority_sha256,
@@ -1741,6 +3141,602 @@ def _commit_registered_nonfinal_continuation(
         _require_retired_handoff_binding(handoff, handoff_state)
 
 
+def _reserve_registered_finalization(
+    executor: RegisteredTrainingExecutor,
+    handoff: RegisteredExecutorEpochHandoff,
+    final_barrier: RegisteredHistoryBarrier,
+    snapshot: _RegisteredHistoryBarrierSnapshot,
+    _truth_reserve: Callable[[_FinalizationReservation], None] = (
+        _AUTHORITY_TRUTH.reserve_finalization
+    ),
+    _truth_retired: Callable[
+        [RegisteredExecutorEpochHandoff], _RetiredHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.retired_handoff,
+    _truth_finalized: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.finalized_handoff,
+) -> _FinalizationReservation:
+    """Reserve the exact final boundary without nesting H before E."""
+
+    executor_state = _issued_executor_state(executor)
+    epoch_traces = _capture_registered_final_trace_epochs(executor_state.trace)
+
+    with _HANDOFFS_LOCK:
+        handoff_state = _HANDOFFS.get(handoff)
+        _validate_handoff(handoff, handoff_state)
+        assert handoff_state is not None
+        if (
+            _truth_retired(handoff) is not None
+            or handoff in _RETIRED_HANDOFFS
+            or _truth_finalized(handoff) is not None
+            or handoff in _FINALIZED_HANDOFFS
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "epoch-29 handoff was already archived"
+            )
+
+    with _trusted_executor_lock(executor, executor_state):
+        _validate_executor_or_fail(executor, executor_state)
+        if (
+            snapshot.registration is not executor_state.registration
+            or snapshot.registration is not handoff_state.registration
+            or snapshot.history is None
+            or snapshot.validation_inputs is not executor_state.validation_inputs
+            or snapshot.validation_inputs is not handoff_state.validation_inputs
+            or snapshot.process_id != executor_state.process_id
+            or snapshot.process_id != handoff_state.process_id
+            or snapshot.process_id != os.getpid()
+            or snapshot.seed != executor_state.seed
+            or snapshot.seed != handoff_state.seed
+            or snapshot.accepted_epoch != _REGISTERED_EPOCH_COUNT - 1
+            or snapshot.next_zero_based_epoch is not None
+            or snapshot.evaluated_handoff is not handoff
+            or executor_state.phase != "AWAITING_EVALUATION"
+            or executor_state.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+            or executor_state.optimizer_generation
+            != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+            or executor_state.active_handoff is not handoff
+            or executor_state.active_epoch is not None
+            or executor_state.active_transition is not None
+            or executor_state.continuation_reservation is not None
+            or executor_state.finalization_reservation is not None
+            or executor_state.final_barrier is not None
+            or executor_state.complete_update_trace is not None
+            or executor_state.completed_history is not None
+            or not handoff_state.used
+            or handoff_state.failed
+            or handoff_state.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+            or handoff_state.optimizer_generation
+            != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+            or handoff_state.runtime_digests != executor_state.expected
+            or handoff_state.previous_history_barrier
+            is not executor_state.previous_history_barrier
+            or executor_state.previous_history_barrier is None
+            or executor_state.runtime.model is not handoff_state.model
+            or executor_state.runtime.model.training is not False
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "executor is not at the exact registered epoch-29 boundary"
+            )
+        observed = _stable_handoff_runtime_digests(
+            executor_state.runtime,
+            expected_generation=executor_state.optimizer_generation,
+            expected_training=False,
+        )
+        if observed != executor_state.expected:
+            raise Experiment002RegisteredExecutorError(
+                "runtime changed before registered finalization"
+            )
+        if epoch_traces[-1] is not handoff_state.epoch_trace:
+            raise Experiment002RegisteredExecutorError(
+                "epoch-29 handoff is not the final trace capability"
+            )
+        reservation = _FinalizationReservation(
+            token=object(),
+            executor=executor,
+            executor_ticket=executor_state.ticket,
+            handoff=handoff,
+            handoff_ticket=handoff_state.ticket,
+            final_barrier=final_barrier,
+            barrier_type=type(final_barrier),
+            history=snapshot.history,
+            history_type=type(snapshot.history),
+            evaluated_epoch=snapshot.evaluated_epoch,
+            evaluated_epoch_type=type(snapshot.evaluated_epoch),
+            evaluated_authority_sha256=snapshot.evaluated_authority_sha256,
+            registration=snapshot.registration,
+            validation_inputs=snapshot.validation_inputs,
+            process_id=snapshot.process_id,
+            seed=snapshot.seed,
+            zero_based_epoch=snapshot.accepted_epoch,
+            optimizer_generation=executor_state.optimizer_generation,
+            runtime_digests=replace(executor_state.expected),
+            previous_history_barrier=executor_state.previous_history_barrier,
+            handoff_token=handoff_state.handoff_token,
+            one_shot_token=handoff_state.one_shot_token,
+            trace=executor_state.trace,
+            epoch_traces=epoch_traces,
+        )
+
+    with _HANDOFFS_LOCK:
+        if _HANDOFFS.get(handoff) is not handoff_state:
+            raise Experiment002RegisteredExecutorError(
+                "handoff state changed during finalization reservation"
+            )
+        _validate_handoff(handoff, handoff_state)
+        _require_handoff_matches_finalization(handoff_state, reservation)
+        _truth_reserve(reservation)
+        _FINALIZATION_HISTORY.append(reservation)
+        _FINALIZATION_PHASES[reservation] = "RESERVED"
+        _require_finalization_reservation(reservation, phase="RESERVED")
+
+    with _trusted_executor_lock(executor, executor_state):
+        _validate_executor_or_fail(executor, executor_state)
+        _require_executor_matches_finalization(
+            executor_state,
+            reservation,
+            require_attached=False,
+        )
+        executor_state.finalization_reservation = reservation
+        _publish_executor_lifecycle(executor, executor_state)
+        _require_finalization_reservation(reservation, phase="RESERVED")
+        _validate_executor_or_fail(executor, executor_state)
+
+    with _HANDOFFS_LOCK:
+        _validate_handoff(handoff, handoff_state)
+        _require_handoff_matches_finalization(handoff_state, reservation)
+    return reservation
+
+
+def _capture_registered_final_trace_epochs(
+    trace: UpdateTraceAccumulator,
+) -> tuple[EpochUpdateTraceEvidence, ...]:
+    if type(trace) is not UpdateTraceAccumulator:
+        raise Experiment002RegisteredExecutorError(
+            "final trace accumulator has an invalid type"
+        )
+    with trace._lock:
+        if (
+            type(trace._records) is not list
+            or len(trace._records) != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+            or type(trace._epochs) is not list
+            or len(trace._epochs) != _REGISTERED_EPOCH_COUNT
+            or trace._complete is not None
+            or type(trace._failed) is not bool
+            or trace._failed
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "final trace accumulator is not complete and live"
+            )
+        epochs = tuple(trace._epochs)
+    for expected_epoch, epoch_trace in enumerate(epochs):
+        if type(epoch_trace) is not EpochUpdateTraceEvidence:
+            raise Experiment002RegisteredExecutorError(
+                "final trace contains an invalid epoch capability"
+            )
+        verify_registered_epoch_update_trace(epoch_trace)
+        if (
+            epoch_trace.seed != trace.seed
+            or epoch_trace.zero_based_epoch != expected_epoch
+            or epoch_trace.update_count != _UPDATES_PER_EPOCH
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "final trace epoch identities are not exact and ordered"
+            )
+    return epochs
+
+
+def _require_handoff_matches_finalization(
+    state: _HandoffState,
+    reservation: _FinalizationReservation,
+) -> None:
+    if (
+        state.executor is not reservation.executor
+        or state.ticket is not reservation.handoff_ticket
+        or state.registration is not reservation.registration
+        or state.validation_inputs is not reservation.validation_inputs
+        or state.process_id != reservation.process_id
+        or state.seed != reservation.seed
+        or state.zero_based_epoch != reservation.zero_based_epoch
+        or state.optimizer_generation != reservation.optimizer_generation
+        or state.runtime_digests != reservation.runtime_digests
+        or state.previous_history_barrier is not reservation.previous_history_barrier
+        or state.handoff_token is not reservation.handoff_token
+        or state.one_shot_token is not reservation.one_shot_token
+        or state.epoch_trace is not reservation.epoch_traces[-1]
+        or state.used is not True
+        or state.failed is not False
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "handoff changed across finalization reservation"
+        )
+
+
+def _require_executor_matches_finalization(
+    state: _RegisteredExecutorState,
+    reservation: _FinalizationReservation,
+    *,
+    require_attached: bool,
+) -> None:
+    expected_reservation = reservation if require_attached else None
+    if (
+        state.ticket is not reservation.executor_ticket
+        or state.registration is not reservation.registration
+        or state.validation_inputs is not reservation.validation_inputs
+        or state.process_id != reservation.process_id
+        or state.process_id != os.getpid()
+        or state.seed != reservation.seed
+        or state.phase != "AWAITING_EVALUATION"
+        or state.zero_based_epoch != reservation.zero_based_epoch
+        or state.optimizer_generation != reservation.optimizer_generation
+        or state.active_epoch is not None
+        or state.active_transition is not None
+        or state.active_handoff is not reservation.handoff
+        or state.continuation_reservation is not None
+        or state.finalization_reservation is not expected_reservation
+        or state.previous_history_barrier is not reservation.previous_history_barrier
+        or state.final_barrier is not None
+        or state.complete_update_trace is not None
+        or state.completed_history is not None
+        or state.trace is not reservation.trace
+        or state.expected != reservation.runtime_digests
+        or state.runtime.expected != reservation.runtime_digests
+        or state.runtime.optimizer_generation != reservation.optimizer_generation
+        or state.runtime.model.training is not False
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "executor changed across finalization reservation"
+        )
+
+
+def _finish_registered_finalization_trace(
+    reservation: _FinalizationReservation,
+) -> CompleteUpdateTraceEvidence:
+    """Finish the exact trace while every executor and handoff lock is free."""
+
+    evidence = reservation.trace.finish()
+    _require_complete_trace_matches_finalization(reservation, evidence)
+    return evidence
+
+
+def _require_complete_trace_matches_finalization(
+    reservation: _FinalizationReservation,
+    evidence: CompleteUpdateTraceEvidence,
+) -> None:
+    if type(evidence) is not CompleteUpdateTraceEvidence:
+        raise Experiment002RegisteredExecutorError(
+            "trace finish returned an invalid complete capability"
+        )
+    verify_registered_complete_update_trace(evidence)
+    epochs = evidence.epochs
+    if (
+        evidence.seed != reservation.seed
+        or evidence.update_count != reservation.optimizer_generation
+        or type(epochs) is not tuple
+        or len(epochs) != _REGISTERED_EPOCH_COUNT
+        or any(
+            observed is not expected
+            for observed, expected in zip(
+                epochs,
+                reservation.epoch_traces,
+                strict=True,
+            )
+        )
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "complete trace differs from the reserved epoch identities"
+        )
+    verify_registered_complete_update_trace(evidence)
+
+
+def _mark_registered_finalization_trace_complete(
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    _truth_transition: Callable[
+        [_FinalizationReservation, _FinalizationPhase, _FinalizationPhase], None
+    ] = _AUTHORITY_TRUTH.transition_finalization,
+) -> None:
+    _require_complete_trace_matches_finalization(reservation, complete_trace)
+    executor_state = _issued_executor_state(reservation.executor)
+    with _trusted_executor_lock(reservation.executor, executor_state):
+        _validate_executor_or_fail(reservation.executor, executor_state)
+        _require_executor_matches_finalization(
+            executor_state,
+            reservation,
+            require_attached=True,
+        )
+        with _HANDOFFS_LOCK:
+            _require_finalization_reservation(reservation, phase="RESERVED")
+            _truth_transition(reservation, "RESERVED", "TRACE_COMPLETE")
+            _FINALIZATION_PHASES[reservation] = "TRACE_COMPLETE"
+            _require_finalization_reservation(
+                reservation,
+                phase="TRACE_COMPLETE",
+            )
+        _validate_executor_or_fail(reservation.executor, executor_state)
+
+
+def _complete_registered_finalization_history(
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+) -> RegisteredCompletedTrainingHistory:
+    """Complete history with every executor and handoff lock released."""
+
+    from falsewake.experiment_002_registered_history import (
+        RegisteredCompletedTrainingHistory,
+        complete_registered_training_history,
+    )
+
+    result = complete_registered_training_history(
+        reservation.history,
+        reservation.final_barrier,
+        complete_trace,
+    )
+    if type(result) is not RegisteredCompletedTrainingHistory:
+        raise Experiment002RegisteredExecutorError(
+            "history completion returned an invalid capability"
+        )
+    return result
+
+
+def _mark_registered_finalization_history_complete(
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    completed_history: RegisteredCompletedTrainingHistory,
+    _truth_transition: Callable[
+        [_FinalizationReservation, _FinalizationPhase, _FinalizationPhase], None
+    ] = _AUTHORITY_TRUTH.transition_finalization,
+) -> None:
+    _require_complete_trace_matches_finalization(reservation, complete_trace)
+    _require_completed_history_matches_finalization(
+        reservation,
+        complete_trace,
+        completed_history,
+    )
+    executor_state = _issued_executor_state(reservation.executor)
+    with _trusted_executor_lock(reservation.executor, executor_state):
+        _validate_executor_or_fail(reservation.executor, executor_state)
+        _require_executor_matches_finalization(
+            executor_state,
+            reservation,
+            require_attached=True,
+        )
+        with _HANDOFFS_LOCK:
+            _require_finalization_reservation(
+                reservation,
+                phase="TRACE_COMPLETE",
+            )
+            _truth_transition(
+                reservation,
+                "TRACE_COMPLETE",
+                "HISTORY_COMPLETE",
+            )
+            _FINALIZATION_PHASES[reservation] = "HISTORY_COMPLETE"
+            _require_finalization_reservation(
+                reservation,
+                phase="HISTORY_COMPLETE",
+            )
+        _validate_executor_or_fail(reservation.executor, executor_state)
+
+
+def _require_completed_history_matches_finalization(
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    completed_history: RegisteredCompletedTrainingHistory,
+) -> None:
+    from falsewake.experiment_002_registered_history import (
+        RegisteredCompletedTrainingHistory,
+        _registered_completed_history_snapshot,
+        _RegisteredCompletedHistorySnapshot,
+    )
+
+    if type(completed_history) is not RegisteredCompletedTrainingHistory:
+        raise Experiment002RegisteredExecutorError(
+            "completed history has an invalid type"
+        )
+    snapshot = _registered_completed_history_snapshot(completed_history)
+    if (
+        type(snapshot) is not _RegisteredCompletedHistorySnapshot
+        or snapshot.registration is not reservation.registration
+        or snapshot.history is not reservation.history
+        or snapshot.executor is not reservation.executor
+        or snapshot.validation_inputs is not reservation.validation_inputs
+        or snapshot.complete_update_trace is not complete_trace
+        or snapshot.process_id != reservation.process_id
+        or snapshot.seed != reservation.seed
+        or snapshot.epoch_count != _REGISTERED_EPOCH_COUNT
+        or snapshot.evaluated_epochs[-1] is not reservation.evaluated_epoch
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "completed history differs from the reserved final boundary"
+        )
+
+
+def _commit_registered_finalization(
+    executor: RegisteredTrainingExecutor,
+    handoff: RegisteredExecutorEpochHandoff,
+    final_barrier: RegisteredHistoryBarrier,
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    completed_history: RegisteredCompletedTrainingHistory,
+    _truth_commit: Callable[
+        [_FinalizationReservation, _FinalizedHandoffBinding], None
+    ] = _AUTHORITY_TRUTH.commit_finalization,
+) -> None:
+    """Publish finalized H truth, then the COMPLETE executor, without H -> E."""
+
+    _require_complete_trace_matches_finalization(reservation, complete_trace)
+    _require_completed_history_matches_finalization(
+        reservation,
+        complete_trace,
+        completed_history,
+    )
+    with _HANDOFFS_LOCK:
+        handoff_state = _HANDOFFS.get(handoff)
+        _validate_handoff(handoff, handoff_state)
+        assert handoff_state is not None
+        _require_handoff_matches_finalization(handoff_state, reservation)
+        binding = _finalized_from_reservation(
+            reservation,
+            complete_trace,
+            completed_history,
+        )
+
+    executor_state = _issued_executor_state(executor)
+    with _trusted_executor_lock(executor, executor_state):
+        _validate_executor_or_fail(executor, executor_state)
+        _require_executor_matches_finalization(
+            executor_state,
+            reservation,
+            require_attached=True,
+        )
+        with _HANDOFFS_LOCK:
+            _require_finalization_reservation(
+                reservation,
+                phase="HISTORY_COMPLETE",
+            )
+
+    with _HANDOFFS_LOCK:
+        _validate_handoff(handoff, handoff_state)
+        _require_handoff_matches_finalization(handoff_state, reservation)
+        _truth_commit(reservation, binding)
+        _FINALIZED_HANDOFFS[handoff] = binding
+        _FINALIZATION_PHASES[reservation] = "COMMITTED"
+        _require_finalized_handoff_binding(handoff, handoff_state)
+
+    with _trusted_executor_lock(executor, executor_state):
+        _validate_executor_or_fail(executor, executor_state)
+        _require_finalization_reservation(reservation, phase="COMMITTED")
+        _require_executor_matches_finalization(
+            executor_state,
+            reservation,
+            require_attached=True,
+        )
+        executor_state.active_handoff = None
+        executor_state.phase = "COMPLETE"
+        executor_state.final_barrier = final_barrier
+        executor_state.complete_update_trace = complete_trace
+        executor_state.completed_history = completed_history
+        _publish_executor_lifecycle(executor, executor_state)
+        observed = _stable_handoff_runtime_digests(
+            executor_state.runtime,
+            expected_generation=reservation.optimizer_generation,
+            expected_training=False,
+        )
+        if (
+            observed != reservation.runtime_digests
+            or executor_state.expected != reservation.runtime_digests
+            or executor_state.runtime.expected != reservation.runtime_digests
+            or executor_state.optimizer_generation != reservation.optimizer_generation
+            or executor_state.previous_history_barrier
+            is not reservation.previous_history_barrier
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "registered finalization changed model, optimizer, RNG, or B28"
+            )
+        _validate_executor_or_fail(executor, executor_state)
+
+    with _HANDOFFS_LOCK:
+        _require_finalized_handoff_binding(handoff, handoff_state)
+
+
+def _verify_registered_finalization(
+    executor: RegisteredTrainingExecutor,
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    completed_history: RegisteredCompletedTrainingHistory,
+) -> None:
+    """Reverify every completed authority with E and H locks initially free."""
+
+    _require_complete_trace_matches_finalization(reservation, complete_trace)
+    _require_completed_history_matches_finalization(
+        reservation,
+        complete_trace,
+        completed_history,
+    )
+    state = _issued_executor_state(executor)
+    with _trusted_executor_lock(executor, state):
+        _validate_executor_or_fail(executor, state)
+        observed = _stable_handoff_runtime_digests(
+            state.runtime,
+            expected_generation=reservation.optimizer_generation,
+            expected_training=False,
+        )
+        if (
+            observed != reservation.runtime_digests
+            or state.expected != reservation.runtime_digests
+            or state.runtime.expected != reservation.runtime_digests
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "completed executor runtime differs from finalization authority"
+            )
+    snapshot = _registered_executor_snapshot(executor)
+    if (
+        snapshot.phase != "COMPLETE"
+        or snapshot.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+        or snapshot.optimizer_generation != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+        or snapshot.previous_history_barrier is not reservation.previous_history_barrier
+        or snapshot.final_barrier is not reservation.final_barrier
+        or snapshot.complete_update_trace is not complete_trace
+        or snapshot.completed_history is not completed_history
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "completed executor snapshot differs from finalization authority"
+        )
+    _registered_epoch_handoff_snapshot(reservation.handoff)
+
+
+def _abort_attempted_registered_history_completion(
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+    completed: RegisteredCompletedTrainingHistory | None,
+) -> None:
+    """Invoke history's exact final compensation route without E or H locks."""
+
+    from falsewake.experiment_002_registered_history import (
+        _abort_attempted_registered_history_completion as abort,
+    )
+
+    with _EXECUTORS_LOCK:
+        state = _EXECUTORS.get(executor)
+    if type(state) is not _RegisteredExecutorState:
+        raise Experiment002RegisteredExecutorError(
+            "completion abort cannot recover executor registration"
+        )
+    abort(
+        state.registration,
+        executor,
+        final_barrier,
+        completed,
+    )
+
+
+def _ensure_attempted_registered_history_completion_aborted(
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+    completed: RegisteredCompletedTrainingHistory | None,
+    _fallback: Callable[
+        [
+            RegisteredTrainingExecutor,
+            RegisteredHistoryBarrier,
+            RegisteredCompletedTrainingHistory | None,
+        ],
+        None,
+    ] = _abort_attempted_registered_history_completion,
+) -> None:
+    try:
+        _abort_attempted_registered_history_completion(
+            executor,
+            final_barrier,
+            completed,
+        )
+    except BaseException as primary_error:
+        try:
+            _fallback(executor, final_barrier, completed)
+        except BaseException as fallback_error:
+            raise fallback_error from primary_error
+
+
 def _abort_consumed_registered_history(
     registration: VerifiedRunRegistration,
     executor: RegisteredTrainingExecutor,
@@ -1793,6 +3789,134 @@ def _terminal_fail_registered_continuation(
         _propagate_executor_failure(executor_state, None)
 
 
+def _terminal_fail_registered_finalization(
+    executor: RegisteredTrainingExecutor,
+    *,
+    handoff: RegisteredExecutorEpochHandoff | None,
+    reservation: _FinalizationReservation | None,
+    _truth_fail: Callable[[_FinalizationReservation], None] = (
+        _AUTHORITY_TRUTH.fail_finalization
+    ),
+    _truth_lookup: Callable[
+        [RegisteredTrainingExecutor], _FinalizationReservation | None
+    ] = _AUTHORITY_TRUTH.executor_finalization,
+) -> None:
+    """Poison one attempted finalization without crossing into history."""
+
+    with _EXECUTORS_LOCK:
+        executor_state = _EXECUTORS.get(executor)
+    if type(executor_state) is not _RegisteredExecutorState:
+        return
+    lock = executor_state.anchor.lock
+    with lock:
+        if reservation is None:
+            reservation = executor_state.finalization_reservation
+        if reservation is None:
+            reservation = _truth_lookup(executor)
+        if handoff is None:
+            handoff = (
+                reservation.handoff
+                if reservation is not None
+                else executor_state.active_handoff
+            )
+        with _HANDOFFS_LOCK:
+            if reservation is not None:
+                with contextlib.suppress(BaseException):
+                    _truth_fail(reservation)
+                with contextlib.suppress(BaseException):
+                    if not any(
+                        observed is reservation for observed in _FINALIZATION_HISTORY
+                    ):
+                        _FINALIZATION_HISTORY.append(reservation)
+                with contextlib.suppress(BaseException):
+                    _FINALIZATION_PHASES[reservation] = "FAILED"
+            handoff_state = _HANDOFFS.get(handoff) if handoff is not None else None
+            if type(handoff_state) is _HandoffState:
+                assert handoff is not None
+                _terminal_fail_handoff(handoff, handoff_state)
+        _terminal_fail_executor(executor, executor_state)
+        _propagate_executor_failure(executor_state, None)
+
+
+def _ensure_terminal_fail_registered_finalization(
+    executor: RegisteredTrainingExecutor,
+    *,
+    handoff: RegisteredExecutorEpochHandoff | None,
+    reservation: _FinalizationReservation | None,
+    _fallback: Callable[..., None] = _terminal_fail_registered_finalization,
+) -> None:
+    try:
+        _terminal_fail_registered_finalization(
+            executor,
+            handoff=handoff,
+            reservation=reservation,
+        )
+    except BaseException as primary_error:
+        try:
+            _fallback(
+                executor,
+                handoff=handoff,
+                reservation=reservation,
+            )
+        except BaseException as fallback_error:
+            raise fallback_error from primary_error
+    _require_local_registered_finalization_failed(
+        executor,
+        handoff=handoff,
+        reservation=reservation,
+    )
+
+
+def _require_local_registered_finalization_failed(
+    executor: RegisteredTrainingExecutor,
+    *,
+    handoff: RegisteredExecutorEpochHandoff | None,
+    reservation: _FinalizationReservation | None,
+    _truth_lookup: Callable[
+        [RegisteredTrainingExecutor], _FinalizationReservation | None
+    ] = _AUTHORITY_TRUTH.executor_finalization,
+    _truth_validate: Callable[
+        [_FinalizationReservation, _FinalizationPhase], bool
+    ] = _AUTHORITY_TRUTH.validate_finalization,
+) -> None:
+    with _EXECUTORS_LOCK:
+        state = _EXECUTORS.get(executor)
+    if type(state) is not _RegisteredExecutorState:
+        return
+    if reservation is None:
+        reservation = state.finalization_reservation
+    if reservation is None:
+        reservation = _truth_lookup(executor)
+    if handoff is None:
+        handoff = (
+            reservation.handoff if reservation is not None else state.active_handoff
+        )
+    with state.anchor.lock, _HANDOFFS_LOCK:
+        handoff_state = _HANDOFFS.get(handoff) if handoff is not None else None
+        if (
+            state.phase != "FAILED"
+            or executor not in _FAILED_EXECUTOR_HISTORY
+            or (
+                handoff is not None
+                and (
+                    type(handoff_state) is not _HandoffState
+                    or not handoff_state.failed
+                    or handoff not in _FAILED_HANDOFF_HISTORY
+                )
+            )
+            or (
+                reservation is not None
+                and (
+                    _FINALIZATION_PHASES.get(reservation) != "FAILED"
+                    or not _truth_validate(reservation, "FAILED")
+                )
+            )
+        ):
+            raise Experiment002RegisteredExecutorError(
+                "registered finalization was not locally terminalized"
+            )
+
+
 def _retirement_from_reservation(
     reservation: _ContinuationReservation,
 ) -> _RetiredHandoffBinding:
@@ -1803,6 +3927,36 @@ def _retirement_from_reservation(
         barrier=reservation.barrier,
         evaluated_epoch=reservation.evaluated_epoch,
         evaluated_authority_sha256=reservation.evaluated_authority_sha256,
+        registration=reservation.registration,
+        validation_inputs=reservation.validation_inputs,
+        process_id=reservation.process_id,
+        seed=reservation.seed,
+        zero_based_epoch=reservation.zero_based_epoch,
+        optimizer_generation=reservation.optimizer_generation,
+        runtime_digests=replace(reservation.runtime_digests),
+        previous_history_barrier=reservation.previous_history_barrier,
+        handoff_token=reservation.handoff_token,
+        one_shot_token=reservation.one_shot_token,
+    )
+
+
+def _finalized_from_reservation(
+    reservation: _FinalizationReservation,
+    complete_trace: CompleteUpdateTraceEvidence,
+    completed_history: RegisteredCompletedTrainingHistory,
+) -> _FinalizedHandoffBinding:
+    return _FinalizedHandoffBinding(
+        reservation=reservation,
+        executor=reservation.executor,
+        handoff=reservation.handoff,
+        final_barrier=reservation.final_barrier,
+        history=reservation.history,
+        evaluated_epoch=reservation.evaluated_epoch,
+        evaluated_authority_sha256=reservation.evaluated_authority_sha256,
+        complete_update_trace=complete_trace,
+        complete_update_trace_type=type(complete_trace),
+        completed_history=completed_history,
+        completed_history_type=type(completed_history),
         registration=reservation.registration,
         validation_inputs=reservation.validation_inputs,
         process_id=reservation.process_id,
@@ -2322,6 +4476,9 @@ def _access_registered_epoch_handoff(
     _truth_retired: Callable[
         [RegisteredExecutorEpochHandoff], _RetiredHandoffBinding | None
     ] = _AUTHORITY_TRUTH.retired_handoff,
+    _truth_finalized: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.finalized_handoff,
 ) -> _HandoffState:
     """Validate a handoff against its awaiting executor and optionally claim it."""
 
@@ -2333,6 +4490,7 @@ def _access_registered_epoch_handoff(
         raise TypeError("consume must be a bool")
     state: _HandoffState | None
     retired: _RetiredHandoffBinding | None = None
+    finalized: _FinalizedHandoffBinding | None = None
     validation_error: BaseException | None = None
     with _HANDOFFS_LOCK:
         state = _HANDOFFS.get(handoff)
@@ -2340,11 +4498,24 @@ def _access_registered_epoch_handoff(
             _validate_handoff(handoff, state)
             assert state is not None
             retired = _truth_retired(handoff)
+            finalized = _truth_finalized(handoff)
+            if (retired is not None or handoff in _RETIRED_HANDOFFS) and (
+                finalized is not None or handoff in _FINALIZED_HANDOFFS
+            ):
+                raise Experiment002RegisteredExecutorError(
+                    "handoff has conflicting terminal archive truth"
+                )
             if retired is not None or handoff in _RETIRED_HANDOFFS:
                 _require_retired_handoff_binding(
                     handoff,
                     state,
                     _truth_retired=_truth_retired,
+                )
+            elif finalized is not None or handoff in _FINALIZED_HANDOFFS:
+                _require_finalized_handoff_binding(
+                    handoff,
+                    state,
+                    _truth_finalized=_truth_finalized,
                 )
         except BaseException as error:
             validation_error = error
@@ -2366,10 +4537,10 @@ def _access_registered_epoch_handoff(
         raise validation_error
 
     reverify_verified_run_registration(state.registration)
-    if retired is not None:
+    if retired is not None or finalized is not None:
         if consume:
             raise Experiment002RegisteredExecutorError(
-                "retired registered epoch handoffs cannot return a model"
+                "archived registered epoch handoffs cannot return a model"
             )
         return state
 
@@ -2405,6 +4576,7 @@ def _access_registered_epoch_handoff(
                     handoff,
                     state,
                     _truth_retired=_truth_retired,
+                    _truth_finalized=_truth_finalized,
                 ):
                     return state
             except BaseException as retirement_error:
@@ -2413,7 +4585,7 @@ def _access_registered_epoch_handoff(
         _poison_handoff_and_executor(handoff, state)
         raise
 
-    retired_during_access = False
+    archived_during_access = False
     try:
         with _HANDOFFS_LOCK:
             if _HANDOFFS.get(handoff) is not state:
@@ -2422,7 +4594,15 @@ def _access_registered_epoch_handoff(
                 )
             _validate_handoff(handoff, state)
             truth_retired = _truth_retired(handoff)
+            truth_finalized = _truth_finalized(handoff)
             visible_retired = handoff in _RETIRED_HANDOFFS
+            visible_finalized = handoff in _FINALIZED_HANDOFFS
+            if (truth_retired is not None or visible_retired) and (
+                truth_finalized is not None or visible_finalized
+            ):
+                raise Experiment002RegisteredExecutorError(
+                    "handoff gained conflicting terminal archive truth"
+                )
             if truth_retired is not None or visible_retired:
                 if consume:
                     raise Experiment002RegisteredExecutorError(
@@ -2440,7 +4620,25 @@ def _access_registered_epoch_handoff(
                     raise Experiment002RegisteredExecutorError(
                         "retired handoff race lost exact authority"
                     )
-                retired_during_access = True
+                archived_during_access = True
+            elif truth_finalized is not None or visible_finalized:
+                if consume:
+                    raise Experiment002RegisteredExecutorError(
+                        "live handoff finalized during evaluator access"
+                    )
+                finalized_race_binding = _require_finalized_handoff_binding(
+                    handoff,
+                    state,
+                    _truth_finalized=_truth_finalized,
+                )
+                if (
+                    truth_finalized is not finalized_race_binding
+                    or _FINALIZED_HANDOFFS.get(handoff) is not finalized_race_binding
+                ):
+                    raise Experiment002RegisteredExecutorError(
+                        "finalized handoff race lost exact authority"
+                    )
+                archived_during_access = True
             elif consume:
                 _truth_record(state.ticket, "USED")
                 _record_handoff_event(state.ticket, "USED")
@@ -2449,7 +4647,7 @@ def _access_registered_epoch_handoff(
     except BaseException:
         _poison_handoff_and_executor(handoff, state)
         raise
-    if retired_during_access:
+    if archived_during_access:
         return state
 
     try:
@@ -2473,6 +4671,7 @@ def _access_registered_epoch_handoff(
                     handoff,
                     state,
                     _truth_retired=_truth_retired,
+                    _truth_finalized=_truth_finalized,
                 ):
                     return state
             except BaseException as retirement_error:
@@ -2506,6 +4705,9 @@ def _registered_executor_snapshot(
             optimizer_sha256=state.expected.optimizer_sha256,
             rng_sha256=state.expected.rng_sha256,
             previous_history_barrier=state.previous_history_barrier,
+            final_barrier=state.final_barrier,
+            complete_update_trace=state.complete_update_trace,
+            completed_history=state.completed_history,
         )
 
 
@@ -2905,15 +5107,26 @@ def _validate_executor_authority(
     _truth_continuation: Callable[
         [_ContinuationReservation, _ContinuationPhase], bool
     ] = _AUTHORITY_TRUTH.validate_continuation,
+    _truth_finalization: Callable[
+        [_FinalizationReservation, _FinalizationPhase], bool
+    ] = _AUTHORITY_TRUTH.validate_finalization,
+    _truth_finalized: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.finalized_handoff,
 ) -> None:
     anchor = _find_executor_anchor(executor)
     guard = _EXECUTOR_GUARDS.get(executor)
     lifecycle = _EXECUTOR_LIFECYCLES.get(executor)
     _require_executor_payload_types(state, lifecycle, guard, anchor)
     continuation = state.continuation_reservation
+    finalization = state.finalization_reservation
     continuation_phase_valid = False
-    if type(continuation) is _ContinuationReservation:
-        with _HANDOFFS_LOCK:
+    finalization_phase: _FinalizationPhase | None = None
+    finalization_phase_valid = False
+    finalized_binding: _FinalizedHandoffBinding | None = None
+    visible_finalized_binding: _FinalizedHandoffBinding | None = None
+    with _HANDOFFS_LOCK:
+        if type(continuation) is _ContinuationReservation:
             observed_phase = _CONTINUATION_PHASES.get(continuation)
             if type(observed_phase) is str and observed_phase in (
                 "RESERVED",
@@ -2924,6 +5137,44 @@ def _validate_executor_authority(
                     continuation,
                     cast(_ContinuationPhase, observed_phase),
                 )
+        if type(finalization) is _FinalizationReservation:
+            observed_finalization_phase = _FINALIZATION_PHASES.get(finalization)
+            if type(observed_finalization_phase) is str and (
+                observed_finalization_phase
+                in (
+                    "RESERVED",
+                    "TRACE_COMPLETE",
+                    "HISTORY_COMPLETE",
+                    "COMMITTED",
+                )
+            ):
+                finalization_phase = cast(
+                    _FinalizationPhase,
+                    observed_finalization_phase,
+                )
+                finalization_phase_valid = _truth_finalization(
+                    finalization,
+                    finalization_phase,
+                )
+            finalized_binding = _truth_finalized(finalization.handoff)
+            visible_finalized_binding = _FINALIZED_HANDOFFS.get(finalization.handoff)
+            if finalization_phase_valid and finalization_phase is not None:
+                _require_finalization_reservation(
+                    finalization,
+                    phase=finalization_phase,
+                    _truth_validate=_truth_finalization,
+                )
+                if finalization_phase == "COMMITTED":
+                    final_handoff_state = _HANDOFFS.get(finalization.handoff)
+                    if type(final_handoff_state) is not _HandoffState:
+                        raise Experiment002RegisteredExecutorError(
+                            "finalized executor lost its handoff state"
+                        )
+                    _require_finalized_handoff_binding(
+                        finalization.handoff,
+                        final_handoff_state,
+                        _truth_finalized=_truth_finalized,
+                    )
     if (
         type(anchor) is not _RegisteredExecutorAnchor
         or anchor.executor is not executor
@@ -2986,6 +5237,71 @@ def _validate_executor_authority(
             )
         )
         or (state.phase in ("READY_TO_TRAIN", "TRAINING") and continuation is not None)
+        or (continuation is not None and finalization is not None)
+        or (
+            finalization is not None
+            and (
+                type(finalization) is not _FinalizationReservation
+                or state.phase not in ("AWAITING_EVALUATION", "COMPLETE")
+                or finalization.executor is not executor
+                or finalization.executor_ticket is not state.ticket
+                or finalization.registration is not state.registration
+                or finalization.validation_inputs is not state.validation_inputs
+                or finalization.process_id != state.process_id
+                or finalization.seed != state.seed
+                or finalization.zero_based_epoch != state.zero_based_epoch
+                or finalization.optimizer_generation != state.optimizer_generation
+                or finalization.trace is not state.trace
+                or finalization.runtime_digests != state.expected
+                or finalization.previous_history_barrier
+                is not state.previous_history_barrier
+                or not finalization_phase_valid
+                or (
+                    state.phase == "AWAITING_EVALUATION"
+                    and (
+                        state.active_handoff is not finalization.handoff
+                        or state.final_barrier is not None
+                        or state.complete_update_trace is not None
+                        or state.completed_history is not None
+                    )
+                )
+                or (
+                    state.phase == "COMPLETE"
+                    and (
+                        finalization_phase != "COMMITTED"
+                        or type(finalized_binding) is not _FinalizedHandoffBinding
+                        or visible_finalized_binding is not finalized_binding
+                        or finalized_binding.reservation is not finalization
+                        or state.active_epoch is not None
+                        or state.active_transition is not None
+                        or state.active_handoff is not None
+                        or state.final_barrier is not finalization.final_barrier
+                        or state.complete_update_trace
+                        is not finalized_binding.complete_update_trace
+                        or state.completed_history
+                        is not finalized_binding.completed_history
+                    )
+                )
+            )
+        )
+        or (
+            finalization is None
+            and (
+                state.phase == "COMPLETE"
+                or state.final_barrier is not None
+                or state.complete_update_trace is not None
+                or state.completed_history is not None
+            )
+        )
+        or (
+            state.phase == "COMPLETE"
+            and (
+                state.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+                or state.optimizer_generation
+                != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+                or state.runtime.model.training is not False
+            )
+        )
     ):
         raise Experiment002RegisteredExecutorError(
             "registered executor authority changed or crossed a process"
@@ -3006,6 +5322,10 @@ def _require_executor_payload_types(
     guard: _RegisteredExecutorGuard | None,
     anchor: _RegisteredExecutorAnchor | None,
 ) -> None:
+    from falsewake.experiment_002_registered_history import (
+        RegisteredCompletedTrainingHistory,
+    )
+
     if (
         type(state) is not _RegisteredExecutorState
         or type(state.phase) is not str
@@ -3014,6 +5334,7 @@ def _require_executor_payload_types(
             "READY_TO_TRAIN",
             "TRAINING",
             "AWAITING_EVALUATION",
+            "COMPLETE",
             "FAILED",
         )
         or type(state.process_id) is not int
@@ -3043,6 +5364,26 @@ def _require_executor_payload_types(
         or type(lifecycle.phase) is not str
         or type(lifecycle.zero_based_epoch) is not int
         or type(lifecycle.optimizer_generation) is not int
+        or (
+            state.finalization_reservation is not None
+            and type(state.finalization_reservation) is not _FinalizationReservation
+        )
+        or (
+            state.final_barrier is not None
+            and (
+                type(state.finalization_reservation) is not _FinalizationReservation
+                or type(state.final_barrier)
+                is not state.finalization_reservation.barrier_type
+            )
+        )
+        or (
+            state.complete_update_trace is not None
+            and type(state.complete_update_trace) is not CompleteUpdateTraceEvidence
+        )
+        or (
+            state.completed_history is not None
+            and type(state.completed_history) is not RegisteredCompletedTrainingHistory
+        )
     ):
         raise Experiment002RegisteredExecutorError(
             "registered executor scalar payload types changed"
@@ -3207,6 +5548,10 @@ def _lifecycle_from_state(
         active_handoff=state.active_handoff,
         previous_history_barrier=state.previous_history_barrier,
         continuation_reservation=state.continuation_reservation,
+        finalization_reservation=state.finalization_reservation,
+        final_barrier=state.final_barrier,
+        complete_update_trace=state.complete_update_trace,
+        completed_history=state.completed_history,
     )
 
 
@@ -3521,6 +5866,95 @@ def _require_continuation_reservation(
         )
 
 
+def _require_finalization_reservation(
+    reservation: _FinalizationReservation,
+    *,
+    phase: _FinalizationPhase,
+    _truth_validate: Callable[
+        [_FinalizationReservation, _FinalizationPhase], bool
+    ] = _AUTHORITY_TRUTH.validate_finalization,
+) -> None:
+    with _HANDOFFS_LOCK:
+        observed = _FINALIZATION_PHASES.get(reservation)
+        handoff_state = _HANDOFFS.get(reservation.handoff)
+        matches_history = (
+            sum(item is reservation for item in _FINALIZATION_HISTORY) == 1
+        )
+        truth_matches = _truth_validate(reservation, phase)
+    if (
+        type(reservation) is not _FinalizationReservation
+        or type(phase) is not str
+        or phase
+        not in (
+            "RESERVED",
+            "TRACE_COMPLETE",
+            "HISTORY_COMPLETE",
+            "COMMITTED",
+            "FAILED",
+        )
+        or type(observed) is not str
+        or observed != phase
+        or not matches_history
+        or not truth_matches
+        or type(reservation.token) is not object
+        or type(reservation.executor) is not RegisteredTrainingExecutor
+        or type(reservation.executor_ticket) is not _ExecutorIssuanceTicket
+        or type(reservation.handoff) is not RegisteredExecutorEpochHandoff
+        or type(reservation.handoff_ticket) is not _HandoffIssuanceTicket
+        or type(reservation.barrier_type) is not type
+        or type(reservation.final_barrier) is not reservation.barrier_type
+        or type(reservation.history_type) is not type
+        or type(reservation.history) is not reservation.history_type
+        or type(reservation.evaluated_epoch_type) is not type
+        or type(reservation.evaluated_epoch) is not reservation.evaluated_epoch_type
+        or type(reservation.evaluated_authority_sha256) is not str
+        or type(reservation.registration) is not VerifiedRunRegistration
+        or type(reservation.validation_inputs) is not RegisteredValidationInputs
+        or type(reservation.process_id) is not int
+        or type(reservation.seed) is not int
+        or type(reservation.zero_based_epoch) is not int
+        or type(reservation.optimizer_generation) is not int
+        or type(reservation.runtime_digests) is not _numeric._RuntimeDigests
+        or type(reservation.previous_history_barrier) is not reservation.barrier_type
+        or reservation.previous_history_barrier is reservation.final_barrier
+        or type(reservation.handoff_token) is not object
+        or type(reservation.one_shot_token) is not object
+        or type(reservation.trace) is not UpdateTraceAccumulator
+        or type(reservation.epoch_traces) is not tuple
+        or len(reservation.epoch_traces) != _REGISTERED_EPOCH_COUNT
+        or any(
+            type(epoch_trace) is not EpochUpdateTraceEvidence
+            for epoch_trace in reservation.epoch_traces
+        )
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "finalization reservation authority changed"
+        )
+    _require_lower_sha256(
+        reservation.evaluated_authority_sha256,
+        "evaluated_authority_sha256",
+    )
+    _require_runtime_digest_payload(
+        reservation.runtime_digests,
+        name="finalization reservation",
+    )
+    if (
+        reservation.executor_ticket.executor is not reservation.executor
+        or reservation.handoff_ticket.handoff is not reservation.handoff
+        or reservation.handoff_ticket.executor_ticket is not reservation.executor_ticket
+        or reservation.process_id != os.getpid()
+        or reservation.seed not in TRAINING_SEEDS
+        or reservation.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+        or reservation.optimizer_generation
+        != _REGISTERED_EPOCH_COUNT * _UPDATES_PER_EPOCH
+        or reservation.epoch_traces[-1]
+        is not getattr(handoff_state, "epoch_trace", None)
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "finalization reservation payload is invalid"
+        )
+
+
 def _require_retired_handoff_binding(
     handoff: RegisteredExecutorEpochHandoff,
     state: _HandoffState,
@@ -3572,6 +6006,65 @@ def _require_retired_handoff_binding(
     return binding
 
 
+def _require_finalized_handoff_binding(
+    handoff: RegisteredExecutorEpochHandoff,
+    state: _HandoffState,
+    *,
+    _truth_finalized: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.finalized_handoff,
+) -> _FinalizedHandoffBinding:
+    binding = _FINALIZED_HANDOFFS.get(handoff)
+    truth = _truth_finalized(handoff)
+    if (
+        type(binding) is not _FinalizedHandoffBinding
+        or truth is not binding
+        or type(binding.reservation) is not _FinalizationReservation
+        or binding.executor is not state.executor
+        or binding.handoff is not handoff
+        or binding.reservation.handoff is not handoff
+        or binding.final_barrier is not binding.reservation.final_barrier
+        or binding.history is not binding.reservation.history
+        or binding.evaluated_epoch is not binding.reservation.evaluated_epoch
+        or binding.evaluated_authority_sha256
+        != binding.reservation.evaluated_authority_sha256
+        or type(binding.complete_update_trace_type) is not type
+        or type(binding.complete_update_trace) is not binding.complete_update_trace_type
+        or type(binding.completed_history_type) is not type
+        or type(binding.completed_history) is not binding.completed_history_type
+        or binding.registration is not state.registration
+        or binding.registration is not binding.reservation.registration
+        or binding.validation_inputs is not state.validation_inputs
+        or binding.validation_inputs is not binding.reservation.validation_inputs
+        or type(binding.process_id) is not int
+        or binding.process_id != state.process_id
+        or binding.process_id != os.getpid()
+        or type(binding.seed) is not int
+        or binding.seed != state.seed
+        or type(binding.zero_based_epoch) is not int
+        or binding.zero_based_epoch != _REGISTERED_EPOCH_COUNT - 1
+        or binding.zero_based_epoch != state.zero_based_epoch
+        or type(binding.optimizer_generation) is not int
+        or binding.optimizer_generation != state.optimizer_generation
+        or type(binding.runtime_digests) is not _numeric._RuntimeDigests
+        or binding.runtime_digests != state.runtime_digests
+        or binding.previous_history_barrier is not state.previous_history_barrier
+        or binding.handoff_token is not state.handoff_token
+        or binding.one_shot_token is not state.one_shot_token
+        or not state.used
+        or state.failed
+    ):
+        raise Experiment002RegisteredExecutorError(
+            "finalized handoff authority changed"
+        )
+    _require_finalization_reservation(binding.reservation, phase="COMMITTED")
+    _require_lower_sha256(
+        binding.evaluated_authority_sha256,
+        "evaluated_authority_sha256",
+    )
+    return binding
+
+
 def _exact_retired_handoff_won_snapshot_race(
     handoff: RegisteredExecutorEpochHandoff,
     state: _HandoffState,
@@ -3579,8 +6072,11 @@ def _exact_retired_handoff_won_snapshot_race(
     _truth_retired: Callable[
         [RegisteredExecutorEpochHandoff], _RetiredHandoffBinding | None
     ] = _AUTHORITY_TRUTH.retired_handoff,
+    _truth_finalized: Callable[
+        [RegisteredExecutorEpochHandoff], _FinalizedHandoffBinding | None
+    ] = _AUTHORITY_TRUTH.finalized_handoff,
 ) -> bool:
-    """Return true only for one fully verified retirement published during a read."""
+    """Return true only for exact terminal truth published during a snapshot."""
 
     with _HANDOFFS_LOCK:
         if _HANDOFFS.get(handoff) is not state:
@@ -3588,19 +6084,40 @@ def _exact_retired_handoff_won_snapshot_race(
                 "handoff state changed during retired snapshot recheck"
             )
         _validate_handoff(handoff, state)
-        truth = _truth_retired(handoff)
-        visible = _RETIRED_HANDOFFS.get(handoff)
-        visible_present = handoff in _RETIRED_HANDOFFS
-        if truth is None and not visible_present:
-            return False
-        binding = _require_retired_handoff_binding(
-            handoff,
-            state,
-            _truth_retired=_truth_retired,
+        retired_truth = _truth_retired(handoff)
+        retired_visible = _RETIRED_HANDOFFS.get(handoff)
+        finalized_truth = _truth_finalized(handoff)
+        finalized_visible = _FINALIZED_HANDOFFS.get(handoff)
+        retired_present = retired_truth is not None or handoff in _RETIRED_HANDOFFS
+        finalized_present = (
+            finalized_truth is not None or handoff in _FINALIZED_HANDOFFS
         )
-        if truth is not binding or visible is not binding:
+        if retired_present and finalized_present:
             raise Experiment002RegisteredExecutorError(
-                "retired handoff race lost exact authority"
+                "handoff snapshot race found conflicting terminal truth"
+            )
+        if not retired_present and not finalized_present:
+            return False
+        if retired_present:
+            binding = _require_retired_handoff_binding(
+                handoff,
+                state,
+                _truth_retired=_truth_retired,
+            )
+            exact = retired_truth is binding and retired_visible is binding
+        else:
+            finalized_binding = _require_finalized_handoff_binding(
+                handoff,
+                state,
+                _truth_finalized=_truth_finalized,
+            )
+            exact = (
+                finalized_truth is finalized_binding
+                and finalized_visible is finalized_binding
+            )
+        if not exact:
+            raise Experiment002RegisteredExecutorError(
+                "terminal handoff race lost exact authority"
             )
         return True
 

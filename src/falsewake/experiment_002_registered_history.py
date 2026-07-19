@@ -1449,6 +1449,342 @@ def _abort_consumed_registered_history_barrier(
         _terminal_fail_history(barrier_state.history, history_state)
 
 
+def _locally_issued_completed_entries(
+    history: RegisteredTrainingHistory,
+    history_state: _HistoryState,
+) -> tuple[
+    tuple[RegisteredCompletedTrainingHistory, _CompletedState],
+    ...,
+]:
+    """Find exact issued results bound to one local history token."""
+
+    with _REGISTRY_LOCK:
+        observed = tuple(_COMPLETED.items())
+        issued = set(_ISSUED_COMPLETED)
+    return tuple(
+        (result, state)
+        for result, state in observed
+        if type(result) is RegisteredCompletedTrainingHistory
+        and type(state) is _CompletedState
+        and result in issued
+        and state.history is history
+        and state.history_token is history_state.token
+    )
+
+
+def _terminal_fail_locally_issued_completed(
+    history: RegisteredTrainingHistory,
+    history_state: _HistoryState,
+    result: RegisteredCompletedTrainingHistory | None,
+) -> None:
+    """Fail every exact local result issued by one completion attempt."""
+
+    entries = _locally_issued_completed_entries(history, history_state)
+    if result is not None and not any(observed is result for observed, _ in entries):
+        raise Experiment002RegisteredHistoryError(
+            "completion returned a result outside its local history authority"
+        )
+    for observed, state in entries:
+        _terminal_fail_completed(observed, state)
+
+
+def _terminal_fail_local_completion_boundary(
+    entries: tuple[
+        tuple[RegisteredCompletedTrainingHistory, _CompletedState],
+        ...,
+    ],
+    final_barrier: RegisteredHistoryBarrier,
+    barrier_state: _BarrierState,
+    history: RegisteredTrainingHistory,
+    history_state: _HistoryState,
+) -> None:
+    """Fail result, barrier, and history in order even if cleanup raises."""
+
+    try:
+        for result, result_state in entries:
+            _terminal_fail_completed(result, result_state)
+    finally:
+        try:
+            _terminal_fail_barrier(final_barrier, barrier_state)
+        finally:
+            _terminal_fail_history(history, history_state)
+
+
+def _require_local_completed_binding(
+    result: RegisteredCompletedTrainingHistory,
+    state: _CompletedState,
+    history: RegisteredTrainingHistory,
+    history_state: _HistoryState,
+) -> None:
+    """Validate an issued result without consulting its external evidence."""
+
+    with _REGISTRY_LOCK:
+        guard = _COMPLETED_GUARDS.get(result)
+        lifecycle = _COMPLETED_LIFECYCLES.get(result)
+        issued = result in _ISSUED_COMPLETED
+        failed = result in _FAILED_COMPLETED
+        mapped = _COMPLETED.get(result)
+    if type(guard) is not _CompletedGuard:
+        raise Experiment002RegisteredHistoryError(
+            "local completed result guard is missing"
+        )
+    _require_completed_payload_types(state, guard)
+    try:
+        object_frame = (
+            result._seed,
+            result._history_sha256,
+            result._winner_epoch,
+            result._token,
+            result._route_marker,
+        )
+    except AttributeError as error:
+        raise Experiment002RegisteredHistoryError(
+            "local completed result is incomplete"
+        ) from error
+    expected_phase = "FAILED" if failed else "COMPLETE"
+    records = tuple(_history_records(history_state))
+    if (
+        not issued
+        or mapped is not state
+        or type(lifecycle) is not _CompletedLifecycle
+        or type(lifecycle.phase) is not str
+        or lifecycle.phase != expected_phase
+        or lifecycle.token is not state.token
+        or lifecycle.process_id != state.process_id
+        or state.route_marker is not _REGISTERED_ROUTE_MARKER
+        or guard.route_marker is not _REGISTERED_ROUTE_MARKER
+        or state.token is not guard.token
+        or state.history is not history
+        or guard.history is not history
+        or state.history_token is not history_state.token
+        or guard.history_token is not history_state.token
+        or state.registration is not history_state.registration
+        or guard.registration is not history_state.registration
+        or state.executor is not history_state.executor
+        or guard.executor is not history_state.executor
+        or state.validation_inputs is not history_state.validation_inputs
+        or guard.validation_inputs is not history_state.validation_inputs
+        or state.process_id != history_state.process_id
+        or guard.process_id != history_state.process_id
+        or state.process_id != os.getpid()
+        or state.seed != history_state.seed
+        or guard.seed != history_state.seed
+        or type(state.complete_update_trace) is not CompleteUpdateTraceEvidence
+        or state.complete_update_trace is not guard.complete_update_trace
+        or not _same_exact_frame(state.records, records)
+        or not _same_exact_frame(state.records, guard.records)
+        or not _same_exact_frame(
+            state.record_fingerprints,
+            guard.record_fingerprints,
+        )
+        or not _same_exact_frame(
+            state.record_identity_frames,
+            guard.record_identity_frames,
+        )
+        or not _same_exact_frame(
+            state.canonical_json_bytes,
+            guard.canonical_json_bytes,
+        )
+        or not _same_exact_frame(state.history_sha256, guard.history_sha256)
+        or not _same_exact_frame(state.ranked_epochs, guard.ranked_epochs)
+        or not _same_exact_frame(state.rank_frames, guard.rank_frames)
+        or state.winner is not guard.winner
+        or not _same_exact_frame(
+            object_frame,
+            (
+                state.seed,
+                state.history_sha256,
+                state.ranked_epochs[0].zero_based_epoch,
+                state.token,
+                _REGISTERED_ROUTE_MARKER,
+            ),
+        )
+    ):
+        raise Experiment002RegisteredHistoryError(
+            "local completed result differs from its exact history binding"
+        )
+
+
+def _abort_attempted_registered_history_completion(
+    registration: VerifiedRunRegistration,
+    executor: RegisteredTrainingExecutor,
+    final_barrier: RegisteredHistoryBarrier,
+    completed: RegisteredCompletedTrainingHistory | None,
+) -> None:
+    """Terminally compensate one exact attempted final-history completion.
+
+    This route uses only local history registries and the history flow lock.
+    It performs no executor, evaluator, or public-verifier callback while a
+    finalizing executor is unwinding.
+    """
+
+    if type(registration) is not VerifiedRunRegistration:
+        raise TypeError("registration must be a VerifiedRunRegistration")
+    if type(executor) is not RegisteredTrainingExecutor:
+        raise TypeError("executor must be a RegisteredTrainingExecutor")
+    if type(final_barrier) is not RegisteredHistoryBarrier:
+        raise TypeError("final_barrier must be a RegisteredHistoryBarrier")
+    if (
+        completed is not None
+        and type(completed) is not RegisteredCompletedTrainingHistory
+    ):
+        raise TypeError(
+            "completed must be a RegisteredCompletedTrainingHistory or None"
+        )
+
+    with _REGISTRY_LOCK:
+        barrier_state = _BARRIERS.get(final_barrier)
+        barrier_guard = _BARRIER_GUARDS.get(final_barrier)
+        barrier_issued = final_barrier in _ISSUED_BARRIERS
+    if type(barrier_state) is not _BarrierState:
+        raise Experiment002RegisteredHistoryError(
+            "final completion abort barrier has no exact issued state"
+        )
+    history = barrier_state.history
+    with _REGISTRY_LOCK:
+        history_state = _HISTORIES.get(history)
+        history_guard = _HISTORY_GUARDS.get(history)
+        history_issued = history in _ISSUED_HISTORIES
+    if (
+        type(history_state) is not _HistoryState
+        or type(barrier_guard) is not _BarrierGuard
+        or type(history_guard) is not _HistoryGuard
+        or type(history_guard.lock) is not type(threading.RLock())
+        or history_state.lock is not history_guard.lock
+    ):
+        try:
+            _terminal_fail_barrier(final_barrier, barrier_state)
+        finally:
+            if type(history_state) is _HistoryState:
+                _terminal_fail_history(history, history_state)
+        raise Experiment002RegisteredHistoryError(
+            "final completion abort has no exact history lock authority"
+        )
+
+    with _FLOW_LOCK, history_guard.lock:
+        entries = _locally_issued_completed_entries(history, history_state)
+        try:
+            _require_history_payload_types(history_state, history_guard)
+            _require_barrier_payload_types(barrier_state, barrier_guard)
+            _require_history_authority(history, history_state)
+            _require_barrier_authority(final_barrier, barrier_state)
+            records = _history_records(history_state)
+            bound = records[-1] if records else None
+            if (
+                not history_issued
+                or not barrier_issued
+                or barrier_state.history is not history
+                or barrier_guard.history is not history
+                or barrier_state.history_token is not history_state.token
+                or barrier_guard.history_token is not history_state.token
+                or history_state.token is not history_guard.token
+                or history_state.registration is not registration
+                or barrier_state.registration is not registration
+                or barrier_guard.registration is not registration
+                or history_state.executor is not executor
+                or barrier_state.executor is not executor
+                or barrier_guard.executor is not executor
+                or history_state.validation_inputs
+                is not barrier_state.validation_inputs
+                or history_state.validation_inputs
+                is not barrier_guard.validation_inputs
+                or history_state.process_id != os.getpid()
+                or barrier_state.process_id != history_state.process_id
+                or barrier_guard.process_id != history_state.process_id
+                or history_state.seed != barrier_state.seed
+                or history_state.seed != barrier_guard.seed
+                or len(records) != EPOCH_COUNT
+                or barrier_state.accepted_epoch != _FINAL_ZERO_BASED_EPOCH
+                or barrier_guard.accepted_epoch != _FINAL_ZERO_BASED_EPOCH
+                or type(bound) is not _BoundEpochRecord
+                or bound.evaluated_epoch is not barrier_state.evaluated_epoch
+                or bound.evaluated_epoch is not barrier_guard.evaluated_epoch
+                or _bound_record_fingerprint(bound) != bound.authority_fingerprint
+                or barrier_state.record_fingerprint != bound.authority_fingerprint
+                or barrier_guard.record_fingerprint != bound.authority_fingerprint
+            ):
+                raise Experiment002RegisteredHistoryError(
+                    "final completion abort differs from its exact boundary"
+                )
+            if len(entries) > 1:
+                raise Experiment002RegisteredHistoryError(
+                    "final completion abort found ambiguous completed results"
+                )
+            resolved = entries[0][0] if entries else None
+            if completed is not None and resolved is not completed:
+                raise Experiment002RegisteredHistoryError(
+                    "completed result differs from the exact final history"
+                )
+            if history_state.completed is not None and (
+                type(history_state.completed) is not RegisteredCompletedTrainingHistory
+                or history_state.completed is not resolved
+            ):
+                raise Experiment002RegisteredHistoryError(
+                    "history retained a different completed result"
+                )
+            if entries:
+                _require_local_completed_binding(
+                    entries[0][0],
+                    entries[0][1],
+                    history,
+                    history_state,
+                )
+            if history_state.phase == "OPEN":
+                valid_phase = (
+                    barrier_state.phase in ("ISSUED", "FAILED")
+                    and history_state.active_barrier is final_barrier
+                    and history_state.active_barrier_token is barrier_state.token
+                    and history_state.completed is None
+                    and completed is None
+                )
+            elif history_state.phase == "COMPLETE":
+                valid_phase = (
+                    barrier_state.phase in ("RETIRED", "FAILED")
+                    and history_state.active_barrier is None
+                    and history_state.active_barrier_token is None
+                    and resolved is not None
+                    and history_state.completed is resolved
+                )
+            else:
+                valid_phase = (
+                    history_state.phase == "FAILED"
+                    and barrier_state.phase in ("ISSUED", "RETIRED", "FAILED")
+                    and (
+                        history_state.active_barrier is None
+                        or history_state.active_barrier is final_barrier
+                    )
+                    and (
+                        history_state.active_barrier_token is None
+                        or history_state.active_barrier_token is barrier_state.token
+                    )
+                    and (
+                        history_state.completed is None
+                        or history_state.completed is resolved
+                    )
+                )
+            if not valid_phase:
+                raise Experiment002RegisteredHistoryError(
+                    "final completion abort lifecycle is not compensable"
+                )
+        except BaseException:
+            _terminal_fail_local_completion_boundary(
+                entries,
+                final_barrier,
+                barrier_state,
+                history,
+                history_state,
+            )
+            raise
+
+        _terminal_fail_local_completion_boundary(
+            entries,
+            final_barrier,
+            barrier_state,
+            history,
+            history_state,
+        )
+
+
 def _registered_history_barrier_snapshot(
     barrier: RegisteredHistoryBarrier,
 ) -> _RegisteredHistoryBarrierSnapshot:
@@ -1518,6 +1854,8 @@ def _complete_registered_training_history(
         raise TypeError("complete_update_trace must be a CompleteUpdateTraceEvidence")
     state = _issued_history_state(history)
     lock = _trusted_history_lock(history, state)
+    result: RegisteredCompletedTrainingHistory | None = None
+    result_issuance_attempted = False
     with _FLOW_LOCK, lock:
         _require_history_authority(history, state)
         if state.phase != "OPEN":
@@ -1564,6 +1902,7 @@ def _complete_registered_training_history(
             ranked = _rank_registered_records(tuple(bound.record for bound in records))
             winner_epoch = ranked[0].zero_based_epoch
             winner = records[winner_epoch].evaluated_epoch
+            result_issuance_attempted = True
             result = _issue_completed_history(
                 history=history,
                 state=state,
@@ -1594,9 +1933,15 @@ def _complete_registered_training_history(
             verify_registered_completed_training_history(result)
             return result
         except BaseException:
-            if barrier_state is not None:
-                _terminal_fail_barrier(final_barrier, barrier_state)
-            _terminal_fail_history(history, state)
+            try:
+                if result_issuance_attempted:
+                    _terminal_fail_locally_issued_completed(history, state, result)
+            finally:
+                try:
+                    if barrier_state is not None:
+                        _terminal_fail_barrier(final_barrier, barrier_state)
+                finally:
+                    _terminal_fail_history(history, state)
             raise
 
 
