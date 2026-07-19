@@ -129,6 +129,7 @@ def _fork_fixed_fd_round_trip(
     role: str,
     seed: int,
 ) -> None:
+    expected_ordinal = coordinator._assignment(role, seed).ordinal
     parent_channel, child_channel = socket.socketpair(
         socket.AF_UNIX,
         socket.SOCK_SEQPACKET,
@@ -147,6 +148,7 @@ def _fork_fixed_fd_round_trip(
             if (
                 activation.role != role
                 or activation.seed != seed
+                or activation.ordinal != expected_ordinal
                 or activation.child_pid != os.getpid()
             ):
                 os._exit(91)
@@ -705,6 +707,7 @@ def test_activation_is_opaque_noncopyable_and_nonserializable(
     activation = _activation(synthetic_registration)
     assert activation.role == coordinator._SEED_ROLE
     assert activation.seed == coordinator.REGISTERED_SEEDS[0]
+    assert activation.ordinal == 0
     assert activation.child_pid == os.getpid()
     coordinator.verify_verified_child_activation(synthetic_registration, activation)
     with pytest.raises(TypeError, match="copied"):

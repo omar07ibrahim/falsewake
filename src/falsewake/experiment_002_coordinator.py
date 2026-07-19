@@ -85,6 +85,12 @@ class VerifiedChildActivation:
         return _activation_state(self).seed
 
     @property
+    def ordinal(self) -> int:
+        """Return the registered zero-based child execution ordinal."""
+
+        return _activation_state(self).ordinal
+
+    @property
     def child_pid(self) -> int:
         """Return the PID to which this activation is bound."""
 
