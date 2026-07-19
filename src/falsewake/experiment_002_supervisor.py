@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Final, NoReturn, Protocol
+from typing import Final, NoReturn, Protocol, cast
 
 __all__ = ("Experiment002SupervisorError",)
 
@@ -57,12 +57,15 @@ _CHILD_CONTROL_FD: Final = 3
 _CHILD_RUNNER_FD: Final = 4
 _CHILD_PYTHON_FD: Final = 5
 _CHILD_TASKSET_FD: Final = 6
-_SAFE_SOURCE_FD_MINIMUM: Final = 7
+_CHILD_SOURCE_BUNDLE_FD: Final = 7
+_SAFE_SOURCE_FD_MINIMUM: Final = 8
 _LAUNCH_FILE_BYTES_MAXIMUM: Final = 64 << 20
+_SOURCE_BUNDLE_BYTES_MAXIMUM: Final = 256 << 20
 _LAUNCH_MEMFD_FLAGS: Final = os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING
 _LAUNCH_MEMFD_SEALS: Final = (
     fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
 )
+_SOURCE_BUNDLE_MEMFD_SEALS: Final = _LAUNCH_MEMFD_SEALS
 _CPU_COUNT: Final = 2
 _WALL_SECONDS_MAXIMUM: Final = 21_600
 _WALL_NANOSECONDS_MAXIMUM: Final = _WALL_SECONDS_MAXIMUM * 1_000_000_000
@@ -239,6 +242,12 @@ class _ProcessSample:
     child_pids: tuple[int, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceBundleFrame:
+    metadata: tuple[int, ...]
+    seals: int
+
+
 @dataclass(slots=True)
 class _PinnedParent:
     path: str
@@ -341,6 +350,7 @@ class _Kernel(Protocol):
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[_FileAction, ...],
+        source_bundle_fd: int,
     ) -> int: ...
 
     def wait4(self, pid: int, options: int) -> _WaitResult: ...
@@ -1885,11 +1895,124 @@ def _require_libc_success(result: object, operation: str) -> None:
         )
 
 
+def _require_source_bundle_descriptor(
+    descriptor: int,
+    *,
+    safe_source: bool = False,
+) -> _SourceBundleFrame:
+    """Admit only one immutable anonymous read-only Linux memfd."""
+
+    if (
+        type(descriptor) is not int
+        or descriptor < 0
+        or type(safe_source) is not bool
+        or (safe_source and descriptor < _SAFE_SOURCE_FD_MINIMUM)
+    ):
+        _fail("source bundle descriptor is invalid")
+    try:
+        before = os.fstat(descriptor)
+        status_flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+        descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+        proc_target = os.readlink(f"/proc/self/fd/{descriptor}")
+        after = os.fstat(descriptor)
+    except (OSError, ValueError) as error:
+        raise Experiment002SupervisorError(
+            "source bundle descriptor cannot be inspected"
+        ) from error
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 0
+        or before.st_uid != os.geteuid()
+        or before.st_gid != os.getegid()
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or not 0 < before.st_size <= _SOURCE_BUNDLE_BYTES_MAXIMUM
+        or _stat_frame(before) != _stat_frame(after)
+    ):
+        _fail("source bundle is not an exact bounded anonymous regular file")
+    if type(status_flags) is not int or status_flags & os.O_ACCMODE != os.O_RDONLY:
+        _fail("source bundle descriptor is not read-only")
+    if (
+        type(descriptor_flags) is not int
+        or descriptor_flags & fcntl.FD_CLOEXEC != fcntl.FD_CLOEXEC
+    ):
+        _fail("source bundle descriptor is not close-on-exec")
+    if type(seals) is not int or seals != _SOURCE_BUNDLE_MEMFD_SEALS:
+        _fail("source bundle memfd does not have the exact immutable seals")
+    if (
+        type(proc_target) is not str
+        or not proc_target.startswith("/memfd:")
+        or not proc_target.endswith(" (deleted)")
+    ):
+        _fail("source bundle descriptor is not an anonymous Linux memfd")
+    return _SourceBundleFrame(metadata=_stat_frame(before), seals=seals)
+
+
+def _require_matching_source_bundle_descriptors(
+    caller_descriptor: int,
+    independent_descriptor: int,
+) -> None:
+    caller = _require_source_bundle_descriptor(caller_descriptor)
+    independent = _require_source_bundle_descriptor(
+        independent_descriptor,
+        safe_source=True,
+    )
+    if caller != independent:
+        _fail("independent source bundle descriptor does not exactly match caller")
+
+
+def _require_raw_file_actions(
+    file_actions: tuple[_FileAction, ...],
+    source_bundle_fd: int,
+) -> None:
+    dup2_actions = cast(tuple[_Dup2Action, ...], file_actions)
+    expected_targets = (
+        0,
+        1,
+        2,
+        _CHILD_CONTROL_FD,
+        _CHILD_RUNNER_FD,
+        _CHILD_PYTHON_FD,
+        _CHILD_TASKSET_FD,
+        _CHILD_SOURCE_BUNDLE_FD,
+    )
+    if (
+        type(file_actions) is not tuple
+        or len(file_actions) != len(expected_targets)
+        or any(
+            type(action) is not tuple
+            or len(action) != 3
+            or action[0] != os.POSIX_SPAWN_DUP2
+            or type(action[1]) is not int
+            or action[1] < _SAFE_SOURCE_FD_MINIMUM
+            or type(action[2]) is not int
+            for action in file_actions
+        )
+        or tuple(action[2] for action in dup2_actions) != expected_targets
+        or not (dup2_actions[0][1] == dup2_actions[1][1] == dup2_actions[2][1])
+        or len(
+            {
+                dup2_actions[0][1],
+                *(action[1] for action in dup2_actions[3:]),
+            }
+        )
+        != 6
+        or dup2_actions[-1]
+        != (
+            os.POSIX_SPAWN_DUP2,
+            source_bundle_fd,
+            _CHILD_SOURCE_BUNDLE_FD,
+        )
+    ):
+        _fail("raw posix_spawn file actions are not the exact fixed FD layout")
+
+
 def _raw_posix_spawn(
     executable_path: str,
     argv: tuple[str, ...],
     environment: Mapping[str, str],
     file_actions: tuple[_FileAction, ...],
+    source_bundle_fd: int,
 ) -> int:
     if (
         ctypes.sizeof(_SigSet) != 128
@@ -1916,6 +2039,8 @@ def _raw_posix_spawn(
         for key, value in environment.items()
     ):
         _fail("raw posix_spawn environment is invalid")
+    _require_source_bundle_descriptor(source_bundle_fd, safe_source=True)
+    _require_raw_file_actions(file_actions, source_bundle_fd)
 
     argv_bytes = tuple(os.fsencode(value) for value in argv)
     environment_bytes = tuple(
@@ -2071,6 +2196,7 @@ class _RealKernel:
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[_FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
         try:
             return _raw_posix_spawn(
@@ -2078,6 +2204,7 @@ class _RealKernel:
                 argv,
                 dict(environment),
                 file_actions,
+                source_bundle_fd,
             )
         except OSError as error:
             raise Experiment002SupervisorError(
@@ -2137,6 +2264,50 @@ def _duplicate_safe_descriptor(
     return duplicated
 
 
+def _open_independent_source_bundle_descriptor(descriptor: int) -> int:
+    """Reopen the bundle onto an OFD whose offset the caller does not share."""
+
+    caller_before = _require_source_bundle_descriptor(descriptor)
+    reopened = -1
+    independent = -1
+    try:
+        try:
+            reopened = os.open(
+                f"/proc/self/fd/{descriptor}",
+                os.O_RDONLY | os.O_CLOEXEC,
+            )
+        except OSError as error:
+            raise Experiment002SupervisorError(
+                "source bundle cannot be reopened onto an independent descriptor"
+            ) from error
+        if reopened < _SAFE_SOURCE_FD_MINIMUM:
+            independent = _duplicate_safe_descriptor(reopened)
+            os.close(reopened)
+            reopened = -1
+        else:
+            independent = reopened
+            reopened = -1
+        if independent == descriptor:
+            _fail("source bundle reopen did not return an independent descriptor")
+        caller_after = _require_source_bundle_descriptor(descriptor)
+        independent_frame = _require_source_bundle_descriptor(
+            independent,
+            safe_source=True,
+        )
+        if caller_before != caller_after or caller_after != independent_frame:
+            _fail("independently reopened source bundle does not exactly match caller")
+        result = independent
+        independent = -1
+        return result
+    finally:
+        if reopened >= 0:
+            with suppress(OSError):
+                os.close(reopened)
+        if independent >= 0:
+            with suppress(OSError):
+                os.close(independent)
+
+
 def _build_file_actions(
     *,
     parent_channel_fd: int,
@@ -2145,6 +2316,7 @@ def _build_file_actions(
     runner_fd: int,
     python_fd: int,
     taskset_exec_fd: int,
+    source_bundle_fd: int,
 ) -> tuple[_FileAction, ...]:
     descriptors = (
         parent_channel_fd,
@@ -2153,6 +2325,7 @@ def _build_file_actions(
         runner_fd,
         python_fd,
         taskset_exec_fd,
+        source_bundle_fd,
     )
     if any(type(value) is not int or value < 0 for value in descriptors):
         _fail("spawn descriptor is invalid")
@@ -2166,6 +2339,7 @@ def _build_file_actions(
             runner_fd,
             python_fd,
             taskset_exec_fd,
+            source_bundle_fd,
         )
     ):
         _fail("spawn sources must be safe duplicated descriptors")
@@ -2177,6 +2351,11 @@ def _build_file_actions(
         (os.POSIX_SPAWN_DUP2, runner_fd, _CHILD_RUNNER_FD),
         (os.POSIX_SPAWN_DUP2, python_fd, _CHILD_PYTHON_FD),
         (os.POSIX_SPAWN_DUP2, taskset_exec_fd, _CHILD_TASKSET_FD),
+        (
+            os.POSIX_SPAWN_DUP2,
+            source_bundle_fd,
+            _CHILD_SOURCE_BUNDLE_FD,
+        ),
     )
 
 
@@ -2586,6 +2765,7 @@ def _close_activation_channel(channel: socket.socket) -> None:
 def _supervise_child_masked(
     cpu_ids: tuple[int, int],
     activation_callback: _Activation,
+    source_bundle_fd: int,
     /,
     *,
     signal_dispositions: _SignalDispositionFrame,
@@ -2597,6 +2777,7 @@ def _supervise_child_masked(
 
     _require_plan(plan)
     _require_limits(limits)
+    _require_source_bundle_descriptor(source_bundle_fd)
     _registered_argv(plan, cpu_ids)
     _require_authoritative_wait4()
     _require_single_parent_thread()
@@ -2615,6 +2796,7 @@ def _supervise_child_masked(
     taskset_source_fd = -1
     python_source_fd = -1
     runner_source_fd = -1
+    bundle_source_fd = -1
     handle: _ChildHandle | None = None
     journaled_handles: list[_ChildHandle] = []
     activation_state: _ActivationState | None = None
@@ -2636,6 +2818,7 @@ def _supervise_child_masked(
         if not stat.S_ISCHR(os.fstat(null_fd).st_mode):
             _fail("/dev/null is not a character device")
         taskset_fd, python_fd, runner_fd = _pin_launch_files(plan)
+        bundle_source_fd = _open_independent_source_bundle_descriptor(source_bundle_fd)
         child_source_fd = _duplicate_safe_descriptor(child_channel.fileno())
         null_source_fd = _duplicate_safe_descriptor(null_fd)
         taskset_source_fd = _duplicate_safe_descriptor(taskset_fd)
@@ -2659,14 +2842,20 @@ def _supervise_child_masked(
                 runner_fd=runner_source_fd,
                 python_fd=python_source_fd,
                 taskset_exec_fd=taskset_source_fd,
+                source_bundle_fd=bundle_source_fd,
             )
             start = kernel.monotonic_ns()
             try:
+                _require_matching_source_bundle_descriptors(
+                    source_bundle_fd,
+                    bundle_source_fd,
+                )
                 pid = kernel.spawn(
                     executable_path,
                     argv,
                     environment,
                     file_actions,
+                    bundle_source_fd,
                 )
             except BaseException:
                 ambiguous_children = _kernel_child_journal(kernel)
@@ -2710,6 +2899,8 @@ def _supervise_child_masked(
         python_source_fd = -1
         os.close(runner_source_fd)
         runner_source_fd = -1
+        os.close(bundle_source_fd)
+        bundle_source_fd = -1
         activation_state, activation_thread = _start_activation(
             activation_callback,
             parent_channel,
@@ -2802,6 +2993,9 @@ def _supervise_child_masked(
         if runner_source_fd >= 0:
             with suppress(OSError):
                 os.close(runner_source_fd)
+        if bundle_source_fd >= 0:
+            with suppress(OSError):
+                os.close(bundle_source_fd)
         if scratch_root is not None:
             with suppress(OSError):
                 scratch_root.close()
@@ -2825,6 +3019,7 @@ def _contain_unregistered_parent_children(kernel: _Kernel) -> bool:
 def _supervise_child(
     cpu_ids: tuple[int, int],
     activation_callback: _Activation,
+    source_bundle_fd: int,
     /,
     *,
     plan: _LaunchPlan = _REGISTERED_PLAN,
@@ -2845,6 +3040,7 @@ def _supervise_child(
         result = _supervise_child_masked(
             cpu_ids,
             activation_callback,
+            source_bundle_fd,
             signal_dispositions=signal_dispositions,
             plan=plan,
             limits=limits,

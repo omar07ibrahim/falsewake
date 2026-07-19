@@ -26,6 +26,66 @@ from falsewake import experiment_002_supervisor as supervisor
 SOURCE_PATH = (
     Path(__file__).parents[1] / "src" / "falsewake" / "experiment_002_supervisor.py"
 )
+_TEST_SOURCE_BUNDLE = b"falsewake synthetic sealed source bundle\n"
+
+
+def _source_bundle_fd(
+    payload: bytes = _TEST_SOURCE_BUNDLE,
+    *,
+    byte_count: int | None = None,
+    mode: int = 0o400,
+    seals: int = supervisor._SOURCE_BUNDLE_MEMFD_SEALS,
+    read_only: bool = True,
+    inheritable: bool = False,
+) -> int:
+    owner = os.memfd_create(
+        "falsewake-test-source-bundle",
+        os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+    )
+    result = -1
+    try:
+        size = len(payload) if byte_count is None else byte_count
+        os.ftruncate(owner, size)
+        if payload:
+            os.pwrite(owner, payload[:size], 0)
+        os.fchmod(owner, mode)
+        fcntl.fcntl(owner, fcntl.F_ADD_SEALS, seals)
+        if read_only:
+            result = os.open(
+                f"/proc/self/fd/{owner}",
+                os.O_RDONLY | os.O_CLOEXEC,
+            )
+        else:
+            result = owner
+            owner = -1
+        os.set_inheritable(result, inheritable)
+        return result
+    except BaseException:
+        if result >= 0:
+            with suppress(OSError):
+                os.close(result)
+        raise
+    finally:
+        if owner >= 0:
+            os.close(owner)
+
+
+def _supervise_child(
+    cpu_ids: tuple[int, int],
+    activation_callback: supervisor._Activation,
+    /,
+    **kwargs: object,
+) -> supervisor._SupervisedChildResult:
+    source_bundle = _source_bundle_fd()
+    try:
+        return supervisor._supervise_child(
+            cpu_ids,
+            activation_callback,
+            source_bundle,
+            **kwargs,  # type: ignore[arg-type]
+        )
+    finally:
+        os.close(source_bundle)
 
 
 class FakeKernel:
@@ -62,6 +122,7 @@ class FakeKernel:
                 tuple[str, ...],
                 dict[str, str],
                 tuple[supervisor._FileAction, ...],
+                int,
             ]
         ] = []
         self.wait_calls: list[tuple[int, int]] = []
@@ -98,9 +159,16 @@ class FakeKernel:
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[supervisor._FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
         self.spawn_calls.append(
-            (executable_path, argv, dict(environment), file_actions)
+            (
+                executable_path,
+                argv,
+                dict(environment),
+                file_actions,
+                source_bundle_fd,
+            )
         )
         self.spawned = True
         return self.pid
@@ -243,6 +311,16 @@ def test_source_is_standard_library_only_and_not_enabled() -> None:
 
 
 def test_registered_production_constants_are_exact() -> None:
+    assert supervisor._CHILD_SOURCE_BUNDLE_FD == 7
+    assert supervisor._SAFE_SOURCE_FD_MINIMUM == 8
+    assert supervisor._SOURCE_BUNDLE_BYTES_MAXIMUM == 256 << 20
+    assert (
+        supervisor._SOURCE_BUNDLE_MEMFD_SEALS
+        == fcntl.F_SEAL_WRITE
+        | fcntl.F_SEAL_GROW
+        | fcntl.F_SEAL_SHRINK
+        | fcntl.F_SEAL_SEAL
+    )
     assert supervisor._TASKSET_EXECUTABLE == "/usr/bin/taskset"
     assert (
         supervisor._PYTHON_EXECUTABLE
@@ -746,23 +824,195 @@ def test_real_process_sampler_reads_current_process() -> None:
     assert sample.child_pids == ()
 
 
+def test_source_bundle_descriptor_is_exact_and_offset_independent() -> None:
+    descriptor = _source_bundle_fd()
+    try:
+        os.lseek(descriptor, 7, os.SEEK_SET)
+        supervisor._require_source_bundle_descriptor(descriptor)
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == 7
+        metadata = os.fstat(descriptor)
+        assert stat.S_ISREG(metadata.st_mode)
+        assert metadata.st_nlink == 0
+        assert stat.S_IMODE(metadata.st_mode) == 0o400
+        assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) == (
+            supervisor._SOURCE_BUNDLE_MEMFD_SEALS
+        )
+        assert fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == (os.O_RDONLY)
+    finally:
+        os.close(descriptor)
+
+
+def test_source_bundle_full_container_bound_is_inclusive() -> None:
+    descriptor = _source_bundle_fd(byte_count=supervisor._SOURCE_BUNDLE_BYTES_MAXIMUM)
+    try:
+        supervisor._require_source_bundle_descriptor(descriptor)
+        assert os.fstat(descriptor).st_size == 256 << 20
+    finally:
+        os.close(descriptor)
+
+
+def test_source_bundle_reopen_has_an_independent_open_file_description() -> None:
+    descriptor = _source_bundle_fd()
+    independent = -1
+    try:
+        os.lseek(descriptor, 7, os.SEEK_SET)
+        independent = supervisor._open_independent_source_bundle_descriptor(descriptor)
+        assert independent >= supervisor._SAFE_SOURCE_FD_MINIMUM
+        assert os.lseek(independent, 0, os.SEEK_CUR) == 0
+        assert os.read(independent, 1) == _TEST_SOURCE_BUNDLE[:1]
+        assert os.lseek(independent, 0, os.SEEK_CUR) == 1
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == 7
+        assert os.lseek(independent, 3, os.SEEK_SET) == 3
+        assert os.read(independent, 1) == _TEST_SOURCE_BUNDLE[3:4]
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == 7
+        supervisor._require_matching_source_bundle_descriptors(
+            descriptor,
+            independent,
+        )
+    finally:
+        if independent >= 0:
+            os.close(independent)
+        os.close(descriptor)
+
+
+def test_source_bundle_match_rejects_a_different_sealed_memfd() -> None:
+    descriptor = _source_bundle_fd()
+    different_caller = _source_bundle_fd()
+    different = -1
+    try:
+        different = supervisor._open_independent_source_bundle_descriptor(
+            different_caller
+        )
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="does not exactly match caller",
+        ):
+            supervisor._require_matching_source_bundle_descriptors(
+                descriptor,
+                different,
+            )
+    finally:
+        if different >= 0:
+            os.close(different)
+        os.close(different_caller)
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    "missing_seal",
+    [
+        fcntl.F_SEAL_WRITE,
+        fcntl.F_SEAL_GROW,
+        fcntl.F_SEAL_SHRINK,
+        fcntl.F_SEAL_SEAL,
+    ],
+)
+def test_source_bundle_rejects_each_missing_seal(missing_seal: int) -> None:
+    descriptor = _source_bundle_fd(
+        seals=supervisor._SOURCE_BUNDLE_MEMFD_SEALS & ~missing_seal
+    )
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="source bundle.*seals",
+        ):
+            supervisor._require_source_bundle_descriptor(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "zero",
+        "oversized",
+        "wrong-mode",
+        "writable",
+        "inheritable",
+        "closed",
+        "disk",
+        "pipe",
+    ],
+)
+def test_source_bundle_rejects_malformed_descriptor_geometry(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    cleanup: list[int] = []
+    if kind == "zero":
+        descriptor = _source_bundle_fd(payload=b"", byte_count=0)
+    elif kind == "oversized":
+        descriptor = _source_bundle_fd(
+            byte_count=supervisor._SOURCE_BUNDLE_BYTES_MAXIMUM + 1
+        )
+    elif kind == "wrong-mode":
+        descriptor = _source_bundle_fd(mode=0o440)
+    elif kind == "writable":
+        descriptor = _source_bundle_fd(read_only=False)
+    elif kind == "inheritable":
+        descriptor = _source_bundle_fd(inheritable=True)
+    elif kind == "closed":
+        descriptor = _source_bundle_fd()
+        os.close(descriptor)
+    elif kind == "disk":
+        path = tmp_path / "bundle"
+        path.write_bytes(_TEST_SOURCE_BUNDLE)
+        path.chmod(0o400)
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    else:
+        descriptor, write_descriptor = os.pipe2(os.O_CLOEXEC)
+        cleanup.append(write_descriptor)
+    if kind != "closed":
+        cleanup.append(descriptor)
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="source bundle",
+        ):
+            supervisor._require_source_bundle_descriptor(descriptor)
+    finally:
+        for opened in cleanup:
+            os.close(opened)
+
+
+@pytest.mark.parametrize("source_bundle_fd", [7, 12])
+def test_file_actions_reject_source_bundle_low_fd_or_collision(
+    source_bundle_fd: int,
+) -> None:
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="safe|distinct",
+    ):
+        supervisor._build_file_actions(
+            parent_channel_fd=3,
+            child_channel_fd=8,
+            null_fd=9,
+            runner_fd=10,
+            python_fd=11,
+            taskset_exec_fd=12,
+            source_bundle_fd=source_bundle_fd,
+        )
+
+
 def test_file_actions_are_the_exact_fixed_descriptor_layout() -> None:
     actions = supervisor._build_file_actions(
         parent_channel_fd=3,
-        child_channel_fd=7,
-        null_fd=8,
-        runner_fd=9,
-        python_fd=10,
-        taskset_exec_fd=11,
+        child_channel_fd=8,
+        null_fd=9,
+        runner_fd=10,
+        python_fd=11,
+        taskset_exec_fd=12,
+        source_bundle_fd=13,
     )
     assert actions == (
-        (os.POSIX_SPAWN_DUP2, 8, 0),
-        (os.POSIX_SPAWN_DUP2, 8, 1),
-        (os.POSIX_SPAWN_DUP2, 8, 2),
-        (os.POSIX_SPAWN_DUP2, 7, 3),
-        (os.POSIX_SPAWN_DUP2, 9, 4),
-        (os.POSIX_SPAWN_DUP2, 10, 5),
-        (os.POSIX_SPAWN_DUP2, 11, 6),
+        (os.POSIX_SPAWN_DUP2, 9, 0),
+        (os.POSIX_SPAWN_DUP2, 9, 1),
+        (os.POSIX_SPAWN_DUP2, 9, 2),
+        (os.POSIX_SPAWN_DUP2, 8, 3),
+        (os.POSIX_SPAWN_DUP2, 10, 4),
+        (os.POSIX_SPAWN_DUP2, 11, 5),
+        (os.POSIX_SPAWN_DUP2, 12, 6),
+        (os.POSIX_SPAWN_DUP2, 13, 7),
     )
 
 
@@ -775,15 +1025,64 @@ def test_file_actions_reject_unsafe_fd3_source() -> None:
             runner_fd=9,
             python_fd=10,
             taskset_exec_fd=11,
+            source_bundle_fd=12,
         )
+
+
+def test_source_bundle_safe_duplication_fails_under_low_nofile_limit() -> None:
+    source_bundle = _source_bundle_fd()
+    original_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if original_limit[1] < supervisor._SAFE_SOURCE_FD_MINIMUM:
+        os.close(source_bundle)
+        pytest.skip("hard RLIMIT_NOFILE is below the fixed source range")
+    try:
+        resource.setrlimit(
+            resource.RLIMIT_NOFILE,
+            (supervisor._SAFE_SOURCE_FD_MINIMUM, original_limit[1]),
+        )
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="duplicated safely",
+        ):
+            supervisor._duplicate_safe_descriptor(source_bundle)
+        assert os.fstat(source_bundle).st_size == len(_TEST_SOURCE_BUNDLE)
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, original_limit)
+        os.close(source_bundle)
+
+
+def test_source_bundle_independent_reopen_fails_closed_under_low_nofile_limit() -> None:
+    source_bundle = _source_bundle_fd()
+    original_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if original_limit[1] < supervisor._SAFE_SOURCE_FD_MINIMUM:
+        os.close(source_bundle)
+        pytest.skip("hard RLIMIT_NOFILE is below the fixed source range")
+    try:
+        resource.setrlimit(
+            resource.RLIMIT_NOFILE,
+            (supervisor._SAFE_SOURCE_FD_MINIMUM, original_limit[1]),
+        )
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="independent|duplicated safely",
+        ):
+            supervisor._open_independent_source_bundle_descriptor(source_bundle)
+        assert os.fstat(source_bundle).st_size == len(_TEST_SOURCE_BUNDLE)
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, original_limit)
+        os.close(source_bundle)
 
 
 def test_safe_cloexec_source_is_duplicated_to_child_fd3_across_exec() -> None:
     parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     null_fd = os.open(os.devnull, os.O_RDWR | os.O_CLOEXEC)
+    source_bundle_fd = _source_bundle_fd()
     child_source = supervisor._duplicate_safe_descriptor(child.fileno())
     null_source = supervisor._duplicate_safe_descriptor(null_fd)
     runner_source = supervisor._duplicate_safe_descriptor(null_fd)
+    bundle_source = supervisor._open_independent_source_bundle_descriptor(
+        source_bundle_fd
+    )
     python_source = supervisor._open_validated_launch_snapshot(
         supervisor._PYTHON_RESOLVED_EXECUTABLE,
         executable=True,
@@ -798,7 +1097,7 @@ def test_safe_cloexec_source_is_duplicated_to_child_fd3_across_exec() -> None:
     os.set_inheritable(extra, True)
     pid = -1
     try:
-        assert child_source >= 7 and null_source >= 7
+        assert child_source >= 8 and null_source >= 8
         assert not os.get_inheritable(child_source)
         assert not os.get_inheritable(null_source)
         actions = supervisor._build_file_actions(
@@ -808,6 +1107,7 @@ def test_safe_cloexec_source_is_duplicated_to_child_fd3_across_exec() -> None:
             runner_fd=runner_source,
             python_fd=python_source,
             taskset_exec_fd=executable_source,
+            source_bundle_fd=bundle_source,
         )
         argv = (
             supervisor._TASKSET_EXECUTABLE,
@@ -829,6 +1129,7 @@ def test_safe_cloexec_source_is_duplicated_to_child_fd3_across_exec() -> None:
             argv,
             {"LC_ALL": "C"},
             actions,
+            bundle_source,
         )
         child.close()
         assert parent.recv(64) == b"fd3-ok"
@@ -845,12 +1146,125 @@ def test_safe_cloexec_source_is_duplicated_to_child_fd3_across_exec() -> None:
         parent.close()
         child.close()
         os.close(null_fd)
+        os.close(source_bundle_fd)
         os.close(child_source)
         os.close(null_source)
         os.close(runner_source)
+        os.close(bundle_source)
         os.close(python_source)
         os.close(executable_source)
         os.close(extra)
+
+
+def test_fd7_bundle_survives_real_taskset_python_runner_bootstrap_and_closes(
+    tmp_path: Path,
+) -> None:
+    allowed = sorted(os.sched_getaffinity(0))
+    if len(allowed) < 2:
+        pytest.skip("live registered taskset chain requires two logical CPUs")
+    cpu_ids = (allowed[0], allowed[1])
+    payload = b"sealed FD7 live bootstrap probe\x00\xff"
+    source_bundle = _source_bundle_fd(payload)
+    os.lseek(source_bundle, len(payload), os.SEEK_SET)
+    parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    parent.settimeout(10.0)
+    null_fd = os.open(os.devnull, os.O_RDWR | os.O_CLOEXEC)
+    extra = supervisor._duplicate_safe_descriptor(null_fd, minimum=32)
+    os.set_inheritable(extra, True)
+    runner_path = tmp_path / "fd7-runner.py"
+    runner_path.write_text(
+        "import fcntl,os,stat\n"
+        f"_payload={payload!r}\n"
+        f"_extra={extra}\n"
+        "_fd=7\n"
+        "_meta=os.fstat(_fd)\n"
+        "_first=os.read(7,1)\n"
+        "_remaining=os.read(_fd,len(_payload))\n"
+        "_ok=(stat.S_ISREG(_meta.st_mode) and _meta.st_nlink==0 "
+        "and stat.S_IMODE(_meta.st_mode)==0o400 "
+        "and _first+_remaining==_payload "
+        "and fcntl.fcntl(_fd,fcntl.F_GET_SEALS)=="
+        f"{supervisor._SOURCE_BUNDLE_MEMFD_SEALS} "
+        "and fcntl.fcntl(_fd,fcntl.F_GETFL)&os.O_ACCMODE==os.O_RDONLY "
+        "and os.get_inheritable(_fd))\n"
+        "try:\n os.fstat(_extra)\n"
+        "except OSError:\n pass\n"
+        "else:\n _ok=False\n"
+        "os.close(_fd)\n"
+        "try:\n os.fstat(_fd)\n"
+        "except OSError:\n pass\n"
+        "else:\n _ok=False\n"
+        "os.write(3,b'fd7-bootstrap-ok' if _ok else b'fd7-bootstrap-bad')\n",
+        encoding="utf-8",
+    )
+    runner_master = supervisor._open_validated_launch_snapshot(
+        os.fspath(runner_path),
+        executable=False,
+    )
+    python_master = supervisor._open_validated_launch_snapshot(
+        supervisor._PYTHON_RESOLVED_EXECUTABLE,
+        executable=True,
+        expected_sha256=supervisor._PYTHON_RESOLVED_SHA256,
+    )
+    taskset_master = supervisor._open_validated_launch_snapshot(
+        supervisor._TASKSET_EXECUTABLE,
+        executable=True,
+        expected_sha256=supervisor._TASKSET_SHA256,
+    )
+    child_source = supervisor._duplicate_safe_descriptor(child.fileno())
+    null_source = supervisor._duplicate_safe_descriptor(null_fd)
+    runner_source = supervisor._duplicate_safe_descriptor(runner_master)
+    python_source = supervisor._duplicate_safe_descriptor(python_master)
+    taskset_source = supervisor._duplicate_safe_descriptor(taskset_master)
+    bundle_source = supervisor._open_independent_source_bundle_descriptor(source_bundle)
+    pid = -1
+    try:
+        actions = supervisor._build_file_actions(
+            parent_channel_fd=parent.fileno(),
+            child_channel_fd=child_source,
+            null_fd=null_source,
+            runner_fd=runner_source,
+            python_fd=python_source,
+            taskset_exec_fd=taskset_source,
+            source_bundle_fd=bundle_source,
+        )
+        pid = supervisor._raw_posix_spawn(
+            f"/proc/self/fd/{supervisor._CHILD_TASKSET_FD}",
+            supervisor._pinned_spawn_argv(supervisor._REGISTERED_PLAN, cpu_ids),
+            dict(supervisor._REGISTERED_ENVIRONMENT_ITEMS),
+            actions,
+            bundle_source,
+        )
+        child.close()
+        assert parent.recv(64) == b"fd7-bootstrap-ok"
+        waited, status_value = os.waitpid(pid, 0)
+        pid = -1
+        assert waited > 0
+        assert os.WIFEXITED(status_value)
+        assert os.WEXITSTATUS(status_value) == 0
+        assert os.lseek(source_bundle, 0, os.SEEK_CUR) == len(payload)
+    finally:
+        if pid > 0:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        parent.close()
+        child.close()
+        for descriptor in (
+            null_fd,
+            extra,
+            source_bundle,
+            runner_master,
+            python_master,
+            taskset_master,
+            child_source,
+            null_source,
+            runner_source,
+            python_source,
+            taskset_source,
+            bundle_source,
+        ):
+            os.close(descriptor)
 
 
 def test_wait4_retries_eintr_and_never_waits_for_any_child() -> None:
@@ -951,7 +1365,7 @@ def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
     def activate(channel: socket.socket, pid: int) -> None:
         activations.append((channel.family, pid))
 
-    result = supervisor._supervise_child(
+    result = _supervise_child(
         (2, 7),
         activate,
         plan=plan,
@@ -968,7 +1382,9 @@ def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
     assert activations == [(socket.AF_UNIX, kernel.pid)]
     assert kernel.affinity_calls == [kernel.pid]
     assert len(kernel.spawn_calls) == 1
-    executable_path, argv, environment, actions = kernel.spawn_calls[0]
+    executable_path, argv, environment, actions, source_bundle_fd = kernel.spawn_calls[
+        0
+    ]
     assert executable_path == "/proc/self/fd/6"
     assert argv == supervisor._pinned_spawn_argv(plan, (2, 7))
     assert environment == dict(plan.environment_items)
@@ -981,9 +1397,180 @@ def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
     assert any(
         action[0] == os.POSIX_SPAWN_DUP2 and action[-1] == 3 for action in actions
     )
+    assert actions[-1] == (
+        os.POSIX_SPAWN_DUP2,
+        source_bundle_fd,
+        supervisor._CHILD_SOURCE_BUNDLE_FD,
+    )
+    with pytest.raises(OSError) as caught:
+        os.fstat(source_bundle_fd)
+    assert caught.value.errno == errno.EBADF
     assert Path(plan.scratch_root).is_dir()
     assert Path(plan.staging_root).is_dir()
     supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+
+
+def test_supervision_reuses_issuer_bundle_without_owning_it_and_closes_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    source_bundle = _source_bundle_fd()
+    os.lseek(source_bundle, len(_TEST_SOURCE_BUNDLE), os.SEEK_SET)
+    try:
+        for ordinal in range(2):
+            kernel = FakeKernel(
+                pid=41_001 + ordinal,
+                times=[10 * ordinal, 10 * ordinal + 1, 10 * ordinal + 2],
+            )
+            supervisor._supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                source_bundle,
+                plan=plan,
+                limits=_limits(),
+                kernel=kernel,
+            )
+            assert os.fstat(source_bundle).st_size == len(_TEST_SOURCE_BUNDLE)
+            assert os.lseek(source_bundle, 0, os.SEEK_CUR) == len(_TEST_SOURCE_BUNDLE)
+            safe_source = kernel.spawn_calls[0][-1]
+            assert safe_source != source_bundle
+            with pytest.raises(OSError) as caught:
+                os.fstat(safe_source)
+            assert caught.value.errno == errno.EBADF
+            if ordinal == 0:
+                supervisor._remove_directory_tree(plan.scratch_root)
+    finally:
+        os.close(source_bundle)
+        supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+
+
+def test_invalid_bundle_fails_before_scratch_or_spawn_and_remains_caller_owned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel()
+    source_bundle = _source_bundle_fd(read_only=False)
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="source bundle.*read-only",
+        ):
+            supervisor._supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                source_bundle,
+                plan=plan,
+                limits=_limits(),
+                kernel=kernel,
+            )
+        assert os.fstat(source_bundle).st_size == len(_TEST_SOURCE_BUNDLE)
+        assert kernel.spawn_calls == []
+        assert not Path(plan.scratch_root).exists()
+        assert Path(plan.staging_root).is_dir()
+    finally:
+        os.close(source_bundle)
+        supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_bundle_source_independent_reopen_failure_cleans_every_owned_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel()
+    source_bundle = _source_bundle_fd()
+    original = supervisor._open_independent_source_bundle_descriptor
+
+    def reopen(descriptor: int) -> int:
+        if descriptor == source_bundle:
+            raise supervisor.Experiment002SupervisorError(
+                "synthetic source bundle independent reopen failure"
+            )
+        return original(descriptor)
+
+    monkeypatch.setattr(
+        supervisor,
+        "_open_independent_source_bundle_descriptor",
+        reopen,
+    )
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="synthetic source bundle independent reopen",
+        ):
+            supervisor._supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                source_bundle,
+                plan=plan,
+                limits=_limits(),
+                kernel=kernel,
+            )
+        assert os.fstat(source_bundle).st_size == len(_TEST_SOURCE_BUNDLE)
+        assert kernel.spawn_calls == []
+        assert not Path(plan.scratch_root).exists()
+        assert Path(plan.staging_root).is_dir()
+    finally:
+        os.close(source_bundle)
+        supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_bundle_caller_swap_immediately_before_spawn_fails_revalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel()
+    source_bundle = _source_bundle_fd()
+    replacement = _source_bundle_fd(b"different immutable source bundle\n")
+    captured_sources: list[int] = []
+    original_open = supervisor._open_independent_source_bundle_descriptor
+
+    def capture_source(descriptor: int) -> int:
+        result = original_open(descriptor)
+        captured_sources.append(result)
+        return result
+
+    def swap_caller() -> int:
+        os.dup2(replacement, source_bundle, inheritable=False)
+        return 0
+
+    monkeypatch.setattr(
+        supervisor,
+        "_open_independent_source_bundle_descriptor",
+        capture_source,
+    )
+    kernel.monotonic_ns = swap_caller  # type: ignore[method-assign]
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="does not exactly match caller",
+        ):
+            supervisor._supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                source_bundle,
+                plan=plan,
+                limits=_limits(),
+                kernel=kernel,
+            )
+        assert kernel.spawn_calls == []
+        assert len(captured_sources) == 1
+        with pytest.raises(OSError) as caught:
+            os.fstat(captured_sources[0])
+        assert caught.value.errno == errno.EBADF
+        assert not Path(plan.scratch_root).exists()
+        assert Path(plan.staging_root).is_dir()
+    finally:
+        os.close(replacement)
+        os.close(source_bundle)
+        supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocked(
@@ -994,7 +1581,9 @@ def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocke
     _prepare_staging(plan)
     kernel = FakeKernel(times=[0, 1, 2, 3, 4])
     original = supervisor._build_file_actions
+    original_match = supervisor._require_matching_source_bundle_descriptors
     observed_masks: list[set[int]] = []
+    revalidation_masks: list[set[int]] = []
 
     def inspect_mask(
         *,
@@ -1004,6 +1593,7 @@ def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocke
         runner_fd: int,
         python_fd: int,
         taskset_exec_fd: int,
+        source_bundle_fd: int,
     ) -> tuple[supervisor._FileAction, ...]:
         observed_masks.append(
             {int(value) for value in signal.pthread_sigmask(signal.SIG_BLOCK, set())}
@@ -1015,10 +1605,22 @@ def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocke
             runner_fd=runner_fd,
             python_fd=python_fd,
             taskset_exec_fd=taskset_exec_fd,
+            source_bundle_fd=source_bundle_fd,
         )
 
+    def inspect_match(caller_descriptor: int, independent_descriptor: int) -> None:
+        revalidation_masks.append(
+            {int(value) for value in signal.pthread_sigmask(signal.SIG_BLOCK, set())}
+        )
+        original_match(caller_descriptor, independent_descriptor)
+
     monkeypatch.setattr(supervisor, "_build_file_actions", inspect_mask)
-    supervisor._supervise_child(
+    monkeypatch.setattr(
+        supervisor,
+        "_require_matching_source_bundle_descriptors",
+        inspect_match,
+    )
+    _supervise_child(
         (2, 7),
         lambda _channel, _pid: None,
         plan=plan,
@@ -1027,6 +1629,8 @@ def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocke
     )
     assert len(observed_masks) == 1
     assert supervisor._blockable_signals() <= observed_masks[0]
+    assert len(revalidation_masks) == 1
+    assert supervisor._blockable_signals() <= revalidation_masks[0]
     supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
 
 
@@ -1054,7 +1658,7 @@ def test_supervise_resource_breach_kills_reaps_and_cleans(
         times=[0, 1],
     )
     with pytest.raises(supervisor.Experiment002SupervisorError, match=message):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1086,7 +1690,7 @@ def test_supervise_timeout_kills_and_reaps(
         times=[0, 101],
     )
     with pytest.raises(supervisor.Experiment002SupervisorError, match="wall-time"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1112,7 +1716,7 @@ def test_terminal_ru_maxrss_failure_never_signals_reaped_pid(
         times=[0, 1, 2, 3],
     )
     with pytest.raises(supervisor.Experiment002SupervisorError, match="RSS"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1142,7 +1746,7 @@ def test_proc_disappearance_is_pardoned_only_after_exact_terminal_wait(
         samples=[ProcessLookupError("zombie")],
         times=[0, 1, 2],
     )
-    result = supervisor._supervise_child(
+    result = _supervise_child(
         (2, 7),
         lambda _channel, _pid: None,
         plan=plan,
@@ -1178,7 +1782,7 @@ def test_activation_is_monitored_concurrently_and_failure_is_contained(
         channel.recv(1)
 
     with pytest.raises(supervisor.Experiment002SupervisorError, match="RSS"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             blocked_activation,
             plan=plan,
@@ -1209,7 +1813,7 @@ def test_activation_keyboard_interrupt_still_kills_reaps_and_cleans(
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             interrupt,
             plan=plan,
@@ -1235,13 +1839,14 @@ def test_spawn_failure_cleans_child_scratch_and_preserves_staging(
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[supervisor._FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
-        del executable_path, argv, environment, file_actions
+        del executable_path, argv, environment, file_actions, source_bundle_fd
         raise OSError("synthetic spawn failure")
 
     kernel.spawn = fail_spawn  # type: ignore[method-assign]
     with pytest.raises(OSError, match="synthetic"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1275,14 +1880,15 @@ def test_invalid_or_mismatched_spawn_pid_contains_authoritative_journal_child(
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[supervisor._FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
-        del executable_path, argv, environment, file_actions
+        del executable_path, argv, environment, file_actions, source_bundle_fd
         kernel.spawned = True
         return returned_pid
 
     kernel.spawn = invalid_spawn  # type: ignore[method-assign]
     with pytest.raises(supervisor.Experiment002SupervisorError, match=message):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1313,14 +1919,15 @@ def test_ambiguous_spawn_keyboard_interrupt_is_journaled_killed_and_reaped(
         argv: tuple[str, ...],
         environment: Mapping[str, str],
         file_actions: tuple[supervisor._FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
-        del executable_path, argv, environment, file_actions
+        del executable_path, argv, environment, file_actions, source_bundle_fd
         kernel.spawned = True
         raise KeyboardInterrupt
 
     kernel.spawn = interrupted_spawn  # type: ignore[method-assign]
     with pytest.raises(KeyboardInterrupt):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1363,7 +1970,7 @@ def test_failed_child_clears_and_restores_exact_staging_inode(
         supervisor.Experiment002SupervisorError,
         match="identity changed",
     ):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             replace_staging,
             plan=plan,
@@ -1399,7 +2006,7 @@ def test_staging_budget_breach_is_removed_after_child_failure(
             stream.truncate(4_294_967_297)
 
     with pytest.raises(supervisor.Experiment002SupervisorError, match="budget"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             exceed_budget,
             plan=plan,
@@ -1449,7 +2056,7 @@ def test_signal_disposition_frame_rejects_custom_handler_before_spawn(
         supervisor.Experiment002SupervisorError,
         match="untrusted signal disposition",
     ):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1486,7 +2093,7 @@ def test_parent_signals_remain_blocked_through_activation_and_monitor(
         )
 
     kernel.sample_process = sample  # type: ignore[method-assign]
-    supervisor._supervise_child(
+    _supervise_child(
         (2, 7),
         activate,
         plan=plan,
@@ -1553,7 +2160,7 @@ def test_monitor_sleep_request_is_strictly_below_100ms(
     plan = _test_plan(tmp_path, monkeypatch)
     _prepare_staging(plan)
     kernel = FakeKernel(times=[0, 1, 2, 3])
-    result = supervisor._supervise_child(
+    result = _supervise_child(
         (2, 7),
         lambda _channel, _pid: None,
         plan=plan,
@@ -1688,7 +2295,7 @@ def test_experiment_staging_survives_across_fresh_children(
         marker.write_bytes(b"verified seed result")
 
     first = FakeKernel(times=[0, 1, 2, 3])
-    supervisor._supervise_child(
+    _supervise_child(
         (2, 7),
         first_activation,
         plan=plan,
@@ -1701,7 +2308,7 @@ def test_experiment_staging_survives_across_fresh_children(
     def second_activation(_channel: socket.socket, _pid: int) -> None:
         assert marker.read_bytes() == b"verified seed result"
 
-    result = supervisor._supervise_child(
+    result = _supervise_child(
         (2, 7),
         second_activation,
         plan=plan,
@@ -1803,7 +2410,7 @@ def test_sampling_cycle_over_100ms_is_contained(
     with pytest.raises(
         supervisor.Experiment002SupervisorError, match="100 milliseconds"
     ):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1832,7 +2439,7 @@ def test_scheduler_oversleep_between_cycle_starts_is_contained(
         supervisor.Experiment002SupervisorError,
         match="observations.*100 milliseconds",
     ):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
@@ -1853,30 +2460,38 @@ def test_real_kernel_spawn_uses_setpgroup_empty_signal_mask_and_copied_env(
         argv: tuple[str, ...],
         environment: dict[str, str],
         file_actions: tuple[supervisor._FileAction, ...],
+        source_bundle_fd: int,
     ) -> int:
         observed.update(
             executable_path=executable_path,
             argv=argv,
             environment=environment,
             file_actions=file_actions,
+            source_bundle_fd=source_bundle_fd,
         )
         return 1234
 
     monkeypatch.setattr(supervisor, "_raw_posix_spawn", fake_spawn)
     environment = {"ONLY": "registered"}
     actions: tuple[supervisor._FileAction, ...] = ((os.POSIX_SPAWN_CLOSE, 9),)
-    result = supervisor._RealKernel().spawn(
-        "/proc/self/fd/6",
-        ("/registered/taskset", "argument"),
-        environment,
-        actions,
-    )
+    source_bundle = _source_bundle_fd()
+    try:
+        result = supervisor._RealKernel().spawn(
+            "/proc/self/fd/6",
+            ("/registered/taskset", "argument"),
+            environment,
+            actions,
+            source_bundle,
+        )
+    finally:
+        os.close(source_bundle)
     assert result == 1234
     assert observed == {
         "executable_path": "/proc/self/fd/6",
         "argv": ("/registered/taskset", "argument"),
         "environment": environment,
         "file_actions": actions,
+        "source_bundle_fd": source_bundle,
     }
     assert observed["environment"] is not environment
 
@@ -1888,7 +2503,7 @@ def test_supervisor_requires_experiment_staging_before_scratch_or_spawn(
     plan = _test_plan(tmp_path, monkeypatch)
     kernel = FakeKernel()
     with pytest.raises(supervisor.Experiment002SupervisorError, match="staging"):
-        supervisor._supervise_child(
+        _supervise_child(
             (2, 7),
             lambda _channel, _pid: None,
             plan=plan,
