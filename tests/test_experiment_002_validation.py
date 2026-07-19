@@ -4,6 +4,7 @@ import ast
 import copy
 import hashlib
 import json
+import pickle
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -213,6 +214,114 @@ def _tiny_layout(
     )
 
 
+def _tiny_issued_population(
+    *,
+    registered: bool,
+) -> tuple[
+    Experiment002Corpus,
+    tuple[CommandExample, ...],
+    FloatArray,
+    Int64Array,
+    MaterializedValidationPopulation,
+]:
+    source = _command_source(sample_count=1)
+    examples = (_command_example(source),)
+    corpus = Experiment002Corpus(
+        train_commands=(),
+        validation_commands=(source,),
+        train_backgrounds=(
+            BackgroundSource(
+                path="_background_noise_/train.wav",
+                sample_count=16_000,
+                sha256="b" * 64,
+            ),
+        ),
+        validation_background=_background(sample_count=16_000),
+        test_command_count=11_005,
+        manifest_sha256=MANIFEST_SHA256,
+    )
+    model_inputs = np.zeros((1, 40, 98), dtype=np.float32)
+    label_indices = np.array([0], dtype=np.int64)
+    model_inputs.setflags(write=False)
+    label_indices.setflags(write=False)
+    population = validation._issue_materialized_validation(
+        examples,
+        model_inputs,
+        label_indices,
+        registered_corpus=corpus if registered else None,
+        registered_marker=(
+            validation._REGISTERED_MATERIALIZATION_MARKER if registered else None
+        ),
+    )
+    return corpus, examples, model_inputs, label_indices, population
+
+
+def _install_tiny_registered_population_guards(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus: Experiment002Corpus,
+    examples: tuple[CommandExample, ...],
+) -> None:
+    source = examples[0].source
+    corpus_snapshot = (
+        corpus.manifest_sha256,
+        corpus.validation_commands,
+        corpus.validation_background,
+    )
+    example_snapshot = (
+        examples[0].source,
+        examples[0].label,
+        examples[0].label_index,
+        examples[0].identity,
+    )
+
+    def require_corpus(observed: Experiment002Corpus) -> None:
+        if (
+            observed is not corpus
+            or (
+                observed.manifest_sha256,
+                observed.validation_commands,
+                observed.validation_background,
+            )
+            != corpus_snapshot
+        ):
+            raise Experiment002ValidationError("canonical corpus mismatch")
+
+    def require_population(
+        observed_corpus: Experiment002Corpus,
+        observed_examples: tuple[CommandExample | WindowExample, ...],
+    ) -> None:
+        if (
+            observed_corpus is not corpus
+            or observed_examples is not examples
+            or len(observed_examples) != 1
+            or type(observed_examples[0]) is not CommandExample
+        ):
+            raise Experiment002ValidationError("canonical order mismatch")
+        observed = observed_examples[0]
+        if (
+            observed.source is not source
+            or (
+                observed.source,
+                observed.label,
+                observed.label_index,
+                observed.identity,
+            )
+            != example_snapshot
+        ):
+            raise Experiment002ValidationError("canonical metadata mismatch")
+
+    monkeypatch.setattr(
+        validation,
+        "_require_registered_validation_corpus",
+        require_corpus,
+    )
+    monkeypatch.setattr(
+        validation,
+        "_require_registered_validation_population",
+        require_population,
+    )
+
+
 def test_validation_module_is_rng_free_and_reconciles_frozen_contracts() -> None:
     source_path = Path("src/falsewake/experiment_002_validation.py")
     source = source_path.read_text(encoding="utf-8")
@@ -317,6 +426,9 @@ def test_tiny_command_and_window_use_exact_pcm_and_owned_read_only_outputs(
     assert result.label_indices.flags.c_contiguous
     assert result.label_indices.flags.owndata
     assert not result.label_indices.flags.writeable
+    private_state = validation._issued_materialized_state(result)
+    assert private_state.registered_marker is None
+    assert private_state.registered_corpus is None
     with pytest.raises(ValueError, match="read-only"):
         result.model_inputs[0, 0, 0] = np.float32(0.0)
     with pytest.raises(ValueError, match="read-only"):
@@ -630,6 +742,8 @@ def test_public_entrypoint_verifies_each_trust_boundary_exactly_once(
         *,
         layout: validation._ValidationLayout,
         model_input_extractor: validation._ModelInputExtractor | None = None,
+        registered_corpus: Experiment002Corpus | None = None,
+        registered_marker: object | None = None,
     ) -> MaterializedValidationPopulation:
         events.append("materialize")
         assert observed == examples
@@ -637,6 +751,8 @@ def test_public_entrypoint_verifies_each_trust_boundary_exactly_once(
         assert stats is returned_stats
         assert layout is validation._REGISTERED_LAYOUT
         assert model_input_extractor is None
+        assert registered_corpus is corpus_argument
+        assert registered_marker is validation._REGISTERED_MATERIALIZATION_MARKER
         return sentinel
 
     monkeypatch.setattr(
@@ -655,8 +771,9 @@ def test_public_entrypoint_verifies_each_trust_boundary_exactly_once(
     )
     monkeypatch.setattr(validation, "_materialize_validation_population", materialize)
 
+    corpus_argument = cast(Experiment002Corpus, object())
     observed = validation.materialize_registered_validation(
-        cast(Experiment002Corpus, object()),
+        corpus_argument,
         typed_cache,
         capability,
     )
@@ -889,25 +1006,217 @@ def test_extractor_failures_layout_order_and_result_invariants(
     labels = np.array([0], dtype=np.int64)
     inputs.setflags(write=False)
     labels.setflags(write=False)
-    valid = MaterializedValidationPopulation((example,), inputs, labels)
+    valid = validation._issue_materialized_validation((example,), inputs, labels)
     assert valid.examples == (example,)
+
+    with pytest.raises(TypeError, match="issued"):
+        MaterializedValidationPopulation()
 
     mismatched = np.array([1], dtype=np.int64)
     mismatched.setflags(write=False)
     with pytest.raises(Experiment002ValidationError, match="example order"):
-        MaterializedValidationPopulation((example,), inputs, mismatched)
+        validation._issue_materialized_validation((example,), inputs, mismatched)
 
     writable_inputs = np.zeros((1, 40, 98), dtype=np.float32)
     with pytest.raises(Experiment002ValidationError, match="read-only"):
-        MaterializedValidationPopulation((example,), writable_inputs, labels)
+        validation._issue_materialized_validation((example,), writable_inputs, labels)
 
     wrong_frames = np.zeros((1, 40, 1), dtype=np.float32)
     wrong_frames.setflags(write=False)
     with pytest.raises(Experiment002ValidationError, match="shape or dtype"):
-        MaterializedValidationPopulation((example,), wrong_frames, labels)
+        validation._issue_materialized_validation((example,), wrong_frames, labels)
 
     nonfinite = np.zeros((1, 40, 98), dtype=np.float32)
     nonfinite[0, 0, 0] = np.float32(np.inf)
     nonfinite.setflags(write=False)
     with pytest.raises(Experiment002ValidationError, match="non-finite"):
-        MaterializedValidationPopulation((example,), nonfinite, labels)
+        validation._issue_materialized_validation((example,), nonfinite, labels)
+
+
+def test_registered_materialization_capability_binds_exact_issuer_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus, examples, model_inputs, label_indices, population = _tiny_issued_population(
+        registered=True
+    )
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+
+    validation.verify_registered_materialized_validation(corpus, population)
+    state = validation._issued_materialized_state(population)
+    assert state.examples is examples
+    assert state.model_inputs is model_inputs
+    assert state.label_indices is label_indices
+    assert state.registered_corpus is corpus
+    assert state.registered_marker is validation._REGISTERED_MATERIALIZATION_MARKER
+    assert (
+        state.model_inputs_sha256
+        == hashlib.sha256(model_inputs.tobytes(order="C")).hexdigest()
+    )
+    assert (
+        state.label_indices_sha256
+        == hashlib.sha256(label_indices.tobytes(order="C")).hexdigest()
+    )
+    assert population.examples is examples
+    assert population.model_inputs is model_inputs
+    assert population.label_indices is label_indices
+
+    private = _tiny_issued_population(registered=False)[-1]
+    with pytest.raises(Experiment002ValidationError, match="registered corpus"):
+        validation.verify_registered_materialized_validation(corpus, private)
+
+    equal_corpus = copy.copy(corpus)
+    with pytest.raises(Experiment002ValidationError, match="registered corpus"):
+        validation.verify_registered_materialized_validation(equal_corpus, population)
+
+
+def test_materialized_population_rejects_copies_pickle_and_manual_forges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus, examples, model_inputs, label_indices, population = _tiny_issued_population(
+        registered=True
+    )
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+
+    clones = (
+        copy.copy(population),
+        copy.deepcopy(population),
+        pickle.loads(pickle.dumps(population)),
+    )
+    for clone in clones:
+        assert clone is not population
+        with pytest.raises(Experiment002ValidationError, match="not issued"):
+            validation.verify_registered_materialized_validation(corpus, clone)
+        with pytest.raises(Experiment002ValidationError, match="not issued"):
+            _ = clone.model_inputs
+
+    forged = object.__new__(MaterializedValidationPopulation)
+    object.__setattr__(forged, "_examples", examples)
+    object.__setattr__(forged, "_model_inputs", model_inputs)
+    object.__setattr__(forged, "_label_indices", label_indices)
+    object.__setattr__(
+        forged,
+        "_registered_marker",
+        validation._REGISTERED_MATERIALIZATION_MARKER,
+    )
+    with pytest.raises(Experiment002ValidationError, match="not issued"):
+        validation.verify_registered_materialized_validation(corpus, forged)
+
+    class PopulationSubclass(MaterializedValidationPopulation):
+        pass
+
+    subclass = object.__new__(PopulationSubclass)
+    with pytest.raises(TypeError, match="MaterializedValidationPopulation"):
+        validation.verify_registered_materialized_validation(
+            corpus,
+            cast(MaterializedValidationPopulation, subclass),
+        )
+
+
+def test_registered_materialization_rejects_identity_and_byte_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fresh() -> tuple[
+        Experiment002Corpus,
+        tuple[CommandExample, ...],
+        FloatArray,
+        Int64Array,
+        MaterializedValidationPopulation,
+    ]:
+        issued = _tiny_issued_population(registered=True)
+        _install_tiny_registered_population_guards(
+            monkeypatch,
+            issued[0],
+            issued[1],
+        )
+        return issued
+
+    corpus, examples, model_inputs, _, population = fresh()
+    replacement_inputs = model_inputs.copy(order="C")
+    replacement_inputs.setflags(write=False)
+    assert replacement_inputs.tobytes(order="C") == model_inputs.tobytes(order="C")
+    object.__setattr__(population, "_model_inputs", replacement_inputs)
+    with pytest.raises(Experiment002ValidationError, match="changed"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, _, label_indices, population = fresh()
+    replacement_labels = label_indices.copy(order="C")
+    replacement_labels.setflags(write=False)
+    object.__setattr__(population, "_label_indices", replacement_labels)
+    with pytest.raises(Experiment002ValidationError, match="changed"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, _, _, population = fresh()
+    replacement_examples = tuple([*examples])
+    assert replacement_examples == examples and replacement_examples is not examples
+    object.__setattr__(population, "_examples", replacement_examples)
+    with pytest.raises(Experiment002ValidationError, match="changed"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, _, _, _, population = fresh()
+    object.__setattr__(population, "_registered_marker", object())
+    with pytest.raises(Experiment002ValidationError, match="changed"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, _, model_inputs, _, population = fresh()
+    model_inputs.setflags(write=True)
+    model_inputs[0, 0, 0] = np.float32(-0.0)
+    model_inputs.setflags(write=False)
+    assert model_inputs[0, 0, 0] == np.float32(0.0)
+    with pytest.raises(Experiment002ValidationError, match="bytes changed"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, _, _, label_indices, population = fresh()
+    label_indices.setflags(write=True)
+    label_indices[0] = np.int64(1)
+    label_indices.setflags(write=False)
+    with pytest.raises(Experiment002ValidationError, match="example order"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+
+def test_registered_materialization_revalidates_layout_finiteness_and_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    corpus, examples, model_inputs, _, population = _tiny_issued_population(
+        registered=True
+    )
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    model_inputs.resize((1, 20, 196), refcheck=False)
+    with pytest.raises(Experiment002ValidationError, match="shape or dtype"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, model_inputs, _, population = _tiny_issued_population(
+        registered=True
+    )
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    model_inputs.setflags(write=True)
+    model_inputs[0, 0, 0] = np.float32(np.nan)
+    model_inputs.setflags(write=False)
+    with pytest.raises(Experiment002ValidationError, match="non-finite"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, model_inputs, _, population = _tiny_issued_population(
+        registered=True
+    )
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    model_inputs.setflags(write=True)
+    with pytest.raises(Experiment002ValidationError, match="read-only"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, _, _, population = _tiny_issued_population(registered=True)
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    object.__setattr__(corpus, "manifest_sha256", "0" * 64)
+    with pytest.raises(Experiment002ValidationError, match="canonical corpus"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, _, _, population = _tiny_issued_population(registered=True)
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    object.__setattr__(examples[0], "identity", b"forged")
+    with pytest.raises(Experiment002ValidationError, match="canonical metadata"):
+        validation.verify_registered_materialized_validation(corpus, population)
+
+    corpus, examples, _, _, population = _tiny_issued_population(registered=True)
+    _install_tiny_registered_population_guards(monkeypatch, corpus, examples)
+    equal_source = copy.copy(examples[0].source)
+    object.__setattr__(examples[0], "source", equal_source)
+    with pytest.raises(Experiment002ValidationError, match="canonical metadata"):
+        validation.verify_registered_materialized_validation(corpus, population)

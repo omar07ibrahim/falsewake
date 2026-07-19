@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import threading
+import weakref
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -89,78 +92,42 @@ class _ModelInputExtractor(Protocol):
     ) -> FloatArray: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
 class MaterializedValidationPopulation:
-    """Owned, logically read-only arrays in the fixed example order.
+    """Issuer-only owned arrays in one deterministic example order.
 
     NumPy's writeable flag is not a security capability: the later source-bound
-    trainer remains the trusted sole consumer and binds the arrays by digest.
+    trainer remains the trusted sole consumer.  Registered provenance is checked
+    separately by :func:`verify_registered_materialized_validation`.
     """
 
-    examples: tuple[CommandExample | WindowExample, ...]
-    model_inputs: FloatArray
-    label_indices: Int64Array
+    _examples: tuple[CommandExample | WindowExample, ...]
+    _model_inputs: FloatArray
+    _label_indices: Int64Array
+    _registered_marker: object | None
 
-    def __post_init__(self) -> None:
-        if type(self.examples) is not tuple:
-            raise TypeError("examples must be a tuple")
-        if any(
-            type(example) not in {CommandExample, WindowExample}
-            for example in self.examples
-        ):
-            raise TypeError("examples contain an invalid example type")
-        if type(self.model_inputs) is not np.ndarray:
-            raise TypeError("model_inputs must be a NumPy array")
-        if type(self.label_indices) is not np.ndarray:
-            raise TypeError("label_indices must be a NumPy array")
+    def __init__(self) -> None:
+        raise TypeError(
+            "MaterializedValidationPopulation values are issued by this module"
+        )
 
-        example_count = len(self.examples)
-        if self.model_inputs.dtype != np.dtype(np.float32) or (
-            self.model_inputs.shape != (example_count, MEL_BINS, TIME_FRAMES)
-        ):
-            raise Experiment002ValidationError(
-                "model_inputs have an invalid shape or dtype"
-            )
-        if not self.model_inputs.flags.c_contiguous or not (
-            self.model_inputs.flags.owndata
-        ):
-            raise Experiment002ValidationError(
-                "model_inputs must be owned and C-contiguous"
-            )
-        if self.model_inputs.flags.writeable:
-            raise Experiment002ValidationError("model_inputs must be read-only")
-        for row in self.model_inputs:
-            if not np.all(np.isfinite(row)):
-                raise Experiment002ValidationError(
-                    "model_inputs contain non-finite values"
-                )
+    @property
+    def examples(self) -> tuple[CommandExample | WindowExample, ...]:
+        """Return the exact immutable tuple supplied when this value was issued."""
 
-        if self.label_indices.dtype != np.dtype(np.int64) or (
-            self.label_indices.shape != (example_count,)
-        ):
-            raise Experiment002ValidationError(
-                "label_indices have an invalid shape or dtype"
-            )
-        if not self.label_indices.flags.c_contiguous or not (
-            self.label_indices.flags.owndata
-        ):
-            raise Experiment002ValidationError(
-                "label_indices must be owned and C-contiguous"
-            )
-        if self.label_indices.flags.writeable:
-            raise Experiment002ValidationError("label_indices must be read-only")
-        if example_count and (
-            np.any(self.label_indices < 0)
-            or np.any(self.label_indices >= len(CLASS_ORDER))
-        ):
-            raise Experiment002ValidationError("label_indices are outside class order")
-        if any(
-            int(self.label_indices[index]) != example.label_index
-            for index, example in enumerate(self.examples)
-        ):
-            raise Experiment002ValidationError(
-                "label_indices differ from the example order"
-            )
+        return _issued_materialized_state(self).examples
+
+    @property
+    def model_inputs(self) -> FloatArray:
+        """Return the exact owned, read-only model-input array."""
+
+        return _issued_materialized_state(self).model_inputs
+
+    @property
+    def label_indices(self) -> Int64Array:
+        """Return the exact owned, read-only label array."""
+
+        return _issued_materialized_state(self).label_indices
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +167,24 @@ _REGISTERED_LAYOUT: Final = _ValidationLayout(
     frame_count=TIME_FRAMES,
     class_support=VALIDATION_CLASS_SUPPORT,
 )
+_REGISTERED_MATERIALIZATION_MARKER: Final = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _IssuedMaterializedValidationState:
+    examples: tuple[CommandExample | WindowExample, ...]
+    model_inputs: FloatArray
+    label_indices: Int64Array
+    model_inputs_sha256: str
+    label_indices_sha256: str
+    registered_corpus: Experiment002Corpus | None
+    registered_marker: object | None
+
+
+_ISSUED_MATERIALIZATIONS: weakref.WeakKeyDictionary[
+    MaterializedValidationPopulation, _IssuedMaterializedValidationState
+] = weakref.WeakKeyDictionary()
+_ISSUED_MATERIALIZATIONS_LOCK = threading.Lock()
 
 
 def materialize_registered_validation(
@@ -219,6 +204,8 @@ def materialize_registered_validation(
         cache,
         stats,
         layout=_REGISTERED_LAYOUT,
+        registered_corpus=corpus,
+        registered_marker=_REGISTERED_MATERIALIZATION_MARKER,
     )
 
 
@@ -229,6 +216,8 @@ def _materialize_validation_population(
     *,
     layout: _ValidationLayout,
     model_input_extractor: _ModelInputExtractor | None = None,
+    registered_corpus: Experiment002Corpus | None = None,
+    registered_marker: object | None = None,
 ) -> MaterializedValidationPopulation:
     """Private small-population hook with the production numeric path."""
 
@@ -245,11 +234,224 @@ def _materialize_validation_population(
         layout=layout,
         model_input_extractor=model_input_extractor,
     )
-    return MaterializedValidationPopulation(
+    if registered_marker is None:
+        if registered_corpus is not None:
+            raise Experiment002ValidationError(
+                "an unregistered materialization cannot bind a corpus"
+            )
+    elif registered_marker is not _REGISTERED_MATERIALIZATION_MARKER:
+        raise Experiment002ValidationError(
+            "materialization received an invalid registered-route marker"
+        )
+    elif type(registered_corpus) is not Experiment002Corpus:
+        raise TypeError("registered_corpus must be an Experiment002Corpus")
+    return _issue_materialized_validation(
+        examples,
+        model_inputs,
+        label_indices,
+        registered_corpus=registered_corpus,
+        registered_marker=registered_marker,
+    )
+
+
+def verify_registered_materialized_validation(
+    corpus: Experiment002Corpus,
+    population: MaterializedValidationPopulation,
+) -> None:
+    """Verify exact process issuance, corpus provenance, and materialized bytes."""
+
+    if type(corpus) is not Experiment002Corpus:
+        raise TypeError("corpus must be an Experiment002Corpus")
+    state = _issued_materialized_state(population)
+    if state.registered_marker is not _REGISTERED_MATERIALIZATION_MARKER or (
+        state.registered_corpus is not corpus
+    ):
+        raise Experiment002ValidationError(
+            "materialized validation was not issued for this registered corpus"
+        )
+
+    first_model_inputs_sha256 = _array_sha256(state.model_inputs)
+    first_label_indices_sha256 = _array_sha256(state.label_indices)
+    _require_registered_validation_corpus(corpus)
+    _validate_materialized_values(
+        state.examples,
+        state.model_inputs,
+        state.label_indices,
+    )
+    _require_registered_validation_population(corpus, state.examples)
+    _require_registered_validation_corpus(corpus)
+    _validate_materialized_values(
+        state.examples,
+        state.model_inputs,
+        state.label_indices,
+    )
+    second_model_inputs_sha256 = _array_sha256(state.model_inputs)
+    second_label_indices_sha256 = _array_sha256(state.label_indices)
+    if (
+        not hmac.compare_digest(
+            first_model_inputs_sha256,
+            second_model_inputs_sha256,
+        )
+        or not hmac.compare_digest(
+            second_model_inputs_sha256,
+            state.model_inputs_sha256,
+        )
+        or not hmac.compare_digest(
+            first_label_indices_sha256,
+            second_label_indices_sha256,
+        )
+        or not hmac.compare_digest(
+            second_label_indices_sha256,
+            state.label_indices_sha256,
+        )
+    ):
+        raise Experiment002ValidationError(
+            "materialized validation bytes changed after issuance"
+        )
+    if _issued_materialized_state(population) is not state:
+        raise Experiment002ValidationError(
+            "materialized validation issuance changed during verification"
+        )
+
+
+def _issue_materialized_validation(
+    examples: tuple[CommandExample | WindowExample, ...],
+    model_inputs: FloatArray,
+    label_indices: Int64Array,
+    *,
+    registered_corpus: Experiment002Corpus | None = None,
+    registered_marker: object | None = None,
+) -> MaterializedValidationPopulation:
+    if registered_marker is None:
+        if registered_corpus is not None:
+            raise Experiment002ValidationError(
+                "an unregistered materialization cannot bind a corpus"
+            )
+    elif registered_marker is not _REGISTERED_MATERIALIZATION_MARKER:
+        raise Experiment002ValidationError(
+            "materialization received an invalid registered-route marker"
+        )
+    elif type(registered_corpus) is not Experiment002Corpus:
+        raise TypeError("registered_corpus must be an Experiment002Corpus")
+    _validate_materialized_values(examples, model_inputs, label_indices)
+    model_inputs_sha256 = _array_sha256(model_inputs)
+    label_indices_sha256 = _array_sha256(label_indices)
+    _validate_materialized_values(examples, model_inputs, label_indices)
+
+    result = object.__new__(MaterializedValidationPopulation)
+    object.__setattr__(result, "_examples", examples)
+    object.__setattr__(result, "_model_inputs", model_inputs)
+    object.__setattr__(result, "_label_indices", label_indices)
+    object.__setattr__(result, "_registered_marker", registered_marker)
+    state = _IssuedMaterializedValidationState(
         examples=examples,
         model_inputs=model_inputs,
         label_indices=label_indices,
+        model_inputs_sha256=model_inputs_sha256,
+        label_indices_sha256=label_indices_sha256,
+        registered_corpus=registered_corpus,
+        registered_marker=registered_marker,
     )
+    with _ISSUED_MATERIALIZATIONS_LOCK:
+        _ISSUED_MATERIALIZATIONS[result] = state
+    return result
+
+
+def _issued_materialized_state(
+    population: MaterializedValidationPopulation,
+) -> _IssuedMaterializedValidationState:
+    if type(population) is not MaterializedValidationPopulation:
+        raise TypeError("population must be a MaterializedValidationPopulation")
+    with _ISSUED_MATERIALIZATIONS_LOCK:
+        state = _ISSUED_MATERIALIZATIONS.get(population)
+    if state is None:
+        raise Experiment002ValidationError(
+            "materialized validation was not issued by this process"
+        )
+    try:
+        raw_examples = population._examples
+        raw_model_inputs = population._model_inputs
+        raw_label_indices = population._label_indices
+        raw_registered_marker = population._registered_marker
+    except AttributeError as error:
+        raise Experiment002ValidationError(
+            "materialized validation capability is incomplete"
+        ) from error
+    if (
+        raw_examples is not state.examples
+        or raw_model_inputs is not state.model_inputs
+        or raw_label_indices is not state.label_indices
+        or raw_registered_marker is not state.registered_marker
+    ):
+        raise Experiment002ValidationError(
+            "materialized validation capability changed after issuance"
+        )
+    return state
+
+
+def _validate_materialized_values(
+    examples: tuple[CommandExample | WindowExample, ...],
+    model_inputs: FloatArray,
+    label_indices: Int64Array,
+) -> None:
+    if type(examples) is not tuple:
+        raise TypeError("examples must be a tuple")
+    if any(
+        type(example) not in {CommandExample, WindowExample} for example in examples
+    ):
+        raise TypeError("examples contain an invalid example type")
+    if type(model_inputs) is not np.ndarray:
+        raise TypeError("model_inputs must be a NumPy array")
+    if type(label_indices) is not np.ndarray:
+        raise TypeError("label_indices must be a NumPy array")
+
+    example_count = len(examples)
+    if model_inputs.dtype != np.dtype(np.float32) or (
+        model_inputs.shape != (example_count, MEL_BINS, TIME_FRAMES)
+    ):
+        raise Experiment002ValidationError(
+            "model_inputs have an invalid shape or dtype"
+        )
+    if not model_inputs.flags.c_contiguous or not model_inputs.flags.owndata:
+        raise Experiment002ValidationError(
+            "model_inputs must be owned and C-contiguous"
+        )
+    if model_inputs.flags.writeable:
+        raise Experiment002ValidationError("model_inputs must be read-only")
+    if not np.all(np.isfinite(model_inputs)):
+        raise Experiment002ValidationError("model_inputs contain non-finite values")
+
+    if label_indices.dtype != np.dtype(np.int64) or label_indices.shape != (
+        example_count,
+    ):
+        raise Experiment002ValidationError(
+            "label_indices have an invalid shape or dtype"
+        )
+    if not label_indices.flags.c_contiguous or not label_indices.flags.owndata:
+        raise Experiment002ValidationError(
+            "label_indices must be owned and C-contiguous"
+        )
+    if label_indices.flags.writeable:
+        raise Experiment002ValidationError("label_indices must be read-only")
+    if example_count and (
+        np.any(label_indices < 0) or np.any(label_indices >= len(CLASS_ORDER))
+    ):
+        raise Experiment002ValidationError("label_indices are outside class order")
+    if any(
+        int(label_indices[index]) != example.label_index
+        for index, example in enumerate(examples)
+    ):
+        raise Experiment002ValidationError(
+            "label_indices differ from the example order"
+        )
+
+
+def _array_sha256(values: np.ndarray[tuple[int, ...], np.dtype[np.generic]]) -> str:
+    if type(values) is not np.ndarray:
+        raise TypeError("values must be a NumPy array")
+    if not values.flags.c_contiguous:
+        raise Experiment002ValidationError("values must be C-contiguous")
+    return hashlib.sha256(memoryview(values).cast("B")).hexdigest()
 
 
 def _materialize_validation_arrays(
@@ -447,7 +649,7 @@ def _require_registered_validation_population(
         if (
             type(example) is not CommandExample
             or type(example.source) is not CommandSource
-            or example.source != source
+            or example.source is not source
         ):
             raise Experiment002ValidationError(
                 "validation commands differ from canonical source order"
@@ -480,7 +682,7 @@ def _require_registered_validation_population(
         if (
             type(example) is not WindowExample
             or type(example.source) is not BackgroundSource
-            or example.source != corpus.validation_background
+            or example.source is not corpus.validation_background
             or type(example.start_sample) is not int
             or example.start_sample != start_sample
         ):
