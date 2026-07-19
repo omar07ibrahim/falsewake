@@ -1,0 +1,382 @@
+{
+  "bindings": {
+    "base_implementation_commit": "a2118109e76c069fa6be2a0b3f557fc7e79d2cbc",
+    "configs": {
+      "numerics": {
+        "path": "configs/experiment-002-numerics.json",
+        "sha256": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9"
+      },
+      "phase_1": {
+        "path": "configs/experiment-002-training.json",
+        "sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+      }
+    },
+    "data": {
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_record_count": 105829,
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    },
+    "model": {
+      "parameter_tensor_count": 53,
+      "parameter_value_count": 23724,
+      "path": "src/falsewake/causal_kws.py",
+      "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+    },
+    "normalization": {
+      "artifact_byte_count": 320,
+      "artifact_path": "models/experiment-002-normalization.f32",
+      "artifact_sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e",
+      "report_path": "reports/experiment-002-normalization.json",
+      "report_sha256": "2b95565fec7dc956a4b1f667638b87e3df64cfaaca3026017942a8057c5187a8"
+    },
+    "pcm_cache": {
+      "artifact_byte_count": 2995776948,
+      "artifact_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+      "report_path": "reports/experiment-002-pcm-cache.json",
+      "report_sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca"
+    }
+  },
+  "checkpoint_selection": {
+    "across_seeds": "rank_the_three_seed_winners_by_all_four_ranking_keys",
+    "candidate_population": "all_30_completed_epoch_checkpoints_from_each_of_the_three_registered_seeds",
+    "gate_timing": "rank_all_candidates_then_complete_the_selected_fresh_rerun_then_evaluate_gates_on_that_exact_rerun_only;gates_never_filter_or_reorder_candidates",
+    "publication": "all_three_seed_histories_seed_winner_snapshots_and_the_rerun_snapshot_remain_noncanonical_in_fresh_process_scratch_until_parent_verification;an_exact_rerun_match_publishes_all_three_original_seed_histories_the_selected_rerun_history_and_the_final_pass_or_gate_failure_report_but_publishes_selected_safetensors_only_if_all_gates_pass;a_rerun_digest_mismatch_process_failure_or_budget_failure_publishes_only_an_immutable_failure_report_with_no_reusable_checkpoint;every_publication_uses_the_registered_no_overwrite_commit",
+    "ranking": [
+      "maximize_exact_12_class_macro_F1_fraction",
+      "minimize_finite_float64_validation_cross_entropy_with_no_tolerance_or_rounding",
+      "prefer_lower_zero_based_epoch_index",
+      "prefer_lower_training_seed"
+    ],
+    "selected_rerun": "a_fourth_fresh_execve_process_retrains_the_selected_seed_for_all_30_epochs_and_must_naturally_select_the_same_epoch",
+    "selected_rerun_identity": "require_byte_identical_canonical_history_and_safetensors_plus_identical_validation_input_digest_all_30_validation_prediction_digests_all_30_model_tensor_digests_and_selected_checkpoint_digest",
+    "snapshot": "immediately_after_each_epoch_validation_metrics_prediction_digest_and_model_tensor_digest_are_complete_and_before_any_later_training_call_compare_the_registered_rank;on_strict_improvement_replace_the_noncanonical_seed_winner_scratch_snapshot_with_owned_detached_CPU_C_contiguous_float32_clones_of_all_53_state_dict_tensors_in_UTF8_bytewise_name_order_and_record_its_epoch_and_digest;after_epoch_29_serialize_that_preserved_snapshot_twice_and_roundtrip_verify_it",
+    "within_seed": "rank_the_30_epoch_checkpoints_by_the_first_three_ranking_keys"
+  },
+  "collation": {
+    "common": "no_torch_DataLoader_no_sampler_no_worker_no_shuffle_no_prefetch_no_pin_memory_no_copy_to_another_device;use_direct_contiguous_slices_in_registered_order",
+    "torch_conversion": "training_batches_are_owned_C_contiguous_NumPy_arrays;validation_batches_are_C_contiguous_slice_views_into_the_process_owned_population_backing_arrays_which_remain_alive;call_torch.from_numpy_without_dtype_conversion_and_never_mutate_any_array_or_tensor_view",
+    "training": {
+      "batch_count_per_epoch": 313,
+      "batch_size": 128,
+      "drop_last": false,
+      "features": "materialize_each_canonical_batch_as_owned_C_contiguous_float32_[B,40,98]",
+      "labels": "materialize_each_canonical_batch_as_owned_C_contiguous_int64_[B]",
+      "last_batch_size": 91,
+      "slices": "[0:128],[128:256],...,[39936:40027]"
+    },
+    "validation": {
+      "batch_count": 83,
+      "batch_size": 128,
+      "drop_last": false,
+      "features": "one_owned_C_contiguous_float32_[10583,40,98]_array_materialized_once_per_seed_process",
+      "labels": "one_owned_C_contiguous_int64_[10583]_array_materialized_once_per_seed_process",
+      "last_batch_size": 87,
+      "slices": "[0:128],[128:256],...,[10496:10583]"
+    }
+  },
+  "digests": {
+    "custom_binary_common_encoding": "applies_only_to_model_tensors_training_population_update_trace_validation_inputs_and_validation_predictions:all_integer_fields_are_unsigned_little_endian;all_floating_payloads_are_IEEE_754_little_endian;all_text_is_UTF8_without_Unicode_normalization;every_variable_length_field_is_length_prefixed;history_and_safetensors_use_only_their_separate_serialization_contracts",
+    "digest_construction": "for_each_custom_binary_digest_compute_SHA256_over_the_exact_ASCII_domain_bytes_including_its_terminal_NUL_followed_once_by_the_exact_framed_payload_bytes;the_history_digest_uses_its_separate_explicit_formula",
+    "history": {
+      "domain": "falsewake-exp002-history-v1\u0000",
+      "file_bytes": "UTF8_JSON_sort_keys_true_separators_comma_colon_ensure_ascii_true_allow_nan_false_plus_LF_without_a_domain_prefix_or_length_prefix",
+      "floating_fields": "lowercase_CPython_float.hex_strings_only;JSON_float_numbers_are_forbidden",
+      "whole_history_sha256": "SHA256_over_the_exact_ASCII_domain_bytes_including_terminal_NUL_followed_once_by_the_exact_file_bytes"
+    },
+    "model_tensors": {
+      "domain": "falsewake-exp002-model-tensors-v1\u0000",
+      "framing": "UINT32LE_tensor_count_then_for_each_tensor_UINT32LE_name_byte_count_UTF8_name_UINT32LE_dtype_tag_byte_count_ASCII_F32LE_UINT32LE_rank_UINT64LE_each_dimension_UINT64LE_payload_byte_count_raw_C_order_little_endian_float32_payload",
+      "order": "state_dict_names_sorted_by_UTF8_bytes",
+      "requirements": "state_dict_keys_exactly_equal_named_parameter_keys;detached_CPU_C_contiguous_float32_only;53_tensors_and_23724_values"
+    },
+    "safetensors": {
+      "mapping": "detached_CPU_C_contiguous_float32_tensors_inserted_in_UTF8_bytewise_name_order",
+      "metadata": null,
+      "publication": "write_a_new_0600_temporary_file_in_the_destination_directory_write_and_fsync_it_chmod_the_temporary_inode_to_0444_fsync_it_again_publish_with_a_no_overwrite_atomic_hard_link_verify_source_and_destination_inode_identity_unlink_only_the_temporary_name_then_fsync_the_parent_directory;never_chmod_or_unlink_the_destination_name",
+      "serialization": "safetensors.torch.save_version_0.8.0_called_twice_with_metadata_None_and_required_to_return_byte_identical_payloads",
+      "verification": "safe_open_CPU_roundtrip_requires_exact_names_dtypes_shapes_values_and_canonical_model_tensor_digest;record_whole_file_SHA256",
+      "winner_rerun": "whole_safetensors_file_must_be_byte_identical"
+    },
+    "training_population": {
+      "domain": "falsewake-exp002-training-population-v1\u0000",
+      "framing": "UINT32LE_seed_UINT32LE_epoch_UINT32LE_40027_then_per_example_UINT32LE_identity_byte_count_raw_example.identity_bytes_UINT8_label_index_UINT64LE_feature_payload_byte_count_raw_C_order_little_endian_float32_[40,98]",
+      "order": "the_registered_epoch_plan_order_after_all_registered_augmentation_and_normalization"
+    },
+    "update_trace": {
+      "epoch_domain": "falsewake-exp002-epoch-update-trace-v1\u0000",
+      "epoch_framing": "UINT32LE_seed_UINT32LE_zero_based_epoch_UINT32LE_313_then_313_update_records_in_global_update_order",
+      "record_framing": "UINT32LE_zero_based_global_update_UINT32LE_batch_size_FLOAT64LE_learning_rate_FLOAT32LE_batch_mean_training_loss_FLOAT32LE_returned_preclip_l2_norm",
+      "whole_domain": "falsewake-exp002-update-trace-v1\u0000",
+      "whole_framing": "UINT32LE_seed_UINT32LE_9390_then_9390_update_records_in_global_update_order"
+    },
+    "validation_inputs": {
+      "domain": "falsewake-exp002-validation-inputs-v1\u0000",
+      "framing": "UINT32LE_10583_then_per_example_UINT32LE_identity_byte_count_raw_example.identity_bytes_UINT8_label_index_UINT64LE_feature_payload_byte_count_raw_C_order_little_endian_float32_[40,98]",
+      "order": "the_registered_fixed_validation_population_order"
+    },
+    "validation_predictions": {
+      "domain": "falsewake-exp002-validation-predictions-v1\u0000",
+      "framing": "UINT32LE_10583_then_per_example_UINT32LE_identity_byte_count_raw_example.identity_bytes_UINT8_true_label_12_raw_little_endian_float32_frame_97_logits_UINT8_first_index_argmax",
+      "order": "the_registered_fixed_validation_population_order"
+    }
+  },
+  "experiment": "002",
+  "failure_semantics": {
+    "budget_failure": "kill_the_current_child_if_it_is_live_fail_the_entire_experiment_publish_no_checkpoint_or_partial_success_and_record_the_failure_report",
+    "exception_policy": "any_exception_or_contract_mismatch_aborts_the_entire_experiment;there_is_no_batch_epoch_seed_candidate_or_rerun_retry",
+    "nonfinite_policy": "abort_immediately;never_skip_clip_batch_update_epoch_seed_or_candidate_and_never_clip_replace_sanitize_or_coerce_a_nonfinite_value",
+    "partial_artifacts": "temporary_files_are_noncanonical_and_must_be_removed_or_left_outside_registered_output_names;only_fully_verified_no_overwrite_evidence_artifacts_are_canonical_and_a_failure_report_never_makes_a_checkpoint_reusable",
+    "rerun_failure": "stop_experiment_002_without_fallback_to_another_seed_epoch_checkpoint_or_hyperparameter",
+    "retuning": "any_changed_choice_requires_a_new_experiment_identifier_and_a_new_registration_before_observing_its_metrics"
+  },
+  "metrics": {
+    "class_order": [
+      "yes",
+      "no",
+      "up",
+      "down",
+      "left",
+      "right",
+      "on",
+      "off",
+      "stop",
+      "go",
+      "unknown",
+      "silence"
+    ],
+    "confusion_matrix": "int64_[12,12]_rows_true_labels_columns_predicted_labels_accumulated_one_example_at_a_time_in_registered_order",
+    "gates": {
+      "every_target_recall": "for_each_class_c_0_through_9_require_10*confusion[c,c]>=7*class_support[c]",
+      "macro_f1": "require_exact_macro_F1_fraction>=4/5",
+      "silence_target_rate": "require_20*sum(confusion[11,0:10])<=602",
+      "target_accuracy": "require_20*sum(confusion[c,c]_for_c_0_through_9)>=17*3703",
+      "unknown_target_rate": "require_5*sum(confusion[10,0:10])<=6278"
+    },
+    "macro_f1": "for_each_class_compute_Fraction(2*TP,2*TP+FP+FN)_with_zero_denominator_as_Fraction(0,1);sum_in_class_index_order_and_divide_by_12;retain_the_reduced_exact_numerator_and_denominator;cast_once_to_float64_only_for_human_reporting",
+    "prediction": "numpy.argmax_over_the_C_contiguous_float32_[B,12]_frame_97_logits_along_axis_1;NumPy_first_index_wins_exact_ties",
+    "support": [
+      397,
+      406,
+      350,
+      377,
+      352,
+      363,
+      363,
+      373,
+      350,
+      372,
+      6278,
+      602
+    ],
+    "target_population": 3703,
+    "validation_cross_entropy": "for_each_row_in_registered_order_cast_its_12_float32_logits_to_12_NumPy_float64_scalars;find_max_in_class_index_order;compute_12_numpy.exp_float64_values_of_logit_minus_max;sum_with_12_scalar_float64_additions_in_class_index_order_starting_from_positive_zero;compute_numpy.log_float64(sum)+max-true_logit;require_finite;accumulate_10583_values_with_one_scalar_float64_addition_each_starting_from_positive_zero;divide_once_by_numpy.float64(10583);no_label_smoothing_or_class_weights"
+  },
+  "optimizer_execution": {
+    "adamw": {
+      "amsgrad": false,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "capturable": false,
+      "differentiable": false,
+      "eps": 1e-08,
+      "foreach": false,
+      "fused": false,
+      "learning_rate_constructor_value": 0.003,
+      "maximize": false,
+      "weight_decay": 0.0001
+    },
+    "clipping": "torch.nn.utils.clip_grad_norm_(ordered_parameters,5.0,norm_type=2.0,error_if_nonfinite=True,foreach=False)_exactly_once_after_backward_and_before_learning_rate_assignment",
+    "optimizer_class": "torch.optim.AdamW_from_Torch_2.13.0+cpu_with_decoupled_weight_decay_semantics;do_not_substitute_torch.optim.Adam_or_a_custom_optimizer",
+    "optimizer_state": "before_update_0_optimizer.state_is_empty;after_each_step_every_one_of_the_53_parameter_keys_has_exactly_the_keys_step_exp_avg_exp_avg_sq;step_is_a_finite_CPU_float32_scalar_tensor_shape_[]_whose_exact_integer_value_is_zero_based_update_plus_one;exp_avg_and_exp_avg_sq_are_dense_CPU_float32_C_contiguous_shape_equal_to_the_parameter_and_finite;no_max_exp_avg_sq_or_other_state_key_exists",
+    "parameter_group": "capture_named_parameters=tuple(model.named_parameters())_in_registration_order_then_ordered_parameters=tuple(parameter_for_name_parameter_in_capture)_and_pass_only_ordered_parameters_to_one_AdamW_group;assert_53_unique_names_53_unique_parameter_objects_and_23724_values;never_pass_name_parameter_pairs;no_parameter_defaults_are_overridden_per_tensor",
+    "parameter_group_runtime": "after_construction_require_exactly_the_keys_amsgrad_betas_capturable_decoupled_weight_decay_differentiable_eps_foreach_fused_lr_maximize_params_weight_decay;decoupled_weight_decay_is_True;params_are_the_ordered_53_parameter_objects_and_every_other_value_equals_the_registered_AdamW_setting",
+    "schedule": {
+      "cosine": "for_u_313_through_9389_inclusive_compute_float64_lr=0.00003+0.5*(0.003-0.00003)*(1+math.cos(math.pi*(u-313)/(9389-313)))",
+      "warmup": "for_u_0_through_312_inclusive_compute_float64_lr=0.0003+(0.003-0.0003)*u/312"
+    },
+    "update_order": [
+      "optimizer.zero_grad(set_to_none=True)",
+      "materialize_and_finite_check_the_registered_batch",
+      "model.train_and_forward_stream_all_98_frames_from_a_fresh_zero_state",
+      "finite_check_all_logits_explicit_next_state_and_scalar_loss",
+      "loss.backward()",
+      "require_every_parameter_gradient_is_present_dense_CPU_float32_and_finite",
+      "call_the_registered_clip_grad_norm_exactly_once",
+      "require_the_returned_preclip_norm_and_every_postclip_gradient_are_finite",
+      "compute_the_registered_float64_learning_rate_and_assign_that_same_Python_float_to_the_single_optimizer_group_immediately_before_step",
+      "optimizer.step_without_a_closure",
+      "finite_check_all_parameters_and_complete_AdamW_state_and_require_step_counter_equals_zero_based_update_plus_one"
+    ],
+    "zero_grad": "set_to_none_True_exactly_once_at_the_start_of_every_update;all_53_gradients_must_be_newly_present_after_backward"
+  },
+  "process_isolation": {
+    "access_boundary": "registered_Speech_Commands_training_and_validation_inputs_only;no_Speech_Commands_test_audio_no_LibriSpeech_payload_no_dev_clean_audio_no_test_clean_audio",
+    "budgets_per_seed_process": {
+      "logical_cpu_threads_maximum": 2,
+      "output_and_scratch_bytes_maximum": 4294967296,
+      "peak_rss_bytes_maximum": 8589934592,
+      "wall_seconds_maximum": 21600
+    },
+    "cpu_affinity": "before_the_first_seed_the_parent_captures_the_two_lowest_sorted_logical_CPU_IDs_from_its_current_allowed_affinity_once;all_four_children_are_pinned_to_that_exact_same_two_ID_set_before_Python_imports_and_the_run_fails_if_fewer_than_two_are_available_or_the_captured_set_cannot_be_reapplied",
+    "creation": "four_independent_fresh_execve_processes_with_no_fork_inherited_runtime_state_no_resume_no_retry_and_no_process_reuse_between_seeds_or_rerun",
+    "environment_before_any_NumPy_or_Torch_import": {
+      "LANG": "C",
+      "LC_ALL": "C",
+      "MKL_DYNAMIC": "FALSE",
+      "MKL_NUM_THREADS": "1",
+      "OMP_DYNAMIC": "FALSE",
+      "OMP_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONHASHSEED": "0",
+      "PYTHONNOUSERSITE": "1",
+      "TZ": "UTC"
+    },
+    "environment_construction": "construct_each_child_environment_from_an_empty_mapping_with_exactly_the_registered_fixed_environment_keys_plus_TMPDIR_equal_to_its_registered_fresh_scratch_directory;do_not_inherit_PYTHONPATH_user_site_dynamic_loader_or_threading_overrides",
+    "processes": "one_process_for_each_seed_20260719_20260720_20260721_followed_by_one_new_process_for_the_selected_seed_rerun",
+    "resource_accounting": {
+      "output_and_scratch_bytes": "over_the_process_scratch_and_parent_staging_directories_reject_symlinks_and_nonregular_entries_and_sum_max(st_size,512*st_blocks)_once_per_unique_(st_dev,st_ino);immutable_registered_source_archive_manifest_PCM_cache_and_repository_input_blobs_are_excluded",
+      "peak_rss": "Linux_wait4_per_child_rusage.ru_maxrss_integer_KiB_multiplied_by_1024_is_authoritative_and_includes_the_same_process_across_taskset_and_Python_exec;child_process_creation_is_forbidden",
+      "wall": "parent_time.monotonic_ns_immediately_before_spawning_taskset_through_wait4_completion;compare_integer_elapsed_nanoseconds_to_21600*1000000000"
+    },
+    "resource_enforcement": "parent_polls_monotonic_time_and_/proc_child_status_RSS_at_intervals_no_greater_than_100ms_and_kills_on_an_observed_excess;wait4_peak_RSS_is_checked_even_after_normal_exit;the_child_budgeted_writer_reserves_and_checks_the_resulting_unique_inode_accounting_before_every_create_or_extend_and_the_parent_rechecks_after_exit;any_excess_fails_the_whole_experiment",
+    "scratch": "one_fresh_empty_mode_0700_directory_per_process_beneath_/home/ubuntu/gitcode/.t;no_scratch_or_output_outside_/home/ubuntu/gitcode",
+    "source_verification": "the_later_source_bound_run_registration_is_read_from_a_tracked_HEAD_blob_and_binds_exact_argv_sanitized_environment_absolute_Python_executable_and_SHA256_runtime_fingerprint_import_roots_and_UTF8_bytewise_sorted_length_framed_raw_HEAD_blob_bytes;all_bound_config_source_report_artifact_and_runtime_bytes_are_verified_without_CLI_overrides_before_PCM_or_frontend_access_and_again_before_canonical_publication",
+    "test_boundary": "the_frozen_full_manifest_bytes_may_be_parsed_once_by_the_registered_corpus_verifier_only_to_check_the_bound_manifest_hash_schema_order_split_counts_and_data_firewall;test_row_fields_must_not_be_retained_returned_exposed_to_the_trainer_individually_or_used_after_that_verification_and_only_the_aggregate_test_count_11005_survives;test_PCM_lookup_and_audio_payload_access_are_forbidden",
+    "topology": "the_parent_launcher_and_exactly_one_seed_or_rerun_child_are_live_at_a_time;the_three_seed_children_execute_to_completion_in_ascending_seed_order_then_the_rerun_child;children_may_create_threads_within_the_registered_affinity_but_no_child_processes",
+    "worktree": "immediately_before_the_first_child_require_the_later_run_registration_and_every_bound_path_to_equal_its_committed_HEAD_blob_require_the_implementation_commit_to_be_its_ancestor_and_require_git_status_porcelain_v1_with_untracked_files_all_to_be_empty;recursively_require_every_registered_import_root_to_contain_only_bound_tracked_nonsymlink_files_even_if_an_extra_path_would_be_gitignored;registered_external_inputs_and_fresh_scratch_are_allowed_only_beneath_/home/ubuntu/gitcode/.t_outside_the_repository"
+  },
+  "registration": {
+    "chronology": "committed_after_the_frontend_model_PCM_cache_preprocessing_and_normalization_artifact_but_before_any_registered_Experiment_002_training_optimizer_step_validation_prediction_training_metric_checkpoint_or_learned_artifact",
+    "prior_cost_only_profiling": {
+      "learned_artifacts": 0,
+      "registered_training_optimizer_steps": 0,
+      "training_epoch_plans_built": 1,
+      "training_features_materialized": 128,
+      "validation_examples_scored": 0,
+      "zero_input_forward_backward_batches": 6
+    },
+    "prior_profile_outputs": "wall_clock_cost_shape_and_one_training_input_SHA_prefix_diagnostic_only;no_registered_training_optimizer_update_validation_prediction_checkpoint_or_model_selection",
+    "purpose": "close_execution_arithmetic_serialization_failure_and_process_ambiguities_left_by_the_unchanged_phase_1_and_numerics_registrations",
+    "real_training_authorized_by_this_file_alone": false,
+    "required_later_run_registration": "after_all_validation_trainer_artifact_and_launcher_sources_and_tests_are_committed_create_and_commit_a_separate_configs/experiment-002-run.json_that_binds_this_file_SHA256_the_exact_implementation_commit_the_UTF8_bytewise_sorted_length_framed_raw_HEAD_blob_bytes_of_every_executed_source_and_the_exact_runtime_and_input_trust_roots",
+    "run_prohibition": "no_optimizer_step_using_a_registered_Experiment_002_training_feature_or_population_and_no_registered_validation_metric_may_run_until_the_later_source_bound_run_registration_is_committed_in_a_descendant_of_its_bound_implementation_commit_and_the_launcher_verifies_it_without_untrusted_digest_overrides;isolated_synthetic_unit_test_optimizer_steps_with_no_registered_data_metric_checkpoint_or_learned_artifact_are_allowed",
+    "synthetic_optimizer_contract_probes": {
+      "scope": "before_freezing_this_addendum_two_discarded_AdamW_steps_verified_Torch_2.13_runtime_state_only:one_zero_input_53_parameter_state_fixture_and_one_single_scalar_parameter_with_a_zero_gradient;neither_used_registered_audio_features_labels_or_validation_and_neither_emitted_a_metric_checkpoint_or_file",
+      "steps": 2
+    }
+  },
+  "runtime_execution": {
+    "libraries": {
+      "numpy": "2.5.1",
+      "python": "3.12.3",
+      "safetensors": "0.8.0",
+      "torch": "2.13.0+cpu"
+    },
+    "model_creation": "after_validation_materialization_and_all_runtime_setup_call_torch.manual_seed(seed)_exactly_once_immediately_before_CausalKWS();do_not_call_manual_seed_again_do_not_call_reset_parameters_again_and_do_not_restore_or_modify_Torch_RNG_state",
+    "torch_setup_before_manual_seed": {
+      "cuda_available_required": false,
+      "default_device": "cpu",
+      "default_dtype": "float32",
+      "deterministic_algorithms": "torch.use_deterministic_algorithms(True,warn_only=False)",
+      "float32_matmul_precision": "highest",
+      "flush_denormal": false,
+      "inter_op_threads": 1,
+      "intra_op_threads": 2,
+      "mkldnn_enabled": false,
+      "nnpack_enabled": false
+    },
+    "training_rng": "the_single_seeded_Torch_CPU_stream_is_consumed_by_CausalKWS_construction_and_training_dropout_only;data_order_augmentation_validation_metrics_and_digesting_use_no_Torch_RNG",
+    "validation_mode": "model.eval_then_torch.inference_mode_with_a_fresh_model.initial_state_for_every_batch_then_restore_model.train_only_if_another_training_epoch_remains"
+  },
+  "schema_version": 1,
+  "state_finiteness": {
+    "before_first_update": "all_53_model_parameters_are_CPU_float32_and_finite",
+    "checkpoint_and_final": "all_parameters_digest_inputs_and_serialized_tensor_payloads_are_CPU_float32_and_finite",
+    "every_training_batch": [
+      "input_is_C_contiguous_CPU_float32_[B,40,98]_and_finite_and_labels_are_C_contiguous_CPU_int64_[B]_within_0_through_11",
+      "all_B_by_98_by_12_logits_are_CPU_float32_and_finite",
+      "all_8_returned_depthwise_histories_and_returned_pool_history_are_CPU_float32_and_finite",
+      "returned_frames_seen_is_CPU_int64_[B]_and_every_value_is_exactly_98",
+      "scalar_batch_mean_training_loss_is_CPU_float32_and_finite",
+      "every_gradient_is_present_dense_CPU_float32_and_finite_before_and_after_clipping",
+      "returned_preclip_l2_norm_is_finite",
+      "all_parameters_are_finite_after_step",
+      "every_AdamW_exp_avg_and_exp_avg_sq_is_CPU_float32_shape_equal_to_its_parameter_and_finite_and_every_step_counter_equals_update_plus_one"
+    ],
+    "every_validation_batch": [
+      "inputs_labels_all_logits_and_all_explicit_returned_float_states_are_finite_with_registered_dtype_shape_and_device",
+      "returned_frames_seen_is_CPU_int64_[B]_and_every_value_is_exactly_98",
+      "all_12_frame_97_logits_and_each_scalar_float64_cross_entropy_are_finite"
+    ],
+    "scope": "explicit_inputs_outputs_parameters_gradients_loss_clip_norm_optimizer_state_and_serialized_payloads_are_checked;unreturned_internal_transient_activations_are_not_hooked"
+  },
+  "training_execution": {
+    "epochs": 30,
+    "forward": "for_each_batch_call_model.forward_stream_once_on_all_[B,40,98]_features_and_a_fresh_positive_zero_model.initial_state(B);compute_all_98_logits_and_use_only_logits[:,97,:]",
+    "loss": "torch.nn.functional.cross_entropy_on_CPU_float32_logits_and_int64_labels_with_weight_None_reduction_mean_label_smoothing_0.05_and_no_other_arguments;require_a_scalar_float32_result",
+    "population_count_per_epoch": 40027,
+    "population_order": "build_the_registered_stateless_HMAC_epoch_plan_exactly_once_for_each_seed_and_epoch_then_consume_it_once_in_contiguous_batch_order",
+    "seed_order": [
+      20260719,
+      20260720,
+      20260721
+    ],
+    "supervision": "frame_97_only;frames_0_through_96_never_enter_the_loss",
+    "total_updates_per_seed": 9390,
+    "updates_per_epoch": 313
+  },
+  "training_history": {
+    "epoch_record_fields": [
+      "zero_based_epoch",
+      "first_global_update",
+      "last_global_update_inclusive",
+      "training_population_digest",
+      "training_cross_entropy_float64_hex",
+      "epoch_update_trace_digest",
+      "validation_input_digest",
+      "validation_confusion_matrix",
+      "validation_cross_entropy_float64_hex",
+      "macro_f1_exact_numerator",
+      "macro_f1_exact_denominator",
+      "validation_prediction_digest",
+      "model_tensor_digest"
+    ],
+    "epoch_record_schema": {
+      "epoch_update_trace_digest": "lowercase_ASCII_64_hex_SHA256_string",
+      "first_global_update": "JSON_integer_equal_to_zero_based_epoch_times_313",
+      "last_global_update_inclusive": "JSON_integer_equal_to_(zero_based_epoch_plus_1)_times_313_minus_1",
+      "macro_f1_exact_denominator": "positive_JSON_integer_coprime_with_the_numerator",
+      "macro_f1_exact_numerator": "nonnegative_JSON_integer",
+      "model_tensor_digest": "lowercase_ASCII_64_hex_SHA256_string",
+      "training_cross_entropy_float64_hex": "finite_lowercase_CPython_float.hex_string",
+      "training_population_digest": "lowercase_ASCII_64_hex_SHA256_string",
+      "validation_confusion_matrix": "JSON_array_of_12_rows_each_a_JSON_array_of_12_nonnegative_int64_range_integers_with_each_row_sum_equal_to_the_registered_class_support",
+      "validation_cross_entropy_float64_hex": "finite_lowercase_CPython_float.hex_string",
+      "validation_input_digest": "lowercase_ASCII_64_hex_SHA256_string_equal_to_the_top_level_value",
+      "validation_prediction_digest": "lowercase_ASCII_64_hex_SHA256_string",
+      "zero_based_epoch": "JSON_integer_equal_to_its_array_index_0_through_29"
+    },
+    "excluded_nondeterministic_fields": [
+      "host_load",
+      "peak_rss",
+      "pid",
+      "timestamps",
+      "wall_time"
+    ],
+    "structure": "one_object_with_exactly_the_keys_schema_version_experiment_seed_validation_input_digest_complete_update_trace_digest_epochs;schema_version_is_JSON_integer_1;experiment_is_JSON_string_002;seed_is_one_registered_JSON_integer;both_top_level_digests_are_lowercase_ASCII_64_hex_SHA256_strings;epochs_is_exactly_30_epoch_records_in_zero_based_order_and_each_record_has_exactly_epoch_record_fields_in_the_registered_JSON_serialization",
+    "training_cross_entropy": "for_each_batch_in_order_cast_the_float32_batch_mean_loss_to_NumPy_float64_multiply_by_NumPy.float64(batch_size)_accumulate_with_one_scalar_float64_addition_starting_from_positive_zero_then_divide_once_by_NumPy.float64(40027)"
+  },
+  "validation_execution": {
+    "forward": "after_each_completed_zero_based_epoch_0_through_29_evaluate_all_10583_examples_exactly_once_in_83_direct_batches_with_fresh_positive_zero_state_for_each_example_and_use_frame_97_after_finite_checking_all_98_logits",
+    "materialization": "before_torch.manual_seed_or_model_construction_build_the_registered_validation_population_exactly_once_verify_the_exact_validation_PCM_cache_and_normalization_capability_once_then_compute_and_retain_the_owned_feature_and_label_arrays_and_their_canonical_digest;no_RNG_augmentation_training_audio_or_test_audio_access",
+    "order": "9981_validation_commands_in_canonical_manifest_UTF8_path_order_then_602_running_tap_windows_at_start_samples_0_1600_through_961600",
+    "population_count": 10583,
+    "reuse": "the_same_read_only_materialized_arrays_and_validation_input_digest_are_used_for_all_30_epoch_evaluations_with_no_mutation_reordering_or_rematerialization"
+  }
+}

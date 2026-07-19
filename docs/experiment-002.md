@@ -190,6 +190,37 @@ Before any continuous replay, the winner must achieve at least 85% target accura
 clips or 5% of silence windows may have a target argmax, and all metrics, logits,
 parameters, and states must be finite.
 
+## Frozen trainer execution addendum
+
+The phase-1 contract and numeric interpretation remain byte-for-byte unchanged.
+Before the first real optimizer update, the separate
+[trainer execution registration](../configs/experiment-002-trainer.json) freezes
+the choices that those two documents did not determine at the last-bit level. It
+specifies direct training and validation collation, unsmoothed `float64`
+validation cross-entropy arithmetic, exact rational macro-F1, every AdamW flag and
+update operation, tensor/history/prediction framing, safetensors publication,
+nonfinite failure behavior, checkpoint ranking, the winner rerun, fresh-process
+isolation, and resource enforcement.
+
+This addendum contains no neural result. Before it was frozen, cost-only probes
+built one epoch plan, materialized 128 registered training features, and ran six
+zero-input forward/backward batches. They performed zero registered training
+optimizer steps, scored zero validation examples, and produced zero learned
+artifacts. Their outputs were limited to timing, shapes, and one input-digest
+prefix; they could not select a model or reveal a registered metric. Two discarded
+runtime-contract checks subsequently performed exactly two synthetic AdamW steps:
+one on a zero-input 53-parameter-state fixture and one on a scalar parameter with a
+zero gradient. Neither used registered audio, features, labels, or validation, and
+neither emitted a metric, checkpoint, or file.
+
+The addendum deliberately does not authorize training by itself. After the
+validation, trainer, artifact, and launcher implementations have been reviewed and
+committed, a second source-bound run registration must bind their exact committed
+blob bytes and this addendum's SHA-256. The launcher must verify that registration
+and every input trust root before reading PCM or invoking the frontend. Until that
+descendant registration is committed, real optimizer updates and validation
+metrics remain prohibited.
+
 ## Causal model contract
 
 Input is normalized log-mel audio in `[B, 40, T]` layout. A 48-channel stem feeds
