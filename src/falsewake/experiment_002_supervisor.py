@@ -26,7 +26,15 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, NoReturn, Protocol, cast
+
+from falsewake.experiment_002_child_result import (
+    ChildResultBinding,
+    VerifiedChildResult,
+    load_registered_child_result,
+    verify_verified_child_result,
+)
 
 __all__ = ("Experiment002SupervisorError",)
 
@@ -304,12 +312,28 @@ class _PinnedRoot:
 
 
 @dataclass(frozen=True, slots=True)
+class _ChildResourceMetrics:
+    pid: int
+    cpu_ids: tuple[int, int]
+    elapsed_nanoseconds: int
+    maximum_rss_bytes: int
+    output_and_scratch_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class _SupervisedChildResult:
     pid: int
     cpu_ids: tuple[int, int]
     elapsed_nanoseconds: int
     maximum_rss_bytes: int
     output_and_scratch_bytes: int
+    verified_child_result: VerifiedChildResult
+
+    def __post_init__(self) -> None:
+        if type(self.verified_child_result) is not VerifiedChildResult:
+            raise TypeError(
+                "verified_child_result must be an exact VerifiedChildResult"
+            )
 
 
 @dataclass(slots=True)
@@ -384,6 +408,51 @@ _REGISTERED_PLAN: Final = _LaunchPlan(
 
 def _fail(message: str) -> NoReturn:
     raise Experiment002SupervisorError(message)
+
+
+def _snapshot_child_result_binding(
+    binding: ChildResultBinding, /
+) -> ChildResultBinding:
+    """Validate and detach one expected result binding before any side effect."""
+
+    if type(binding) is not ChildResultBinding:
+        raise TypeError("result binding must be an exact ChildResultBinding")
+    role = binding.role
+    ordinal = binding.ordinal
+    seed = binding.seed
+    registration_head_commit = binding.registration_head_commit
+    implementation_commit = binding.implementation_commit
+    registration_sha256 = binding.registration_sha256
+    source_bundle_sha256 = binding.source_bundle_sha256
+    snapshot = ChildResultBinding(
+        role=role,
+        ordinal=ordinal,
+        seed=seed,
+        registration_head_commit=registration_head_commit,
+        implementation_commit=implementation_commit,
+        registration_sha256=registration_sha256,
+        source_bundle_sha256=source_bundle_sha256,
+    )
+    second = (
+        binding.role,
+        binding.ordinal,
+        binding.seed,
+        binding.registration_head_commit,
+        binding.implementation_commit,
+        binding.registration_sha256,
+        binding.source_bundle_sha256,
+    )
+    if (
+        role,
+        ordinal,
+        seed,
+        registration_head_commit,
+        implementation_commit,
+        registration_sha256,
+        source_bundle_sha256,
+    ) != second:
+        _fail("result binding changed while it was snapshotted")
+    return snapshot
 
 
 def _require_exact_integer(value: object, name: str, *, minimum: int = 0) -> int:
@@ -2645,7 +2714,7 @@ def _monitor_child(
     activation: _ActivationState,
     kernel: _Kernel,
     limits: _Limits,
-) -> _SupervisedChildResult:
+) -> _ChildResourceMetrics:
     _require_pinned_roots(roots)
     observed_rss = 0
     affinity_verified = False
@@ -2698,7 +2767,7 @@ def _monitor_child(
                 output_bytes=output_bytes,
                 limits=limits,
             )
-            return _SupervisedChildResult(
+            return _ChildResourceMetrics(
                 pid=handle.pid,
                 cpu_ids=cpu_ids,
                 elapsed_nanoseconds=elapsed,
@@ -2767,6 +2836,7 @@ def _supervise_child_masked(
     cpu_ids: tuple[int, int],
     activation_callback: _Activation,
     source_bundle_fd: int,
+    result_binding: ChildResultBinding,
     /,
     *,
     signal_dispositions: _SignalDispositionFrame,
@@ -2776,6 +2846,7 @@ def _supervise_child_masked(
 ) -> _SupervisedChildResult:
     """Run one fixed child under the reviewed kernel; not yet production-wired."""
 
+    expected_result_binding = _snapshot_child_result_binding(result_binding)
     _require_plan(plan)
     _require_limits(limits)
     _require_source_bundle_descriptor(source_bundle_fd)
@@ -2908,7 +2979,7 @@ def _supervise_child_masked(
             pid,
         )
         activation_state.completed.wait(_ACTIVATION_START_GRACE_SECONDS)
-        result = _monitor_child(
+        resource_metrics = _monitor_child(
             handle,
             cpu_ids=cpu_ids,
             roots=roots,
@@ -2918,6 +2989,33 @@ def _supervise_child_masked(
             limits=limits,
         )
         _join_activation_thread(activation_thread)
+        before_load_bytes = _account_pinned_roots(roots, limits.output_bytes)
+        if before_load_bytes != resource_metrics.output_and_scratch_bytes:
+            _fail("supervised output changed before child-result loading")
+        verified_child_result = load_registered_child_result(
+            Path(scratch_root.path),
+            expected_result_binding,
+        )
+        if type(verified_child_result) is not VerifiedChildResult:
+            _fail("child-result loader returned an invalid exact type")
+        verification = cast(
+            Callable[[VerifiedChildResult], object],
+            verify_verified_child_result,
+        )(verified_child_result)
+        if verification is not None:
+            _fail("child-result verifier returned an unexpected value")
+        after_load_bytes = _account_pinned_roots(roots, limits.output_bytes)
+        if after_load_bytes != resource_metrics.output_and_scratch_bytes:
+            _fail("supervised output changed during child-result loading")
+        result = _SupervisedChildResult(
+            pid=resource_metrics.pid,
+            cpu_ids=resource_metrics.cpu_ids,
+            elapsed_nanoseconds=resource_metrics.elapsed_nanoseconds,
+            maximum_rss_bytes=resource_metrics.maximum_rss_bytes,
+            output_and_scratch_bytes=resource_metrics.output_and_scratch_bytes,
+            verified_child_result=verified_child_result,
+        )
+        _cleanup_pinned_scratch(scratch_root)
         return result
     except BaseException as primary:
         cleanup_failures: list[BaseException] = []
@@ -3021,6 +3119,7 @@ def _supervise_child(
     cpu_ids: tuple[int, int],
     activation_callback: _Activation,
     source_bundle_fd: int,
+    result_binding: ChildResultBinding,
     /,
     *,
     plan: _LaunchPlan = _REGISTERED_PLAN,
@@ -3029,6 +3128,7 @@ def _supervise_child(
 ) -> _SupervisedChildResult:
     """Run one child while the parent signal surface remains fully blocked."""
 
+    expected_result_binding = _snapshot_child_result_binding(result_binding)
     signal_dispositions = _capture_safe_signal_dispositions()
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _blockable_signals())
     result: _SupervisedChildResult | None = None
@@ -3042,6 +3142,7 @@ def _supervise_child(
             cpu_ids,
             activation_callback,
             source_bundle_fd,
+            expected_result_binding,
             signal_dispositions=signal_dispositions,
             plan=plan,
             limits=limits,

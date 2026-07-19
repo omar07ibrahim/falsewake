@@ -4,29 +4,198 @@ import ast
 import errno
 import fcntl
 import hashlib
+import inspect
+import json
 import os
 import resource
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 
+from falsewake import experiment_002_child_result as child_result
 from falsewake import experiment_002_supervisor as supervisor
 
 SOURCE_PATH = (
     Path(__file__).parents[1] / "src" / "falsewake" / "experiment_002_supervisor.py"
 )
 _TEST_SOURCE_BUNDLE = b"falsewake synthetic sealed source bundle\n"
+_HISTORY_DOMAIN = b"falsewake-exp002-history-v1\0"
+_MODEL_TENSOR_DOMAIN = b"falsewake-exp002-model-tensors-v1\0"
+_CLASS_SUPPORT = (397, 406, 350, 377, 352, 363, 363, 373, 350, 372, 6_278, 602)
+
+
+@dataclass(frozen=True, slots=True)
+class _ResultCase:
+    binding: child_result.ChildResultBinding
+    history: bytes
+    history_sha256: str
+    safetensors: bytes
+    safetensors_sha256: str
+    winner_epoch: int
+    model_tensor_sha256: str
+
+
+def _sha(label: str) -> str:
+    return hashlib.sha256(label.encode("ascii")).hexdigest()
+
+
+def _canonical(document: dict[str, object]) -> bytes:
+    return (
+        json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("ascii")
+
+
+def _result_safetensors() -> tuple[bytes, str]:
+    header: dict[str, object] = {}
+    data = bytearray()
+    framed = bytearray(struct.pack("<I", len(child_result._REGISTERED_MODEL_SPECS)))
+    offset = 0
+    for tensor_index, (name, shape) in enumerate(child_result._REGISTERED_MODEL_SPECS):
+        value_count = 1
+        for dimension in shape:
+            value_count *= dimension
+        raw = struct.pack("<f", float(tensor_index) / 100.0) * value_count
+        end = offset + len(raw)
+        header[name] = {
+            "dtype": "F32",
+            "shape": list(shape),
+            "data_offsets": [offset, end],
+        }
+        data.extend(raw)
+        name_bytes = name.encode("utf-8")
+        framed.extend(struct.pack("<I", len(name_bytes)))
+        framed.extend(name_bytes)
+        framed.extend(struct.pack("<I", 5))
+        framed.extend(b"F32LE")
+        framed.extend(struct.pack("<I", len(shape)))
+        for dimension in shape:
+            framed.extend(struct.pack("<Q", dimension))
+        framed.extend(struct.pack("<Q", len(raw)))
+        framed.extend(raw)
+        offset = end
+    header_bytes = json.dumps(
+        header,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    padded_header = header_bytes + b" " * (-len(header_bytes) % 8)
+    payload = struct.pack("<Q", len(padded_header)) + padded_header + bytes(data)
+    return payload, hashlib.sha256(_MODEL_TENSOR_DOMAIN + bytes(framed)).hexdigest()
+
+
+def _result_history(*, seed: int, model_tensor_sha256: str) -> bytes:
+    validation_input_digest = _sha("validation-inputs")
+    confusion: list[list[int]] = []
+    for index, support in enumerate(_CLASS_SUPPORT):
+        row = [0] * len(_CLASS_SUPPORT)
+        row[index] = support
+        confusion.append(row)
+    epochs: list[dict[str, object]] = []
+    winner_epoch = 7
+    for epoch in range(30):
+        validation_cross_entropy = 0.25 if epoch == winner_epoch else 2.0 + epoch
+        epochs.append(
+            {
+                "epoch_update_trace_digest": _sha(f"epoch-trace-{epoch}"),
+                "first_global_update": epoch * 313,
+                "last_global_update_inclusive": (epoch + 1) * 313 - 1,
+                "macro_f1_exact_denominator": 1,
+                "macro_f1_exact_numerator": 1,
+                "model_tensor_digest": (
+                    model_tensor_sha256
+                    if epoch == winner_epoch
+                    else _sha(f"model-{seed}-{epoch}")
+                ),
+                "training_cross_entropy_float64_hex": float(1.0 + epoch).hex(),
+                "training_population_digest": _sha(f"population-{seed}-{epoch}"),
+                "validation_confusion_matrix": confusion,
+                "validation_cross_entropy_float64_hex": (
+                    validation_cross_entropy.hex()
+                ),
+                "validation_input_digest": validation_input_digest,
+                "validation_prediction_digest": _sha(f"predictions-{seed}-{epoch}"),
+                "zero_based_epoch": epoch,
+            }
+        )
+    return _canonical(
+        {
+            "complete_update_trace_digest": _sha(f"complete-update-trace-{seed}"),
+            "epochs": epochs,
+            "experiment": "002",
+            "schema_version": 1,
+            "seed": seed,
+            "validation_input_digest": validation_input_digest,
+        }
+    )
+
+
+def _result_case(
+    *,
+    role: Literal["training_seed", "selected_seed_rerun"] = "training_seed",
+    ordinal: int = 0,
+) -> _ResultCase:
+    seed = 20_260_719 if ordinal in {0, 3} else 20_260_719 + ordinal
+    binding = child_result.ChildResultBinding(
+        role=role,
+        ordinal=ordinal,
+        seed=seed,
+        registration_head_commit="a" * 40,
+        implementation_commit="b" * 40,
+        registration_sha256="c" * 64,
+        source_bundle_sha256="d" * 64,
+    )
+    safetensors, model_tensor_sha256 = _result_safetensors()
+    history = _result_history(seed=seed, model_tensor_sha256=model_tensor_sha256)
+    return _ResultCase(
+        binding=binding,
+        history=history,
+        history_sha256=hashlib.sha256(_HISTORY_DOMAIN + history).hexdigest(),
+        safetensors=safetensors,
+        safetensors_sha256=hashlib.sha256(safetensors).hexdigest(),
+        winner_epoch=7,
+        model_tensor_sha256=model_tensor_sha256,
+    )
+
+
+def _write_result(path: Path, case: _ResultCase) -> None:
+    child_result.write_registered_child_result(
+        path,
+        case.binding,
+        history_json_bytes=case.history,
+        history_sha256=case.history_sha256,
+        safetensors_bytes=case.safetensors,
+        safetensors_sha256=case.safetensors_sha256,
+        winner_epoch=case.winner_epoch,
+        model_tensor_sha256=case.model_tensor_sha256,
+    )
+
+
+_DEFAULT_RESULT_CASE = _result_case()
+_REAL_LOAD_REGISTERED_CHILD_RESULT = child_result.load_registered_child_result
+_REAL_VERIFY_VERIFIED_CHILD_RESULT = child_result.verify_verified_child_result
+_SYNTHETIC_VERIFIED_CHILD_RESULT = object.__new__(child_result.VerifiedChildResult)
 
 
 def _source_bundle_fd(
@@ -73,6 +242,7 @@ def _source_bundle_fd(
 def _supervise_child(
     cpu_ids: tuple[int, int],
     activation_callback: supervisor._Activation,
+    result_binding: child_result.ChildResultBinding = _DEFAULT_RESULT_CASE.binding,
     /,
     **kwargs: object,
 ) -> supervisor._SupervisedChildResult:
@@ -82,6 +252,7 @@ def _supervise_child(
             cpu_ids,
             activation_callback,
             source_bundle,
+            result_binding,
             **kwargs,  # type: ignore[arg-type]
         )
     finally:
@@ -235,6 +406,29 @@ def _test_plan(
     )
 
 
+def _result_test_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> supervisor._LaunchPlan:
+    plan = _test_plan(tmp_path, monkeypatch)
+    temporary = Path("/home/ubuntu/gitcode/.t") / (
+        f"falsewake-supervisor-result-test-{uuid.uuid4().hex}"
+    )
+    temporary.mkdir(mode=0o700)
+    scratch = temporary / "scratch"
+    staging = temporary / "staging"
+    environment = tuple(
+        (key, os.fspath(scratch) if key == "TMPDIR" else value)
+        for key, value in plan.environment_items
+    )
+    return replace(
+        plan,
+        temporary_root=os.fspath(temporary),
+        scratch_root=os.fspath(scratch),
+        staging_root=os.fspath(staging),
+        environment_items=environment,
+    )
+
+
 def _roots(tmp_path: Path) -> tuple[Path, Path]:
     left = tmp_path / "scratch"
     right = tmp_path / "staging"
@@ -275,8 +469,60 @@ def _isolate_fake_supervision_from_native_test_pools(
         return
     monkeypatch.setattr(supervisor, "_require_single_parent_thread", lambda: None)
 
+    def load_result(
+        _scratch_directory: Path,
+        _expected: child_result.ChildResultBinding,
+        /,
+    ) -> child_result.VerifiedChildResult:
+        return _SYNTHETIC_VERIFIED_CHILD_RESULT
 
-def test_source_is_standard_library_only_and_not_enabled() -> None:
+    def verify_result(
+        result: child_result.VerifiedChildResult,
+        /,
+    ) -> None:
+        assert result is _SYNTHETIC_VERIFIED_CHILD_RESULT
+
+    monkeypatch.setattr(supervisor, "load_registered_child_result", load_result)
+    monkeypatch.setattr(supervisor, "verify_verified_child_result", verify_result)
+
+
+@pytest.fixture
+def result_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[supervisor._LaunchPlan]:
+    plan = _result_test_plan(tmp_path, monkeypatch)
+    try:
+        yield plan
+    finally:
+        for path in (plan.scratch_root, plan.staging_root, plan.temporary_root):
+            if Path(path).exists():
+                supervisor._remove_directory_tree(path)
+
+
+def _use_real_result_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        supervisor,
+        "load_registered_child_result",
+        _REAL_LOAD_REGISTERED_CHILD_RESULT,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "verify_verified_child_result",
+        _REAL_VERIFY_VERIFIED_CHILD_RESULT,
+    )
+
+
+def _allocated_regular_bytes(path: Path) -> int:
+    total = 0
+    for child in path.iterdir():
+        metadata = child.stat(follow_symlinks=False)
+        assert stat.S_ISREG(metadata.st_mode)
+        total += max(metadata.st_size, 512 * metadata.st_blocks)
+    return total
+
+
+def test_source_uses_only_stdlib_and_fixed_child_result_authority() -> None:
     tree = ast.parse(SOURCE_PATH.read_text(encoding="utf-8"))
     imports: set[str] = set()
     for node in ast.walk(tree):
@@ -292,8 +538,10 @@ def test_source_is_standard_library_only_and_not_enabled() -> None:
         "dataclasses",
         "errno",
         "fcntl",
+        "falsewake.experiment_002_child_result",
         "hashlib",
         "os",
+        "pathlib",
         "signal",
         "socket",
         "stat",
@@ -308,6 +556,23 @@ def test_source_is_standard_library_only_and_not_enabled() -> None:
     assert "torch" not in source
     assert supervisor.__all__ == ("Experiment002SupervisorError",)
     assert not hasattr(supervisor, "run_registered_experiment")
+
+
+@pytest.mark.parametrize(
+    "route",
+    [supervisor._supervise_child_masked, supervisor._supervise_child],
+)
+def test_supervise_routes_require_exact_positional_result_binding(
+    route: Callable[..., object],
+) -> None:
+    signature = inspect.signature(route)
+    parameter = signature.parameters["result_binding"]
+    assert parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+    assert parameter.default is inspect.Parameter.empty
+    assert parameter.annotation in {
+        child_result.ChildResultBinding,
+        "ChildResultBinding",
+    }
 
 
 def test_registered_production_constants_are_exact() -> None:
@@ -1354,7 +1619,7 @@ def test_terminal_limits_allow_exact_edges_and_reject_one_over() -> None:
             supervisor._validate_terminal_result(result, limits=limits, **arguments)
 
 
-def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
+def test_supervise_nominal_spawn_removes_scratch_and_keeps_staging(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1379,6 +1644,7 @@ def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
         elapsed_nanoseconds=13,
         maximum_rss_bytes=32 * 1024,
         output_and_scratch_bytes=0,
+        verified_child_result=_SYNTHETIC_VERIFIED_CHILD_RESULT,
     )
     assert activations == [(socket.AF_UNIX, kernel.pid)]
     assert kernel.affinity_calls == [kernel.pid]
@@ -1406,9 +1672,165 @@ def test_supervise_nominal_spawn_is_exact_and_keeps_success_roots(
     with pytest.raises(OSError) as caught:
         os.fstat(source_bundle_fd)
     assert caught.value.errno == errno.EBADF
-    assert Path(plan.scratch_root).is_dir()
+    assert not Path(plan.scratch_root).exists()
     assert Path(plan.staging_root).is_dir()
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_real_child_result_survives_secure_scratch_deletion_and_is_accounted(
+    result_plan: supervisor._LaunchPlan,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_result_routes(monkeypatch)
+    _prepare_staging(result_plan)
+    kernel = FakeKernel(times=[10, 20, 21, 22])
+    accounted_bytes: list[int] = []
+
+    def activate(_channel: socket.socket, _pid: int) -> None:
+        scratch = Path(result_plan.scratch_root)
+        _write_result(scratch, _DEFAULT_RESULT_CASE)
+        accounted_bytes.append(_allocated_regular_bytes(scratch))
+
+    result = _supervise_child(
+        (2, 7),
+        activate,
+        _DEFAULT_RESULT_CASE.binding,
+        plan=result_plan,
+        limits=_limits(output=2_000_000),
+        kernel=kernel,
+    )
+    assert type(result.verified_child_result) is child_result.VerifiedChildResult
+    _REAL_VERIFY_VERIFIED_CHILD_RESULT(result.verified_child_result)
+    assert result.verified_child_result.binding == _DEFAULT_RESULT_CASE.binding
+    assert (
+        result.verified_child_result.canonical_history_bytes
+        == _DEFAULT_RESULT_CASE.history
+    )
+    assert result.verified_child_result.safetensors_bytes == (
+        _DEFAULT_RESULT_CASE.safetensors
+    )
+    assert accounted_bytes == [result.output_and_scratch_bytes]
+    assert not Path(result_plan.scratch_root).exists()
+    assert Path(result_plan.staging_root).is_dir()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["missing", "partial", "extra", "tampered", "mismatched"],
+)
+def test_exit_zero_invalid_child_result_fails_closed_and_clears_roots(
+    result_plan: supervisor._LaunchPlan,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    _use_real_result_routes(monkeypatch)
+    _prepare_staging(result_plan)
+    staging = Path(result_plan.staging_root)
+    (staging / "prior-result").write_bytes(b"must be cleared")
+    kernel = FakeKernel(times=[0, 1, 2, 3])
+
+    def activate(_channel: socket.socket, _pid: int) -> None:
+        scratch = Path(result_plan.scratch_root)
+        if failure == "missing":
+            return
+        if failure == "partial":
+            (scratch / child_result._HISTORY_FILENAME).write_bytes(
+                _DEFAULT_RESULT_CASE.history
+            )
+            return
+        if failure == "mismatched":
+            _write_result(scratch, _result_case(ordinal=1))
+            return
+        _write_result(scratch, _DEFAULT_RESULT_CASE)
+        if failure == "extra":
+            (scratch / "unexpected-result").write_bytes(b"extra")
+            return
+        target = scratch / child_result._SAFETENSORS_FILENAME
+        payload = bytearray(target.read_bytes())
+        payload[-1] ^= 1
+        target.write_bytes(payload)
+
+    with pytest.raises(child_result.Experiment002ChildResultError):
+        _supervise_child(
+            (2, 7),
+            activate,
+            _DEFAULT_RESULT_CASE.binding,
+            plan=result_plan,
+            limits=_limits(output=2_000_000),
+            kernel=kernel,
+        )
+    assert not Path(result_plan.scratch_root).exists()
+    assert staging.is_dir()
+    assert list(staging.iterdir()) == []
+
+
+def test_success_order_is_monitor_join_account_load_verify_account_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(times=[0, 1, 2, 3])
+    events: list[str] = []
+    original_account = supervisor._account_pinned_roots
+    original_join = supervisor._join_activation_thread
+    original_cleanup = supervisor._cleanup_pinned_scratch
+    loaded_bindings: list[child_result.ChildResultBinding] = []
+
+    def account(
+        roots: tuple[supervisor._PinnedRoot, supervisor._PinnedRoot],
+        maximum_bytes: int,
+    ) -> int:
+        events.append("account")
+        return original_account(roots, maximum_bytes)
+
+    def join(thread: threading.Thread) -> None:
+        events.append("join")
+        original_join(thread)
+
+    def load(
+        _scratch_directory: Path,
+        expected: child_result.ChildResultBinding,
+        /,
+    ) -> child_result.VerifiedChildResult:
+        events.append("load")
+        loaded_bindings.append(expected)
+        return _SYNTHETIC_VERIFIED_CHILD_RESULT
+
+    def verify(_result: child_result.VerifiedChildResult, /) -> None:
+        events.append("verify")
+
+    def cleanup(root: supervisor._PinnedRoot) -> None:
+        events.append("cleanup")
+        original_cleanup(root)
+
+    monkeypatch.setattr(supervisor, "_account_pinned_roots", account)
+    monkeypatch.setattr(supervisor, "_join_activation_thread", join)
+    monkeypatch.setattr(supervisor, "load_registered_child_result", load)
+    monkeypatch.setattr(supervisor, "verify_verified_child_result", verify)
+    monkeypatch.setattr(supervisor, "_cleanup_pinned_scratch", cleanup)
+    result = _supervise_child(
+        (2, 7),
+        lambda _channel, _pid: None,
+        plan=plan,
+        limits=_limits(),
+        kernel=kernel,
+    )
+    assert events[:2] == ["account", "account"]
+    assert events[-6:] == [
+        "join",
+        "account",
+        "load",
+        "verify",
+        "account",
+        "cleanup",
+    ]
+    assert len(loaded_bindings) == 1
+    assert loaded_bindings[0] == _DEFAULT_RESULT_CASE.binding
+    assert loaded_bindings[0] is not _DEFAULT_RESULT_CASE.binding
+    assert result.verified_child_result is _SYNTHETIC_VERIFIED_CHILD_RESULT
+    assert not Path(plan.scratch_root).exists()
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_supervision_reuses_issuer_bundle_without_owning_it_and_closes_sources(
@@ -1429,6 +1851,7 @@ def test_supervision_reuses_issuer_bundle_without_owning_it_and_closes_sources(
                 (2, 7),
                 lambda _channel, _pid: None,
                 source_bundle,
+                _DEFAULT_RESULT_CASE.binding,
                 plan=plan,
                 limits=_limits(),
                 kernel=kernel,
@@ -1440,11 +1863,85 @@ def test_supervision_reuses_issuer_bundle_without_owning_it_and_closes_sources(
             with pytest.raises(OSError) as caught:
                 os.fstat(safe_source)
             assert caught.value.errno == errno.EBADF
-            if ordinal == 0:
-                supervisor._remove_directory_tree(plan.scratch_root)
+            assert not Path(plan.scratch_root).exists()
     finally:
         os.close(source_bundle)
-        supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+        supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_real_results_reuse_fresh_scratch_automatically_and_keep_staging(
+    result_plan: supervisor._LaunchPlan,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_real_result_routes(monkeypatch)
+    _prepare_staging(result_plan)
+    staging = Path(result_plan.staging_root)
+    marker = staging / "seed-zero-retained"
+    marker.write_bytes(b"trusted parent staging")
+    cases = (_DEFAULT_RESULT_CASE, _result_case(ordinal=1))
+    results: list[supervisor._SupervisedChildResult] = []
+
+    for ordinal, case in enumerate(cases):
+        kernel = FakeKernel(
+            pid=41_001 + ordinal,
+            times=[10 * ordinal, 10 * ordinal + 1, 10 * ordinal + 2],
+        )
+
+        def activate(
+            _channel: socket.socket,
+            _pid: int,
+            *,
+            current: _ResultCase = case,
+        ) -> None:
+            assert marker.read_bytes() == b"trusted parent staging"
+            _write_result(Path(result_plan.scratch_root), current)
+
+        results.append(
+            _supervise_child(
+                (2, 7),
+                activate,
+                case.binding,
+                plan=result_plan,
+                limits=_limits(output=2_000_000),
+                kernel=kernel,
+            )
+        )
+        assert not Path(result_plan.scratch_root).exists()
+        assert marker.read_bytes() == b"trusted parent staging"
+
+    assert [result.verified_child_result.seed for result in results] == [
+        20_260_719,
+        20_260_720,
+    ]
+    for result in results:
+        _REAL_VERIFY_VERIFIED_CHILD_RESULT(result.verified_child_result)
+
+
+def test_result_binding_exact_type_is_rejected_before_scratch_or_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BindingSubclass(child_result.ChildResultBinding):
+        pass
+
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel()
+    invalid_values = (object(), object.__new__(BindingSubclass))
+    for value in invalid_values:
+        with pytest.raises(TypeError, match="exact ChildResultBinding"):
+            _supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                cast(child_result.ChildResultBinding, value),
+                plan=plan,
+                limits=_limits(),
+                kernel=kernel,
+            )
+        assert kernel.spawn_calls == []
+        assert not Path(plan.scratch_root).exists()
+    assert Path(plan.staging_root).is_dir()
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_invalid_bundle_fails_before_scratch_or_spawn_and_remains_caller_owned(
@@ -1464,6 +1961,7 @@ def test_invalid_bundle_fails_before_scratch_or_spawn_and_remains_caller_owned(
                 (2, 7),
                 lambda _channel, _pid: None,
                 source_bundle,
+                _DEFAULT_RESULT_CASE.binding,
                 plan=plan,
                 limits=_limits(),
                 kernel=kernel,
@@ -1508,6 +2006,7 @@ def test_bundle_source_independent_reopen_failure_cleans_every_owned_resource(
                 (2, 7),
                 lambda _channel, _pid: None,
                 source_bundle,
+                _DEFAULT_RESULT_CASE.binding,
                 plan=plan,
                 limits=_limits(),
                 kernel=kernel,
@@ -1557,6 +2056,7 @@ def test_bundle_caller_swap_immediately_before_spawn_fails_revalidation(
                 (2, 7),
                 lambda _channel, _pid: None,
                 source_bundle,
+                _DEFAULT_RESULT_CASE.binding,
                 plan=plan,
                 limits=_limits(),
                 kernel=kernel,
@@ -1572,6 +2072,127 @@ def test_bundle_caller_swap_immediately_before_spawn_fails_revalidation(
         os.close(replacement)
         os.close(source_bundle)
         supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_scratch_root_replacement_during_load_is_detected_and_contained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(times=[0, 1, 2, 3])
+    hidden = Path(plan.scratch_root).with_name("hidden-original-scratch")
+
+    def replace_during_load(
+        scratch_directory: Path,
+        _expected: child_result.ChildResultBinding,
+        /,
+    ) -> child_result.VerifiedChildResult:
+        scratch_directory.rename(hidden)
+        scratch_directory.mkdir(mode=0o700)
+        return _SYNTHETIC_VERIFIED_CHILD_RESULT
+
+    monkeypatch.setattr(
+        supervisor,
+        "load_registered_child_result",
+        replace_during_load,
+    )
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="identity changed",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert not Path(plan.scratch_root).exists()
+    assert not hidden.exists()
+    assert Path(plan.staging_root).is_dir()
+    assert list(Path(plan.staging_root).iterdir()) == []
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_result_load_byte_mutation_breaks_terminal_account_equality(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    staging = Path(plan.staging_root)
+    (staging / "prior-result").write_bytes(b"clear on failure")
+    kernel = FakeKernel(times=[0, 1, 2, 3])
+
+    def mutate_during_load(
+        scratch_directory: Path,
+        _expected: child_result.ChildResultBinding,
+        /,
+    ) -> child_result.VerifiedChildResult:
+        (scratch_directory / "late-result-byte").write_bytes(b"changed")
+        return _SYNTHETIC_VERIFIED_CHILD_RESULT
+
+    monkeypatch.setattr(
+        supervisor,
+        "load_registered_child_result",
+        mutate_during_load,
+    )
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="changed during child-result loading",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert not Path(plan.scratch_root).exists()
+    assert staging.is_dir()
+    assert list(staging.iterdir()) == []
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_verified_result_reverification_failure_uses_child_containment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    staging = Path(plan.staging_root)
+    (staging / "prior-result").write_bytes(b"clear on failure")
+    kernel = FakeKernel(times=[0, 1, 2, 3])
+
+    def fail_verification(
+        _result: child_result.VerifiedChildResult,
+        /,
+    ) -> None:
+        raise child_result.Experiment002ChildResultError(
+            "synthetic result authority failure"
+        )
+
+    monkeypatch.setattr(
+        supervisor,
+        "verify_verified_child_result",
+        fail_verification,
+    )
+    with pytest.raises(
+        child_result.Experiment002ChildResultError,
+        match="authority failure",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert not Path(plan.scratch_root).exists()
+    assert staging.is_dir()
+    assert list(staging.iterdir()) == []
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocked(
@@ -1632,7 +2253,92 @@ def test_inheritable_fd_snapshot_is_built_while_all_catchable_signals_are_blocke
     assert supervisor._blockable_signals() <= observed_masks[0]
     assert len(revalidation_masks) == 1
     assert supervisor._blockable_signals() <= revalidation_masks[0]
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+@pytest.mark.parametrize("failure", ["activation", "nonzero", "resource", "spawn"])
+def test_early_failures_never_invoke_child_result_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    loader_calls: list[Path] = []
+
+    def forbidden_loader(
+        scratch_directory: Path,
+        _expected: child_result.ChildResultBinding,
+        /,
+    ) -> child_result.VerifiedChildResult:
+        loader_calls.append(scratch_directory)
+        raise AssertionError("child-result loader was reached")
+
+    monkeypatch.setattr(
+        supervisor,
+        "load_registered_child_result",
+        forbidden_loader,
+    )
+
+    def activation(_channel: socket.socket, _pid: int) -> None:
+        return None
+
+    expected_exception: type[BaseException]
+    if failure == "activation":
+        kernel = FakeKernel(times=[0, 1, 2])
+
+        def fail_activation(_channel: socket.socket, _pid: int) -> None:
+            raise RuntimeError("synthetic activation failure")
+
+        activation = fail_activation
+        expected_exception = RuntimeError
+    elif failure == "nonzero":
+        kernel = FakeKernel(
+            wait_results=[
+                supervisor._WaitResult(0, 0, 0),
+                supervisor._WaitResult(41_001, 9, 1),
+            ],
+            times=[0, 1, 2],
+        )
+        expected_exception = supervisor.Experiment002SupervisorError
+    elif failure == "resource":
+        kernel = FakeKernel(
+            wait_results=[
+                supervisor._WaitResult(0, 0, 0),
+                supervisor._WaitResult(41_001, 9, 1),
+            ],
+            samples=[supervisor._ProcessSample(1_000_001, ())],
+            times=[0, 1, 2],
+        )
+        expected_exception = supervisor.Experiment002SupervisorError
+    else:
+        kernel = FakeKernel(times=[0])
+
+        def fail_spawn(
+            executable_path: str,
+            argv: tuple[str, ...],
+            environment: Mapping[str, str],
+            file_actions: tuple[supervisor._FileAction, ...],
+            source_bundle_fd: int,
+        ) -> int:
+            del executable_path, argv, environment, file_actions, source_bundle_fd
+            raise OSError("synthetic spawn failure")
+
+        kernel.spawn = fail_spawn  # type: ignore[method-assign]
+        expected_exception = OSError
+
+    with pytest.raises(expected_exception):
+        _supervise_child(
+            (2, 7),
+            activation,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert loader_calls == []
+    assert not Path(plan.scratch_root).exists()
+    assert Path(plan.staging_root).is_dir()
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 @pytest.mark.parametrize(
@@ -1759,7 +2465,7 @@ def test_proc_disappearance_is_pardoned_only_after_exact_terminal_wait(
         (kernel.pid, os.WNOHANG),
         (kernel.pid, os.WNOHANG),
     ]
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_activation_is_monitored_concurrently_and_failure_is_contained(
@@ -2107,7 +2813,65 @@ def test_parent_signals_remain_blocked_through_activation_and_monitor(
         int(value) for value in signal.pthread_sigmask(signal.SIG_BLOCK, set())
     }
     assert restored_mask == original_mask
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_post_masked_parent_boundary_failure_cannot_escape_a_trusted_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    internal_result = supervisor._SupervisedChildResult(
+        pid=41_001,
+        cpu_ids=(2, 7),
+        elapsed_nanoseconds=1,
+        maximum_rss_bytes=1,
+        output_and_scratch_bytes=1,
+        verified_child_result=_SYNTHETIC_VERIFIED_CHILD_RESULT,
+    )
+    masked_bindings: list[child_result.ChildResultBinding] = []
+
+    def masked(*args: object, **_kwargs: object) -> supervisor._SupervisedChildResult:
+        assert len(args) == 4
+        binding = args[3]
+        assert type(binding) is child_result.ChildResultBinding
+        masked_bindings.append(binding)
+        return internal_result
+
+    def fail_boundary(_frame: supervisor._SignalDispositionFrame) -> None:
+        raise supervisor.Experiment002SupervisorError(
+            "synthetic post-masked parent boundary failure"
+        )
+
+    monkeypatch.setattr(supervisor, "_supervise_child_masked", masked)
+    monkeypatch.setattr(
+        supervisor,
+        "_require_safe_signal_dispositions_unchanged",
+        fail_boundary,
+    )
+    source_bundle = _source_bundle_fd()
+    escaped: list[supervisor._SupervisedChildResult] = []
+
+    def invoke() -> None:
+        escaped.append(
+            supervisor._supervise_child(
+                (2, 7),
+                lambda _channel, _pid: None,
+                source_bundle,
+                _DEFAULT_RESULT_CASE.binding,
+            )
+        )
+
+    try:
+        with pytest.raises(
+            supervisor.Experiment002SupervisorError,
+            match="parent-boundary containment",
+        ):
+            invoke()
+    finally:
+        os.close(source_bundle)
+    assert escaped == []
+    assert len(masked_bindings) == 1
+    assert masked_bindings[0] == _DEFAULT_RESULT_CASE.binding
+    assert masked_bindings[0] is not _DEFAULT_RESULT_CASE.binding
 
 
 def test_unregistered_parent_child_is_killed_and_reaped() -> None:
@@ -2170,7 +2934,7 @@ def test_monitor_sleep_request_is_strictly_below_100ms(
     )
     assert result.pid == kernel.pid
     assert kernel.sleep_calls == [pytest.approx(0.099999998)]
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_cleanup_never_follows_replaced_root_symlink(tmp_path: Path) -> None:
@@ -2303,7 +3067,7 @@ def test_experiment_staging_survives_across_fresh_children(
         limits=_limits(),
         kernel=first,
     )
-    supervisor._remove_directory_tree(plan.scratch_root)
+    assert not Path(plan.scratch_root).exists()
     second = FakeKernel(times=[10, 11, 12, 13])
 
     def second_activation(_channel: socket.socket, _pid: int) -> None:
@@ -2318,7 +3082,7 @@ def test_experiment_staging_survives_across_fresh_children(
     )
     expected = max(marker.stat().st_size, 512 * marker.stat().st_blocks)
     assert result.output_and_scratch_bytes == expected
-    supervisor._cleanup_output_roots((plan.scratch_root, plan.staging_root))
+    supervisor._remove_directory_tree(plan.staging_root)
 
 
 def test_fast_exit_cannot_succeed_without_pre_reap_affinity_observation(
