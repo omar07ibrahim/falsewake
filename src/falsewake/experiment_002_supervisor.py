@@ -1111,6 +1111,27 @@ def _create_fresh_directory(path: str) -> None:
     pinned.close()
 
 
+def _require_output_root_absent(path: str) -> None:
+    parent, leaf = _parent_and_leaf(path)
+    pinned_parent = _pin_directory_chain(parent)
+    try:
+        try:
+            os.stat(
+                leaf,
+                dir_fd=pinned_parent.descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise Experiment002SupervisorError(
+                f"fresh output root cannot be inspected: {path}"
+            ) from error
+        _fail(f"fresh output root already exists: {path}")
+    finally:
+        pinned_parent.close()
+
+
 def _prepare_fresh_output_roots(roots: tuple[str, str]) -> None:
     if type(roots) is not tuple or len(roots) != 2 or roots[0] == roots[1]:
         _fail("output roots are not one exact scratch/staging pair")
@@ -1809,6 +1830,50 @@ def _cleanup_output_roots(roots: tuple[str, str]) -> None:
         raise Experiment002SupervisorError(
             "failed to clean supervised output roots"
         ) from failures[0]
+
+
+def _bind_registered_experiment_output_lifecycle() -> tuple[
+    Callable[[], None],
+    Callable[[], None],
+]:
+    plan = _REGISTERED_PLAN
+    _require_plan(plan)
+    if (
+        plan.temporary_root != _TEMP_ROOT
+        or plan.scratch_root != _SCRATCH_ROOT
+        or plan.staging_root != _STAGING_ROOT
+    ):
+        _fail("registered experiment output paths are not exact")
+
+    scratch_root = plan.scratch_root
+    staging_root = plan.staging_root
+    registered_roots = (scratch_root, staging_root)
+    require_absent = _require_output_root_absent
+    create_fresh = _create_fresh_directory
+    cleanup_roots = _cleanup_output_roots
+
+    def _prepare_registered_experiment_staging() -> None:
+        """Fresh-create only the fixed experiment-lifetime staging root."""
+
+        require_absent(scratch_root)
+        create_fresh(staging_root)
+
+    def _cleanup_registered_experiment_output_roots() -> None:
+        """Remove both fixed experiment output roots after outer failure."""
+
+        cleanup_roots(registered_roots)
+
+    return (
+        _prepare_registered_experiment_staging,
+        _cleanup_registered_experiment_output_roots,
+    )
+
+
+(
+    _prepare_registered_experiment_staging,
+    _cleanup_registered_experiment_output_roots,
+) = _bind_registered_experiment_output_lifecycle()
+del _bind_registered_experiment_output_lifecycle
 
 
 def _parse_vmrss_bytes(contents: bytes) -> int:

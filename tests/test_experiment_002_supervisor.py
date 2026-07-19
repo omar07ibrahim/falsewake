@@ -500,6 +500,21 @@ def result_plan(
                 supervisor._remove_directory_tree(path)
 
 
+@pytest.fixture
+def registered_output_roots() -> Iterator[tuple[Path, Path]]:
+    roots = (
+        Path(supervisor._REGISTERED_PLAN.scratch_root),
+        Path(supervisor._REGISTERED_PLAN.staging_root),
+    )
+    root_strings = _root_strings(roots)
+    cleanup_roots = supervisor._cleanup_output_roots
+    cleanup_roots(root_strings)
+    try:
+        yield roots
+    finally:
+        cleanup_roots(root_strings)
+
+
 def _use_real_result_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         supervisor,
@@ -736,6 +751,186 @@ def test_fresh_root_refuses_existing_name_without_removing_it(tmp_path: Path) ->
     with pytest.raises(supervisor.Experiment002SupervisorError, match="already exists"):
         supervisor._create_fresh_directory(os.fspath(existing))
     assert marker.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        supervisor._prepare_registered_experiment_staging,
+        supervisor._cleanup_registered_experiment_output_roots,
+    ],
+)
+def test_registered_output_lifecycle_routes_have_exact_zero_argument_signatures(
+    route: Callable[[], None],
+) -> None:
+    signature = inspect.signature(route)
+    assert tuple(signature.parameters.values()) == ()
+    assert signature.return_annotation in {None, "None"}
+    assert route.__defaults__ is None
+    assert route.__kwdefaults__ is None
+    with pytest.raises(TypeError):
+        cast(Callable[[object], None], route)(supervisor._REGISTERED_PLAN)
+    with pytest.raises(TypeError):
+        cast(Callable[..., None], route)(plan=supervisor._REGISTERED_PLAN)
+
+
+def test_registered_staging_prepare_and_cleanup_are_fixed_and_idempotent(
+    registered_output_roots: tuple[Path, Path],
+) -> None:
+    scratch, staging = registered_output_roots
+
+    supervisor._prepare_registered_experiment_staging()
+
+    assert not os.path.lexists(scratch)
+    assert staging.is_dir()
+    assert stat.S_IMODE(staging.stat().st_mode) == 0o700
+    assert list(staging.iterdir()) == []
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="already exists",
+    ):
+        supervisor._prepare_registered_experiment_staging()
+    assert list(staging.iterdir()) == []
+
+    supervisor._cleanup_registered_experiment_output_roots()
+    assert not os.path.lexists(scratch)
+    assert not os.path.lexists(staging)
+
+    supervisor._cleanup_registered_experiment_output_roots()
+    assert not os.path.lexists(scratch)
+    assert not os.path.lexists(staging)
+
+
+@pytest.mark.parametrize("existing_index", [0, 1])
+def test_registered_staging_prepare_rejects_any_existing_output_root(
+    registered_output_roots: tuple[Path, Path],
+    existing_index: int,
+) -> None:
+    scratch, staging = registered_output_roots
+    existing = registered_output_roots[existing_index]
+    existing.mkdir(mode=0o700)
+    marker = existing / "owned"
+    marker.write_bytes(b"preserve")
+
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="already exists",
+    ):
+        supervisor._prepare_registered_experiment_staging()
+
+    assert marker.read_bytes() == b"preserve"
+    if existing == scratch:
+        assert not os.path.lexists(staging)
+    else:
+        assert not os.path.lexists(scratch)
+
+
+def test_registered_cleanup_handles_replaced_symlink_deep_and_sparse_roots(
+    registered_output_roots: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    scratch, staging = registered_output_roots
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    marker = victim / "marker"
+    marker.write_bytes(b"preserve")
+
+    supervisor._prepare_registered_experiment_staging()
+    moved_staging = tmp_path / "moved-staging"
+    staging.rename(moved_staging)
+    staging.mkdir(mode=0o700)
+    cursor = staging
+    for index in range(180):
+        cursor /= f"d{index:03d}"
+        cursor.mkdir()
+    with (cursor / "sparse").open("wb") as stream:
+        stream.truncate(4_294_967_297)
+    (cursor / "external-link").symlink_to(victim, target_is_directory=True)
+    scratch.symlink_to(victim, target_is_directory=True)
+
+    supervisor._cleanup_registered_experiment_output_roots()
+
+    assert not os.path.lexists(scratch)
+    assert not os.path.lexists(staging)
+    assert moved_staging.is_dir()
+    assert marker.read_bytes() == b"preserve"
+
+
+def test_registered_output_lifecycle_captures_paths_and_routes_at_import(
+    registered_output_roots: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scratch, staging = registered_output_roots
+    fake_temporary = tmp_path / "fake-temporary"
+    fake_temporary.mkdir()
+    fake_scratch = fake_temporary / "scratch"
+    fake_staging = fake_temporary / "staging"
+    original_plan = supervisor._REGISTERED_PLAN
+    fake_environment = tuple(
+        (key, os.fspath(fake_scratch) if key == "TMPDIR" else value)
+        for key, value in original_plan.environment_items
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_REGISTERED_PLAN",
+        replace(
+            original_plan,
+            temporary_root=os.fspath(fake_temporary),
+            scratch_root=os.fspath(fake_scratch),
+            staging_root=os.fspath(fake_staging),
+            environment_items=fake_environment,
+        ),
+    )
+    monkeypatch.setattr(supervisor, "_SCRATCH_ROOT", os.fspath(fake_scratch))
+    monkeypatch.setattr(supervisor, "_STAGING_ROOT", os.fspath(fake_staging))
+
+    def unexpected_route(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("registered lifecycle consulted a mutable global route")
+
+    monkeypatch.setattr(supervisor, "_require_output_root_absent", unexpected_route)
+    monkeypatch.setattr(supervisor, "_create_fresh_directory", unexpected_route)
+    monkeypatch.setattr(supervisor, "_cleanup_output_roots", unexpected_route)
+
+    supervisor._prepare_registered_experiment_staging()
+    assert not os.path.lexists(scratch)
+    assert staging.is_dir()
+    assert not os.path.lexists(fake_scratch)
+    assert not os.path.lexists(fake_staging)
+
+    supervisor._cleanup_registered_experiment_output_roots()
+    assert not os.path.lexists(scratch)
+    assert not os.path.lexists(staging)
+
+
+def test_registered_cleanup_attempts_both_roots_and_aggregates_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scratch = supervisor._REGISTERED_PLAN.scratch_root
+    staging = supervisor._REGISTERED_PLAN.staging_root
+    supervisor._cleanup_output_roots((scratch, staging))
+    calls: list[str] = []
+    staging_error = PermissionError("staging cleanup failed")
+    scratch_error = OSError("scratch cleanup failed")
+
+    def fail_cleanup(path: str) -> None:
+        calls.append(path)
+        if path == staging:
+            raise staging_error
+        if path == scratch:
+            raise scratch_error
+        raise AssertionError("unexpected cleanup path")
+
+    monkeypatch.setattr(supervisor, "_remove_directory_tree", fail_cleanup)
+
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="failed to clean supervised output roots",
+    ) as caught:
+        supervisor._cleanup_registered_experiment_output_roots()
+
+    assert calls == [staging, scratch]
+    assert caught.value.__cause__ is staging_error
 
 
 def test_accounting_uses_size_or_allocated_blocks_and_shared_total(
