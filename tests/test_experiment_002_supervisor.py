@@ -19,10 +19,11 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, cast
+from types import ModuleType
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -36,6 +37,7 @@ _TEST_SOURCE_BUNDLE = b"falsewake synthetic sealed source bundle\n"
 _HISTORY_DOMAIN = b"falsewake-exp002-history-v1\0"
 _MODEL_TENSOR_DOMAIN = b"falsewake-exp002-model-tensors-v1\0"
 _CLASS_SUPPORT = (397, 406, 350, 377, 352, 363, 363, 373, 350, 372, 6_278, 602)
+_REAL_REQUIRE_SINGLE_PARENT_THREAD = supervisor._require_single_parent_thread
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,19 +502,129 @@ def result_plan(
                 supervisor._remove_directory_tree(path)
 
 
-@pytest.fixture
-def registered_output_roots() -> Iterator[tuple[Path, Path]]:
-    roots = (
-        Path(supervisor._REGISTERED_PLAN.scratch_root),
-        Path(supervisor._REGISTERED_PLAN.staging_root),
+class _IsolatedLifecycleKernel:
+    def __init__(self, children: tuple[int, ...] = ()) -> None:
+        self.module: ModuleType | None = None
+        self.children = list(children)
+        self.journal_calls = 0
+        self.journal_additions: dict[int, tuple[int, ...]] = {}
+        self.reap_failures: set[int] = set()
+        self.kill_group_calls: list[int] = []
+        self.kill_pid_calls: list[int] = []
+        self.wait_calls: list[int] = []
+
+    def parent_child_pids(self) -> tuple[int, ...]:
+        self.journal_calls += 1
+        self.children.extend(self.journal_additions.get(self.journal_calls, ()))
+        return tuple(dict.fromkeys(self.children))
+
+    def kill_process_group(self, pid: int) -> None:
+        self.kill_group_calls.append(pid)
+
+    def kill_process(self, pid: int) -> None:
+        self.kill_pid_calls.append(pid)
+
+    def wait4(self, pid: int, _options: int) -> object:
+        self.wait_calls.append(pid)
+        if pid in self.reap_failures:
+            raise OSError(errno.EIO, "synthetic reap failure")
+        self.children.remove(pid)
+        if self.module is None:
+            raise AssertionError("isolated supervisor module is unavailable")
+        wait_result_type = cast(Any, self.module)._WaitResult
+        return wait_result_type(pid, int(signal.SIGKILL), 1)
+
+    def monotonic_ns(self) -> int:
+        return 0
+
+    def sleep(self, _seconds: float) -> None:
+        return None
+
+
+@contextmanager
+def _isolated_registered_supervisor(
+    tmp_path: Path,
+    *,
+    kernel: _IsolatedLifecycleKernel | None = None,
+    fail_scrub: bool = False,
+) -> Iterator[
+    tuple[
+        ModuleType,
+        _IsolatedLifecycleKernel,
+        list[tuple[object, ...]],
+        list[Callable[[], object]],
+    ]
+]:
+    temporary = tmp_path / f"registered-{uuid.uuid4().hex}"
+    temporary.mkdir(mode=0o700)
+    selected_kernel = kernel or _IsolatedLifecycleKernel()
+    calls: list[tuple[object, ...]] = []
+    behavior: list[Callable[[], object]] = [object]
+
+    def synthetic_supervise(
+        cpu_ids: tuple[int, int],
+        activation_callback: object,
+        source_bundle_fd: int,
+        result_binding: object,
+        /,
+        *,
+        plan: object = None,
+        limits: object = None,
+        kernel: object = None,
+    ) -> object:
+        calls.append(
+            (
+                cpu_ids,
+                activation_callback,
+                source_bundle_fd,
+                result_binding,
+                plan,
+                limits,
+                kernel,
+            )
+        )
+        return behavior[0]()
+
+    source = SOURCE_PATH.read_text(encoding="utf-8")
+    old_temporary = '_TEMP_ROOT: Final = "/home/ubuntu/gitcode/.t"'
+    new_temporary = f"_TEMP_ROOT: Final = {os.fspath(temporary)!r}"
+    assert source.count(old_temporary) == 1
+    source = source.replace(old_temporary, new_temporary)
+    real_kernel = "_REAL_KERNEL: Final = _RealKernel()"
+    assert source.count(real_kernel) == 1
+    source = source.replace(real_kernel, "_REAL_KERNEL: Final = _TEST_REAL_KERNEL")
+    supervisor_factory = "\ndef _make_supervise_registered_child()"
+    assert source.count(supervisor_factory) == 1
+    source = source.replace(
+        supervisor_factory,
+        "\n_supervise_child = _TEST_SUPERVISE_CHILD\n" + supervisor_factory,
     )
-    root_strings = _root_strings(roots)
-    cleanup_roots = supervisor._cleanup_output_roots
-    cleanup_roots(root_strings)
+    if fail_scrub:
+        lifecycle_factory = "\ndef _bind_registered_parent_lifecycle()"
+        assert source.count(lifecycle_factory) == 1
+        source = source.replace(
+            lifecycle_factory,
+            "\n_ORIGINAL_REMOVE_DIRECTORY_CONTENTS = _remove_directory_contents\n"
+            "def _injected_remove_directory_contents(descriptor: int) -> None:\n"
+            "    _ORIGINAL_REMOVE_DIRECTORY_CONTENTS(descriptor)\n"
+            "    raise OSError('synthetic scrub failure')\n"
+            "_remove_directory_contents = _injected_remove_directory_contents\n"
+            + lifecycle_factory,
+        )
+
+    module_name = f"falsewake._isolated_supervisor_{uuid.uuid4().hex}"
+    isolated = ModuleType(module_name)
+    isolated.__file__ = os.fspath(SOURCE_PATH)
+    isolated.__package__ = "falsewake"
+    isolated.__dict__["_TEST_REAL_KERNEL"] = selected_kernel
+    isolated.__dict__["_TEST_SUPERVISE_CHILD"] = synthetic_supervise
+    sys.modules[module_name] = isolated
     try:
-        yield roots
+        exec(compile(source, os.fspath(SOURCE_PATH), "exec"), isolated.__dict__)
+        selected_kernel.module = isolated
+        yield isolated, selected_kernel, calls, behavior
     finally:
-        cleanup_roots(root_strings)
+        sys.modules.pop(module_name, None)
 
 
 def _use_real_result_routes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -852,6 +964,7 @@ def test_fresh_root_refuses_existing_name_without_removing_it(tmp_path: Path) ->
     "route",
     [
         supervisor._prepare_registered_experiment_staging,
+        supervisor._require_registered_parent_quiescence,
         supervisor._cleanup_registered_experiment_output_roots,
     ],
 )
@@ -869,163 +982,376 @@ def test_registered_output_lifecycle_routes_have_exact_zero_argument_signatures(
         cast(Callable[..., None], route)(plan=supervisor._REGISTERED_PLAN)
 
 
-def test_registered_staging_prepare_and_cleanup_are_fixed_and_idempotent(
-    registered_output_roots: tuple[Path, Path],
+def _route_closure(route: Callable[..., object]) -> dict[str, object]:
+    return {
+        name: cell.cell_contents
+        for name, cell in zip(
+            route.__code__.co_freevars,
+            route.__closure__ or (),
+            strict=True,
+        )
+    }
+
+
+def _isolated_supervisor_error(module: ModuleType) -> type[Exception]:
+    return cast("type[Exception]", cast(Any, module).Experiment002SupervisorError)
+
+
+def test_registered_lifecycle_routes_share_one_deleted_closure_authority() -> None:
+    routes = (
+        supervisor._prepare_registered_experiment_staging,
+        supervisor._require_registered_parent_quiescence,
+        supervisor._cleanup_registered_experiment_output_roots,
+    )
+    closures = tuple(_route_closure(route) for route in routes)
+    assert not hasattr(supervisor, "_bind_registered_parent_lifecycle")
+    assert closures[0]["enter"] is closures[1]["enter"]
+    assert closures[1]["enter"] is closures[2]["enter"]
+    enter = cast(Callable[..., object], closures[0]["enter"])
+    assert type(_route_closure(enter)["state_lock"]) is type(threading.Lock())
+    assert (
+        closures[0]["contain_direct_children"] is closures[1]["contain_direct_children"]
+    )
+    containment = cast(Callable[..., object], closures[0]["contain_direct_children"])
+    containment_closure = _route_closure(containment)
+    assert containment_closure["kernel"] is supervisor._REAL_KERNEL
+    assert (
+        containment_closure["require_single_parent_thread"]
+        is _REAL_REQUIRE_SINGLE_PARENT_THREAD
+    )
+
+
+def test_registered_lifecycle_runs_exactly_four_guarded_children_then_cleans(
+    tmp_path: Path,
 ) -> None:
-    scratch, staging = registered_output_roots
-
-    supervisor._prepare_registered_experiment_staging()
-
-    assert not os.path.lexists(scratch)
-    assert staging.is_dir()
-    assert stat.S_IMODE(staging.stat().st_mode) == 0o700
-    assert list(staging.iterdir()) == []
-    with pytest.raises(
-        supervisor.Experiment002SupervisorError,
-        match="already exists",
+    with _isolated_registered_supervisor(tmp_path) as (
+        isolated,
+        kernel,
+        calls,
+        _behavior,
     ):
-        supervisor._prepare_registered_experiment_staging()
-    assert list(staging.iterdir()) == []
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        scratch = Path(plan.scratch_root)
+        staging = Path(plan.staging_root)
+        assert isolated._require_registered_parent_quiescence() is None
+        isolated._prepare_registered_experiment_staging()
+        assert staging.is_dir() and not scratch.exists()
+        for ordinal in range(4):
+            result = isolated._supervise_registered_child(
+                (2, 7),
+                object(),
+                90 + ordinal,
+                _DEFAULT_RESULT_CASE.binding,
+            )
+            assert type(result) is object
+            assert isolated._require_registered_parent_quiescence() is None
+        isolated._cleanup_registered_experiment_output_roots()
+        assert isolated._require_registered_parent_quiescence() is None
+        isolated._cleanup_registered_experiment_output_roots()
+        assert len(calls) == 4
+        assert kernel.journal_calls >= 12
+        assert not scratch.exists() and not staging.exists()
 
-    supervisor._cleanup_registered_experiment_output_roots()
-    assert not os.path.lexists(scratch)
-    assert not os.path.lexists(staging)
 
-    supervisor._cleanup_registered_experiment_output_roots()
-    assert not os.path.lexists(scratch)
-    assert not os.path.lexists(staging)
-
-
-@pytest.mark.parametrize("existing_index", [0, 1])
-def test_registered_staging_prepare_rejects_any_existing_output_root(
-    registered_output_roots: tuple[Path, Path],
-    existing_index: int,
+@pytest.mark.parametrize("root_name", ["scratch_root", "staging_root"])
+@pytest.mark.parametrize("kind", ["directory", "file", "symlink"])
+def test_stale_registered_root_failure_and_cleanup_preserve_foreign_bytes(
+    tmp_path: Path,
+    root_name: str,
+    kind: str,
 ) -> None:
-    scratch, staging = registered_output_roots
-    existing = registered_output_roots[existing_index]
-    existing.mkdir(mode=0o700)
-    marker = existing / "owned"
-    marker.write_bytes(b"preserve")
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        root = Path(getattr(plan, root_name))
+        victim = tmp_path / f"victim-{root_name}-{kind}"
+        if kind == "directory":
+            root.mkdir(mode=0o700)
+            marker = root / "marker"
+            marker.write_bytes(b"foreign-directory")
+        elif kind == "file":
+            root.write_bytes(b"foreign-file")
+            marker = root
+        else:
+            victim.mkdir()
+            marker = victim / "marker"
+            marker.write_bytes(b"foreign-symlink-target")
+            root.symlink_to(victim, target_is_directory=True)
+        expected = marker.read_bytes()
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="already exists"
+        ):
+            isolated._prepare_registered_experiment_staging()
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="terminally failed"
+        ):
+            isolated._require_registered_parent_quiescence()
+        isolated._cleanup_registered_experiment_output_roots()
+        isolated._cleanup_registered_experiment_output_roots()
+        assert marker.read_bytes() == expected
+        assert os.path.lexists(root)
 
-    with pytest.raises(
-        supervisor.Experiment002SupervisorError,
-        match="already exists",
-    ):
-        supervisor._prepare_registered_experiment_staging()
 
-    assert marker.read_bytes() == b"preserve"
-    if existing == scratch:
+def test_registered_cleanup_removes_renamed_inode_and_replacement_safely(
+    tmp_path: Path,
+) -> None:
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        scratch = Path(plan.scratch_root)
+        staging = Path(plan.staging_root)
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        marker = victim / "marker"
+        marker.write_bytes(b"preserve")
+        isolated._prepare_registered_experiment_staging()
+        (staging / "owned").write_bytes(b"scrub")
+        hidden = staging.with_name("hidden-staging")
+        staging.rename(hidden)
+        staging.mkdir(mode=0o700)
+        (staging / "victim-link").symlink_to(victim, target_is_directory=True)
+        scratch.symlink_to(victim, target_is_directory=True)
+        isolated._cleanup_registered_experiment_output_roots()
         assert not os.path.lexists(staging)
-    else:
+        assert not os.path.lexists(hidden)
         assert not os.path.lexists(scratch)
+        assert marker.read_bytes() == b"preserve"
 
 
-def test_registered_cleanup_handles_replaced_symlink_deep_and_sparse_roots(
-    registered_output_roots: tuple[Path, Path],
+def test_registered_cleanup_recovers_replaced_ancestor_before_inode_removal(
     tmp_path: Path,
 ) -> None:
-    scratch, staging = registered_output_roots
-    victim = tmp_path / "victim"
-    victim.mkdir()
-    marker = victim / "marker"
-    marker.write_bytes(b"preserve")
-
-    supervisor._prepare_registered_experiment_staging()
-    moved_staging = tmp_path / "moved-staging"
-    staging.rename(moved_staging)
-    staging.mkdir(mode=0o700)
-    cursor = staging
-    for index in range(180):
-        cursor /= f"d{index:03d}"
-        cursor.mkdir()
-    with (cursor / "sparse").open("wb") as stream:
-        stream.truncate(4_294_967_297)
-    (cursor / "external-link").symlink_to(victim, target_is_directory=True)
-    scratch.symlink_to(victim, target_is_directory=True)
-
-    supervisor._cleanup_registered_experiment_output_roots()
-
-    assert not os.path.lexists(scratch)
-    assert not os.path.lexists(staging)
-    assert moved_staging.is_dir()
-    assert marker.read_bytes() == b"preserve"
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        temporary = Path(plan.temporary_root)
+        staging = Path(plan.staging_root)
+        isolated._prepare_registered_experiment_staging()
+        (staging / "owned").write_bytes(b"scrub")
+        hidden_temporary = temporary.with_name("hidden-temporary")
+        temporary.rename(hidden_temporary)
+        replacement_staging = temporary / staging.name
+        replacement_staging.mkdir(parents=True, mode=0o700)
+        (replacement_staging / "replacement").write_bytes(b"discard")
+        isolated._cleanup_registered_experiment_output_roots()
+        assert temporary.is_dir()
+        assert not hidden_temporary.exists()
+        assert not (temporary / staging.name).exists()
 
 
-def test_registered_output_lifecycle_captures_paths_and_routes_at_import(
-    registered_output_roots: tuple[Path, Path],
+def test_cross_parent_staging_move_scrubs_bytes_and_reports_empty_name_leak(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    scratch, staging = registered_output_roots
-    fake_temporary = tmp_path / "fake-temporary"
-    fake_temporary.mkdir()
-    fake_scratch = fake_temporary / "scratch"
-    fake_staging = fake_temporary / "staging"
-    original_plan = supervisor._REGISTERED_PLAN
-    fake_environment = tuple(
-        (key, os.fspath(fake_scratch) if key == "TMPDIR" else value)
-        for key, value in original_plan.environment_items
-    )
-    monkeypatch.setattr(
-        supervisor,
-        "_REGISTERED_PLAN",
-        replace(
-            original_plan,
-            temporary_root=os.fspath(fake_temporary),
-            scratch_root=os.fspath(fake_scratch),
-            staging_root=os.fspath(fake_staging),
-            environment_items=fake_environment,
-        ),
-    )
-    monkeypatch.setattr(supervisor, "_SCRATCH_ROOT", os.fspath(fake_scratch))
-    monkeypatch.setattr(supervisor, "_STAGING_ROOT", os.fspath(fake_staging))
-
-    def unexpected_route(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("registered lifecycle consulted a mutable global route")
-
-    monkeypatch.setattr(supervisor, "_require_output_root_absent", unexpected_route)
-    monkeypatch.setattr(supervisor, "_create_fresh_directory", unexpected_route)
-    monkeypatch.setattr(supervisor, "_cleanup_output_roots", unexpected_route)
-
-    supervisor._prepare_registered_experiment_staging()
-    assert not os.path.lexists(scratch)
-    assert staging.is_dir()
-    assert not os.path.lexists(fake_scratch)
-    assert not os.path.lexists(fake_staging)
-
-    supervisor._cleanup_registered_experiment_output_roots()
-    assert not os.path.lexists(scratch)
-    assert not os.path.lexists(staging)
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, _calls, _):
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        staging = Path(plan.staging_root)
+        isolated._prepare_registered_experiment_staging()
+        payload = staging / "owned"
+        payload.write_bytes(b"must not leak")
+        holding = tmp_path / "holding"
+        holding.mkdir()
+        moved = holding / "moved-staging"
+        staging.rename(moved)
+        staging.mkdir(mode=0o700)
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="cleanup failed"
+        ):
+            isolated._cleanup_registered_experiment_output_roots()
+        assert not payload.exists()
+        assert moved.is_dir() and list(moved.iterdir()) == []
+        assert not staging.exists()
 
 
-def test_registered_cleanup_attempts_both_roots_and_aggregates_failures(
-    monkeypatch: pytest.MonkeyPatch,
+def test_registered_lifecycle_rejects_replay_fifth_child_and_child_failure(
+    tmp_path: Path,
 ) -> None:
-    scratch = supervisor._REGISTERED_PLAN.scratch_root
-    staging = supervisor._REGISTERED_PLAN.staging_root
-    supervisor._cleanup_output_roots((scratch, staging))
-    calls: list[str] = []
-    staging_error = PermissionError("staging cleanup failed")
-    scratch_error = OSError("scratch cleanup failed")
+    with _isolated_registered_supervisor(tmp_path) as (
+        isolated,
+        _kernel,
+        calls,
+        behavior,
+    ):
+        isolated._prepare_registered_experiment_staging()
+        with pytest.raises(_isolated_supervisor_error(isolated), match="replayed"):
+            isolated._prepare_registered_experiment_staging()
+        for _ordinal in range(4):
+            isolated._supervise_registered_child(
+                (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+            )
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="more than four"
+        ):
+            isolated._supervise_registered_child(
+                (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+            )
+        assert len(calls) == 4
+        isolated._cleanup_registered_experiment_output_roots()
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="prepare was replayed"
+        ):
+            isolated._prepare_registered_experiment_staging()
 
-    def fail_cleanup(path: str) -> None:
-        calls.append(path)
-        if path == staging:
-            raise staging_error
-        if path == scratch:
-            raise scratch_error
-        raise AssertionError("unexpected cleanup path")
+    with _isolated_registered_supervisor(tmp_path) as (
+        isolated,
+        _kernel,
+        calls,
+        behavior,
+    ):
+        isolated._prepare_registered_experiment_staging()
 
-    monkeypatch.setattr(supervisor, "_remove_directory_tree", fail_cleanup)
+        def fail() -> object:
+            raise RuntimeError("synthetic child failure")
 
-    with pytest.raises(
-        supervisor.Experiment002SupervisorError,
-        match="failed to clean supervised output roots",
-    ) as caught:
-        supervisor._cleanup_registered_experiment_output_roots()
+        behavior[0] = fail
+        with pytest.raises(RuntimeError, match="synthetic child failure"):
+            isolated._supervise_registered_child(
+                (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+            )
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="active staging lease"
+        ):
+            isolated._supervise_registered_child(
+                (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+            )
+        assert len(calls) == 1
+        isolated._cleanup_registered_experiment_output_roots()
 
-    assert calls == [staging, scratch]
-    assert caught.value.__cause__ is staging_error
+    with _isolated_registered_supervisor(tmp_path) as (isolated, _kernel, calls, _):
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="active staging lease"
+        ):
+            isolated._supervise_registered_child(
+                (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+            )
+        assert calls == []
+        with pytest.raises(_isolated_supervisor_error(isolated), match="replayed"):
+            isolated._prepare_registered_experiment_staging()
+        isolated._cleanup_registered_experiment_output_roots()
+
+
+def test_registered_lifecycle_rejects_other_thread_fork_and_child_phase_reentry(
+    tmp_path: Path,
+) -> None:
+    with _isolated_registered_supervisor(tmp_path) as (
+        isolated,
+        _kernel,
+        _calls,
+        behavior,
+    ):
+        isolated._require_registered_parent_quiescence()
+        thread_errors: list[BaseException] = []
+
+        def other_thread() -> None:
+            try:
+                isolated._require_registered_parent_quiescence()
+            except BaseException as error:
+                thread_errors.append(error)
+
+        thread = threading.Thread(target=other_thread)
+        thread.start()
+        thread.join()
+        assert len(thread_errors) == 1
+        assert "caller changed" in str(thread_errors[0])
+
+        child_pid = os.fork()
+        if child_pid == 0:
+            try:
+                isolated._require_registered_parent_quiescence()
+            except BaseException:
+                os._exit(0)
+            os._exit(1)
+        waited, status_value = os.waitpid(child_pid, 0)
+        assert waited == child_pid and os.waitstatus_to_exitcode(status_value) == 0
+
+        isolated._prepare_registered_experiment_staging()
+        reentry_errors: list[BaseException] = []
+
+        def reenter() -> object:
+            try:
+                isolated._require_registered_parent_quiescence()
+            except BaseException as error:
+                reentry_errors.append(error)
+            return object()
+
+        behavior[0] = reenter
+        isolated._supervise_registered_child(
+            (2, 7), object(), 91, _DEFAULT_RESULT_CASE.binding
+        )
+        assert len(reentry_errors) == 1
+        assert "active phase" in str(reentry_errors[0])
+        isolated._cleanup_registered_experiment_output_roots()
+
+
+@pytest.mark.parametrize("new_on_rescan", [False, True])
+def test_registered_quiescence_contains_every_observed_child_and_poison_run(
+    tmp_path: Path,
+    new_on_rescan: bool,
+) -> None:
+    kernel = _IsolatedLifecycleKernel((41_001, 41_002))
+    if new_on_rescan:
+        kernel.journal_additions[2] = (41_003,)
+    with _isolated_registered_supervisor(tmp_path, kernel=kernel) as (
+        isolated,
+        _kernel,
+        _calls,
+        _behavior,
+    ):
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="unauthorized direct child"
+        ):
+            isolated._require_registered_parent_quiescence()
+        expected = {41_001, 41_002} | ({41_003} if new_on_rescan else set())
+        assert set(kernel.wait_calls) == expected
+        assert kernel.children == []
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="terminally failed"
+        ):
+            isolated._require_registered_parent_quiescence()
+        isolated._cleanup_registered_experiment_output_roots()
+
+
+def test_registered_quiescence_attempts_siblings_after_reap_failure(
+    tmp_path: Path,
+) -> None:
+    kernel = _IsolatedLifecycleKernel((42_001, 42_002))
+    kernel.reap_failures.add(42_001)
+    with _isolated_registered_supervisor(tmp_path, kernel=kernel) as (
+        isolated,
+        _kernel,
+        _calls,
+        _behavior,
+    ):
+        with pytest.raises(_isolated_supervisor_error(isolated), match="containment"):
+            isolated._require_registered_parent_quiescence()
+        assert 42_002 in kernel.wait_calls
+        assert 42_002 not in kernel.children
+        assert kernel.wait_calls.count(42_001) == 4
+
+
+def test_registered_cleanup_aggregates_failure_after_scrub_and_is_not_replayed(
+    tmp_path: Path,
+) -> None:
+    kernel = _IsolatedLifecycleKernel()
+    with _isolated_registered_supervisor(
+        tmp_path,
+        kernel=kernel,
+        fail_scrub=True,
+    ) as (isolated, _kernel, _calls, _behavior):
+        plan = cast(Any, isolated)._REGISTERED_PLAN
+        staging = Path(plan.staging_root)
+        isolated._prepare_registered_experiment_staging()
+        retained_lease = _route_closure(
+            isolated._prepare_registered_experiment_staging
+        )["lease"]
+        payload = staging / "owned"
+        payload.write_bytes(b"scrub even on failure")
+        with pytest.raises(
+            _isolated_supervisor_error(isolated), match="cleanup failed"
+        ):
+            isolated._cleanup_registered_experiment_output_roots()
+        assert not payload.exists()
+        assert kernel.journal_calls >= 3
+        assert cast(Any, retained_lease).descriptor == -1
+        assert cast(Any, retained_lease).parent.descriptors == ()
+        with pytest.raises(_isolated_supervisor_error(isolated), match="replayed"):
+            isolated._cleanup_registered_experiment_output_roots()
 
 
 def test_accounting_uses_size_or_allocated_blocks_and_shared_total(

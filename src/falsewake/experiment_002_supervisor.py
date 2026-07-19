@@ -312,6 +312,17 @@ class _PinnedRoot:
             raise failures[0]
 
 
+type _RegisteredStagingLeaseFrame = tuple[
+    _PinnedRoot,
+    int,
+    tuple[int, int, int],
+    _PinnedParent,
+    tuple[int, ...],
+    tuple[tuple[int, int, int], ...],
+    tuple[str, ...],
+]
+
+
 @dataclass(frozen=True, slots=True)
 class _ChildResourceMetrics:
     pid: int
@@ -1833,50 +1844,6 @@ def _cleanup_output_roots(roots: tuple[str, str]) -> None:
         ) from failures[0]
 
 
-def _bind_registered_experiment_output_lifecycle() -> tuple[
-    Callable[[], None],
-    Callable[[], None],
-]:
-    plan = _REGISTERED_PLAN
-    _require_plan(plan)
-    if (
-        plan.temporary_root != _TEMP_ROOT
-        or plan.scratch_root != _SCRATCH_ROOT
-        or plan.staging_root != _STAGING_ROOT
-    ):
-        _fail("registered experiment output paths are not exact")
-
-    scratch_root = plan.scratch_root
-    staging_root = plan.staging_root
-    registered_roots = (scratch_root, staging_root)
-    require_absent = _require_output_root_absent
-    create_fresh = _create_fresh_directory
-    cleanup_roots = _cleanup_output_roots
-
-    def _prepare_registered_experiment_staging() -> None:
-        """Fresh-create only the fixed experiment-lifetime staging root."""
-
-        require_absent(scratch_root)
-        create_fresh(staging_root)
-
-    def _cleanup_registered_experiment_output_roots() -> None:
-        """Remove both fixed experiment output roots after outer failure."""
-
-        cleanup_roots(registered_roots)
-
-    return (
-        _prepare_registered_experiment_staging,
-        _cleanup_registered_experiment_output_roots,
-    )
-
-
-(
-    _prepare_registered_experiment_staging,
-    _cleanup_registered_experiment_output_roots,
-) = _bind_registered_experiment_output_lifecycle()
-del _bind_registered_experiment_output_lifecycle
-
-
 def _parse_vmrss_bytes(contents: bytes) -> int:
     if (
         type(contents) is not bytes
@@ -3181,6 +3148,502 @@ def _contain_unregistered_parent_children(kernel: _Kernel) -> bool:
     _fail("unauthorized parent children persisted through containment")
 
 
+def _recover_registered_staging_parent(
+    root: _PinnedRoot,
+    scratch_path: str,
+    /,
+) -> None:
+    """Recover the pinned registered parent without requiring a scratch lease."""
+
+    if type(root) is not _PinnedRoot:
+        raise TypeError("staging lease must be an exact _PinnedRoot")
+    parent = root.parent
+    if not parent.components:
+        _verify_pinned_parent(parent)
+        return
+    scratch_parent, scratch_leaf = _parent_and_leaf(scratch_path)
+    staging_parent, staging_leaf = _parent_and_leaf(root.path)
+    if scratch_parent != staging_parent or scratch_leaf == staging_leaf:
+        _fail("registered output lease paths are inconsistent")
+    managed_leaves = (scratch_leaf, staging_leaf)
+    for _attempt in range(len(parent.components)):
+        mismatch_index = _first_parent_name_mismatch(parent)
+        if mismatch_index is None:
+            _verify_pinned_parent(parent)
+            return
+        owner = parent.descriptors[mismatch_index]
+        registered_component = parent.components[mismatch_index]
+        expected_identity = parent.identities[mismatch_index + 1]
+        matches = _names_for_identity(owner, expected_identity)
+        removed = _clean_registered_replacement_chain(
+            parent,
+            mismatch_index,
+            managed_leaves,
+        )
+        if not removed:
+            _fail("replacement ancestor contains unmanaged entries")
+        if len(matches) != 1:
+            _fail("pinned ancestor cannot be located uniquely")
+        while True:
+            try:
+                os.rename(
+                    matches[0],
+                    registered_component,
+                    src_dir_fd=owner,
+                    dst_dir_fd=owner,
+                )
+                break
+            except InterruptedError:
+                continue
+        restored = os.stat(
+            registered_component,
+            dir_fd=owner,
+            follow_symlinks=False,
+        )
+        if _identity_frame(restored) != expected_identity:
+            _fail("pinned ancestor identity changed while restoring its name")
+    _fail("pinned staging parent chain could not be recovered")
+
+
+def _remove_pinned_registered_staging(root: _PinnedRoot, /) -> None:
+    """Remove one empty pinned staging inode and any fixed-name replacement."""
+
+    if type(root) is not _PinnedRoot:
+        raise TypeError("staging lease must be an exact _PinnedRoot")
+    _verify_pinned_parent(root.parent)
+    matches = _names_for_identity(root.parent_fd, root.identity)
+    _parent, registered_leaf = _parent_and_leaf(root.path)
+    if len(matches) > 1:
+        _fail("pinned staging identity appears under multiple parent names")
+    if not matches:
+        _remove_named_tree(root.parent_fd, registered_leaf)
+        _fail(
+            "pinned staging moved outside its registered parent after its "
+            "contents were scrubbed"
+        )
+    owned_name = matches[0]
+    if owned_name != registered_leaf:
+        _remove_named_tree(root.parent_fd, registered_leaf)
+    named = os.stat(owned_name, dir_fd=root.parent_fd, follow_symlinks=False)
+    if _identity_frame(named) != root.identity:
+        _fail("pinned staging identity changed before removal")
+    _remove_named_tree(root.parent_fd, owned_name)
+    if owned_name != registered_leaf:
+        _remove_named_tree(root.parent_fd, registered_leaf)
+
+
+def _bind_registered_parent_lifecycle() -> tuple[
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+    Callable[[], None],
+]:
+    """Bind the one-attempt four-child parent lifecycle to hidden state."""
+
+    fresh = 0
+    preparing = 1
+    active = 2
+    child_running = 3
+    cleaning = 4
+    closed = 5
+    failed_without_lease = 6
+    failed_with_lease = 7
+    maximum_children = 4
+
+    plan = _REGISTERED_PLAN
+    _require_plan(plan)
+    if (
+        plan.temporary_root != _TEMP_ROOT
+        or plan.scratch_root != _SCRATCH_ROOT
+        or plan.staging_root != _STAGING_ROOT
+    ):
+        _fail("registered experiment output paths are not exact")
+    scratch_path = plan.scratch_root
+    staging_path = plan.staging_root
+    scratch_parent, scratch_leaf = _parent_and_leaf(scratch_path)
+    staging_parent, _staging_leaf = _parent_and_leaf(staging_path)
+    if scratch_parent != staging_parent:
+        _fail("registered output roots do not share one parent")
+
+    kernel = _REAL_KERNEL
+    require_absent = _require_output_root_absent
+    create_and_pin = _create_and_pin_fresh_root
+    recover_parent = _recover_registered_staging_parent
+    restore_name = _restore_pinned_root_name
+    scrub_directory = _remove_directory_contents
+    remove_staging = _remove_pinned_registered_staging
+    remove_named_tree = _remove_named_tree
+    require_wait4 = _require_authoritative_wait4
+    require_single_parent_thread = _require_single_parent_thread
+    child_journal = _kernel_child_journal
+    kill_and_reap = _kill_and_reap
+    child_handle_type = _ChildHandle
+    exact_type = type
+    get_process_id = os.getpid
+    get_thread_id = threading.get_ident
+    error_type = Experiment002SupervisorError
+    base_exception_type = BaseException
+    state_lock = threading.Lock()
+    owner_process = get_process_id()
+    owner_thread: int | None = None
+    phase = fresh
+    lease: _PinnedRoot | None = None
+    lease_frame: _RegisteredStagingLeaseFrame | None = None
+    namespace_owned = False
+    children_started = 0
+    children_completed = 0
+    cleanup_attempted = False
+
+    def enter() -> None:
+        nonlocal owner_thread
+        if get_process_id() != owner_process:
+            raise error_type("registered parent lifecycle was inherited by a fork")
+        if not state_lock.acquire(blocking=False):
+            raise error_type("registered parent lifecycle call overlaps another call")
+        current_thread = get_thread_id()
+        if exact_type(current_thread) is not int:
+            state_lock.release()
+            raise error_type("registered parent thread identity is invalid")
+        if owner_thread is None:
+            owner_thread = current_thread
+        elif current_thread != owner_thread:
+            state_lock.release()
+            raise error_type("registered parent lifecycle caller changed")
+
+    def leave() -> None:
+        state_lock.release()
+
+    def poison() -> None:
+        nonlocal phase
+        phase = failed_with_lease if lease is not None else failed_without_lease
+
+    def require_lease() -> _PinnedRoot:
+        current = lease
+        frame = lease_frame
+        if (
+            current is None
+            or frame is None
+            or exact_type(current) is not _PinnedRoot
+            or exact_type(frame) is not tuple
+            or frame[0] is not current
+            or current.descriptor != frame[1]
+            or current.identity != frame[2]
+            or current.parent is not frame[3]
+            or current.parent.descriptors != frame[4]
+            or current.parent.identities != frame[5]
+            or current.parent.components != frame[6]
+        ):
+            raise error_type("registered staging lease authority changed")
+        typed_current = current
+        opened = os.fstat(typed_current.descriptor)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or _identity_frame(opened) != typed_current.identity
+            or stat.S_IMODE(opened.st_mode) != 0o700
+        ):
+            raise error_type("registered staging lease identity changed")
+        recover_parent(typed_current, scratch_path)
+        restore_name(typed_current)
+        named = os.stat(
+            _parent_and_leaf(staging_path)[1],
+            dir_fd=typed_current.parent_fd,
+            follow_symlinks=False,
+        )
+        if _identity_frame(named) != typed_current.identity:
+            raise error_type("registered staging lease name changed")
+        return typed_current
+
+    def contain_direct_children() -> tuple[bool, tuple[BaseException, ...]]:
+        observed = False
+        failures: list[BaseException] = []
+        try:
+            require_single_parent_thread()
+        except base_exception_type as error:
+            failures.append(error)
+        try:
+            require_wait4()
+        except base_exception_type as error:
+            failures.append(error)
+        for _round in range(4):
+            try:
+                children = child_journal(kernel)
+            except base_exception_type as error:
+                failures.append(error)
+                break
+            if not children:
+                return observed, tuple(failures)
+            observed = True
+            for child in children:
+                try:
+                    kill_and_reap(child_handle_type(pid=child), kernel)
+                except base_exception_type as error:
+                    failures.append(error)
+        try:
+            remaining = child_journal(kernel)
+        except base_exception_type as error:
+            failures.append(error)
+        else:
+            if remaining:
+                observed = True
+                failures.append(
+                    error_type(
+                        "unauthorized parent children persisted through containment"
+                    )
+                )
+        return observed, tuple(failures)
+
+    def raise_for_quiescence(
+        observed: bool,
+        failures: tuple[BaseException, ...],
+        /,
+    ) -> None:
+        if failures:
+            raise error_type(
+                "registered parent quiescence failed during child containment"
+            ) from failures[0]
+        if observed:
+            raise error_type(
+                "an unauthorized direct child was contained at a parent boundary"
+            )
+
+    def cleanup_owned_lease(*, remove_scratch: bool) -> tuple[BaseException, ...]:
+        nonlocal lease, lease_frame
+        current = lease
+        frame = lease_frame
+        if current is None:
+            return ()
+        failures: list[BaseException] = []
+        descriptor = frame[1] if frame is not None else -1
+        identity = frame[2] if frame is not None else None
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISDIR(opened.st_mode) or _identity_frame(opened) != identity:
+                raise error_type("registered staging lease changed before cleanup")
+            scrub_directory(descriptor)
+        except base_exception_type as error:
+            failures.append(error)
+        try:
+            recover_parent(current, scratch_path)
+        except base_exception_type as error:
+            failures.append(error)
+        try:
+            remove_staging(current)
+        except base_exception_type as error:
+            failures.append(error)
+        if remove_scratch:
+            try:
+                remove_named_tree(current.parent_fd, scratch_leaf)
+            except base_exception_type as error:
+                failures.append(error)
+        try:
+            current.close()
+        except base_exception_type as error:
+            failures.append(error)
+        lease = None
+        lease_frame = None
+        return tuple(failures)
+
+    def _prepare_registered_experiment_staging() -> None:
+        nonlocal phase, lease, lease_frame, namespace_owned
+        enter()
+        try:
+            if phase != fresh:
+                raise error_type("registered parent lifecycle prepare was replayed")
+            phase = preparing
+            try:
+                observed, containment_failures = contain_direct_children()
+                raise_for_quiescence(observed, containment_failures)
+                require_absent(scratch_path)
+                require_absent(staging_path)
+                created = create_and_pin(staging_path)
+                lease = created
+                lease_frame = (
+                    created,
+                    created.descriptor,
+                    created.identity,
+                    created.parent,
+                    created.parent.descriptors,
+                    created.parent.identities,
+                    created.parent.components,
+                )
+                require_absent(scratch_path)
+                require_lease()
+                namespace_owned = True
+                phase = active
+            except base_exception_type as primary:
+                poison()
+                cleanup_failures = cleanup_owned_lease(remove_scratch=False)
+                phase = failed_without_lease
+                if cleanup_failures:
+                    raise error_type(
+                        "registered staging preparation failed with cleanup errors"
+                    ) from primary
+                raise
+        finally:
+            leave()
+
+    def _require_registered_parent_quiescence() -> None:
+        nonlocal phase
+        enter()
+        try:
+            terminal_phase = phase in {failed_without_lease, failed_with_lease}
+            if phase not in {
+                fresh,
+                active,
+                closed,
+                failed_without_lease,
+                failed_with_lease,
+            }:
+                raise error_type(
+                    "registered parent quiescence was requested in an active phase"
+                )
+            observed, failures = contain_direct_children()
+            if observed or failures:
+                if phase != closed:
+                    poison()
+                raise_for_quiescence(observed, failures)
+            if terminal_phase:
+                raise error_type("registered parent lifecycle is terminally failed")
+        finally:
+            leave()
+
+    def begin_registered_child() -> None:
+        nonlocal phase, children_started
+        enter()
+        try:
+            if phase != active:
+                if phase != closed:
+                    poison()
+                raise error_type("registered child requires one active staging lease")
+            if children_started >= maximum_children:
+                poison()
+                raise error_type("registered parent attempted more than four children")
+            try:
+                observed, failures = contain_direct_children()
+                raise_for_quiescence(observed, failures)
+                require_lease()
+            except base_exception_type:
+                poison()
+                raise
+            children_started += 1
+            phase = child_running
+        finally:
+            leave()
+
+    def finish_registered_child_success() -> None:
+        nonlocal phase, children_completed
+        enter()
+        try:
+            if phase != child_running:
+                poison()
+                raise error_type("registered child completion phase is invalid")
+            try:
+                observed, failures = contain_direct_children()
+                raise_for_quiescence(observed, failures)
+                require_lease()
+            except base_exception_type:
+                poison()
+                raise
+            children_completed += 1
+            if children_completed != children_started:
+                poison()
+                raise error_type("registered child completion count is invalid")
+            phase = active
+        finally:
+            leave()
+
+    def finish_registered_child_failure() -> None:
+        nonlocal phase
+        enter()
+        try:
+            if phase != child_running:
+                poison()
+                raise error_type("registered child failure phase is invalid")
+            boundary_failures: list[BaseException] = []
+            observed, failures = contain_direct_children()
+            if observed:
+                boundary_failures.append(
+                    error_type(
+                        "an unauthorized direct child was contained after child failure"
+                    )
+                )
+            boundary_failures.extend(failures)
+            try:
+                require_lease()
+            except base_exception_type as error:
+                boundary_failures.append(error)
+            poison()
+            if boundary_failures:
+                raise error_type(
+                    "registered child failure crossed a damaged parent boundary"
+                ) from boundary_failures[0]
+        finally:
+            leave()
+
+    def _cleanup_registered_experiment_output_roots() -> None:
+        nonlocal phase, cleanup_attempted
+        enter()
+        try:
+            if phase == closed:
+                return
+            if phase in {child_running, cleaning}:
+                raise error_type(
+                    "registered output cleanup overlaps an active lifecycle phase"
+                )
+            if cleanup_attempted:
+                raise error_type("failed registered output cleanup was replayed")
+            cleanup_attempted = True
+            phase = cleaning
+            failures: list[BaseException] = []
+            observed_before, before_failures = contain_direct_children()
+            if observed_before:
+                failures.append(
+                    error_type(
+                        "an unauthorized direct child was contained before cleanup"
+                    )
+                )
+            failures.extend(before_failures)
+            failures.extend(cleanup_owned_lease(remove_scratch=namespace_owned))
+            observed_after, after_failures = contain_direct_children()
+            if observed_after:
+                failures.append(
+                    error_type(
+                        "an unauthorized direct child was contained after cleanup"
+                    )
+                )
+            failures.extend(after_failures)
+            if failures:
+                phase = failed_without_lease
+                raise error_type(
+                    "registered output cleanup failed after all containment phases"
+                ) from failures[0]
+            phase = closed
+        finally:
+            leave()
+
+    return (
+        _prepare_registered_experiment_staging,
+        _require_registered_parent_quiescence,
+        _cleanup_registered_experiment_output_roots,
+        begin_registered_child,
+        finish_registered_child_success,
+        finish_registered_child_failure,
+    )
+
+
+(
+    _prepare_registered_experiment_staging,
+    _require_registered_parent_quiescence,
+    _cleanup_registered_experiment_output_roots,
+    _begin_registered_supervisor_child,
+    _finish_registered_supervisor_child_success,
+    _finish_registered_supervisor_child_failure,
+) = _bind_registered_parent_lifecycle()
+del _bind_registered_parent_lifecycle
+
+
 def _supervise_child(
     cpu_ids: tuple[int, int],
     activation_callback: _Activation,
@@ -3302,6 +3765,9 @@ def _make_supervise_registered_child() -> Callable[..., _SupervisedChildResult]:
     plan = _REGISTERED_PLAN
     limits = _REGISTERED_LIMITS
     kernel = _REAL_KERNEL
+    begin_registered_child = _begin_registered_supervisor_child
+    finish_registered_child_success = _finish_registered_supervisor_child_success
+    finish_registered_child_failure = _finish_registered_supervisor_child_failure
     plan_type = _LaunchPlan
     limits_type = _Limits
     plan_field_names = (
@@ -3407,6 +3873,7 @@ def _make_supervise_registered_child() -> Callable[..., _SupervisedChildResult]:
         /,
     ) -> _SupervisedChildResult:
         require_registered_authority(supervise, plan, limits, kernel)
+        begin_registered_child()
         try:
             result = supervise(
                 cpu_ids,
@@ -3418,13 +3885,21 @@ def _make_supervise_registered_child() -> Callable[..., _SupervisedChildResult]:
                 kernel=kernel,
             )
         except base_exception_type as primary:
+            boundary_failures: list[BaseException] = []
+            try:
+                finish_registered_child_failure()
+            except base_exception_type as error:
+                boundary_failures.append(error)
             try:
                 require_registered_authority(supervise, plan, limits, kernel)
-            except base_exception_type:
+            except base_exception_type as error:
+                boundary_failures.append(error)
+            if boundary_failures:
                 raise error_type(
-                    "registered supervision failed after its authority changed"
+                    "registered supervision failed after its parent boundary changed"
                 ) from primary
             raise
+        finish_registered_child_success()
         require_registered_authority(supervise, plan, limits, kernel)
         return result
 
