@@ -44,6 +44,34 @@ clips. Per-mel sums and sums of squares are accumulated in a fixed manifest/fram
 order in `float64`; the 40 means and 40 population standard deviations are frozen
 as little-endian `float32` values.
 
+## Frozen normalization artifact
+
+The registered population was computed twice from fresh Python processes after
+the implementation and its trust boundary were committed. Both passes consumed
+84,843 training commands and 8,314,614 frontend frames and produced the same 320
+bytes. The frozen
+[normalization artifact](../models/experiment-002-normalization.f32) has SHA-256
+`891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e`.
+The first and repeat computations took 365.48 and 371.02 seconds respectively;
+their complete wall/RSS measurements, exact source/config bindings, independent
+binary slice hashes, and data-firewall evidence are recorded in the canonical
+[normalization report](../reports/experiment-002-normalization.json).
+
+Production consumers load the committed artifact under its external byte count and
+digest. Training and unaugmented evaluation paths accept only a process-issued
+capability for the exact registered population; that capability verifier does not
+itself pin one artifact digest. The registered runner must therefore take the
+digest from the committed report rather than from the file being loaded, and must
+preserve the loaded identity in its evidence. Direct bare statistic arrays, copied
+or manually constructed capabilities, and wrong population counts are rejected.
+
+Only unaugmented training-command frames contribute to the accumulator, and the
+accumulation invokes no augmentation RNG. Opening the operational PCM cache still
+hashes its complete file and eagerly materializes its registered training and
+validation background payloads; those payloads contribute zero normalization
+frames. This distinction keeps the evidence about data contribution honest without
+misreporting cache-verification I/O as absent.
+
 ## Reproducing the neural toolchain
 
 Experiment 002 separates training, export, and inference dependencies so a runtime

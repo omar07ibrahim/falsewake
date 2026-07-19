@@ -1,0 +1,115 @@
+{
+  "artifact": {
+    "byte_count": 320,
+    "format": "40_float32_means_then_40_float32_population_standard_deviations_serialized_as_little_endian_binary32",
+    "path": "models/experiment-002-normalization.f32",
+    "role": "frozen_training_normalization_input",
+    "sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e"
+  },
+  "bindings": {
+    "configs": {
+      "configs/experiment-002-numerics.json": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9",
+      "configs/experiment-002-training.json": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+    },
+    "implementation_git_commit": "c1d332722ed142fd1905a681a6d7ac81b755c45b",
+    "sources": {
+      "src/falsewake/__init__.py": "acc31446071a3860f5ee7629c148bd96247cae20ee02b47e99b61f9d399df87b",
+      "src/falsewake/experiment_002_data.py": "23b4902e0226b9ff9d792ca27a603a458d87e7401678cee3729f86a30b01d573",
+      "src/falsewake/experiment_002_frontend.py": "fdfa2534080cfbea2143c5b87905e1ce43be0d1e4aad4503063506d15e6c65ca",
+      "src/falsewake/experiment_002_normalization.py": "73bbe76aab35d352d2b702f67480f93645eb09cbd7627a9fafde86d3ecb69a81",
+      "src/falsewake/experiment_002_normalization_artifact.py": "103efbb001de4b75af81f5eaccc4fb8e3ae7dfb905b51860213aa3241e3e7dc9",
+      "src/falsewake/experiment_002_pcm_cache.py": "bcc05ecc797aebf809026675e9d4c71fc51dabfdb8177a04020f85c6d31fc961",
+      "src/falsewake/experiment_002_preprocessing.py": "d4438d9a52b33bbe610026df981ee23d2cb0956e0c1350ccce933c5a85903259",
+      "src/falsewake/experiment_002_rng.py": "174e445b47d6da586ae92ea3c4a694966bb6e2acdc2be92f31c1a7023a0fcd4e",
+      "src/falsewake/features.py": "3e7baf53c8dc772a68cd256ce6f4ca6428117c36f051c916f247dc409e515e3c",
+      "src/falsewake/speech_commands.py": "f80bd2bad56113d4adc168b04e1633ec22d8513afb973a4b5dc37d616901e234",
+      "src/falsewake/speech_commands_pcm.py": "f4cd5a2e8dd542d67b41cbe7db41ac031c93d3435787cecb941146c0017e8f33"
+    }
+  },
+  "data_boundary": {
+    "augmentation_rng_calls_during_accumulation": 0,
+    "cache_open_eager_background_payloads": true,
+    "cache_open_full_file_hash_verified": true,
+    "normalization_augmentation_enabled": false,
+    "normalization_background_clips_accumulated": 0,
+    "normalization_test_clips_accumulated": 0,
+    "normalization_validation_clips_accumulated": 0,
+    "test_command_count_only": 11005,
+    "test_identities_retained": false,
+    "training_background_metadata_checked": true,
+    "training_command_clips_accumulated": 84843
+  },
+  "experiment": "002",
+  "inputs": {
+    "pcm_cache": {
+      "byte_count": 2995776948,
+      "external_identity_verified": true,
+      "report_path": "reports/experiment-002-pcm-cache.json",
+      "report_sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca",
+      "sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653"
+    },
+    "speech_commands": {
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    }
+  },
+  "measurements": {
+    "independent_fresh_processes": true,
+    "repeat_byte_identity": true,
+    "rss_measurement": "GNU_time_maximum_resident_set_size_KiB_times_1024",
+    "runs": {
+      "first": {
+        "artifact_sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e",
+        "compute_seconds": 365.4798933980055,
+        "maximum_rss_bytes": 149639168,
+        "total_wall_seconds": 375.35
+      },
+      "repeat": {
+        "artifact_sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e",
+        "compute_seconds": 371.0234971739992,
+        "maximum_rss_bytes": 149909504,
+        "total_wall_seconds": 380.47
+      }
+    },
+    "statistics": {
+      "means": {
+        "count": 40,
+        "maximum": -13.908313751220703,
+        "maximum_float32_hex": "-0x1.bd10e80000000p+3",
+        "minimum": -20.758136749267578,
+        "minimum_float32_hex": "-0x1.4c21540000000p+4",
+        "slice_sha256": "3a74b4fb5d189b4eaf1a52d9cf5c8244da95568a26062f493647ede68477f74c"
+      },
+      "population_standard_deviations": {
+        "count": 40,
+        "maximum": 5.332062721252441,
+        "maximum_float32_hex": "0x1.5540840000000p+2",
+        "minimum": 2.9608874320983887,
+        "minimum_float32_hex": "0x1.7afe5c0000000p+1",
+        "slice_sha256": "8b2aeaf8a7d00a71dae73927bff31725cbb96b8c911299c8ba5e2476e7fa6465"
+      }
+    }
+  },
+  "population": {
+    "clip_count": 84843,
+    "frame_count_per_clip": 98,
+    "mel_bins": 40,
+    "order": "canonical_manifest_order_then_frame_0_through_97_then_mel_0_through_39",
+    "source": "every_registered_training_command_exactly_once",
+    "total_frames": 8314614
+  },
+  "runtime": {
+    "byte_order": "little",
+    "cpu_model": "AMD EPYC 7R13 Processor",
+    "floating_authority": "CPython_3.12.3_float_operations_and_power_using_the_host_libm_plus_NumPy_2.5.1_explicit_dtype_operations_and_the_bound_source_bytes",
+    "machine": "x86_64",
+    "numpy": "2.5.1",
+    "platform": "Linux-6.17.0-1017-aws-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "python_implementation": "CPython"
+  },
+  "schema_version": 1
+}
