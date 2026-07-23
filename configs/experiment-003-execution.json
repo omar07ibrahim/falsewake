@@ -1,0 +1,449 @@
+{
+  "attempt_contract": {
+    "attempt_consumption_boundary": "before_parent_route_claim",
+    "child_plan": {
+      "rerun": {
+        "ordinal": 3,
+        "role": "selected_seed_rerun",
+        "seed_source": "selected_training_seed"
+      },
+      "training": [
+        {
+          "ordinal": 0,
+          "role": "training_seed",
+          "seed": 20260719
+        },
+        {
+          "ordinal": 1,
+          "role": "training_seed",
+          "seed": 20260720
+        },
+        {
+          "ordinal": 2,
+          "role": "training_seed",
+          "seed": 20260721
+        }
+      ]
+    },
+    "cross_process_ownership": {
+      "mechanism": "fresh_exclusive_staging_root",
+      "stale_or_existing_namespace": "reject_without_removal_or_reuse"
+    },
+    "failure_is_terminal": true,
+    "invoked_admission_failure_consumes_attempt": true,
+    "preflight_rejection_consumes_registered_invocation": false,
+    "registered_invocation_count": 1,
+    "retry_allowed": false,
+    "reuse_predecessor_checkpoint": false
+  },
+  "authority_profile": {
+    "capability_state_profile": "003",
+    "capability_type": "falsewake.experiment_002_run_authority.VerifiedRunRegistration",
+    "coordinator_profile_check_required": true,
+    "cross_profile_acceptance": "forbidden",
+    "cross_profile_rejections": [
+      "experiment_002_capability_at_experiment_003_boundary",
+      "experiment_003_capability_at_experiment_002_boundary"
+    ],
+    "facade": "src/falsewake/experiment_003_run_authority.py",
+    "issuer_caller_supplied_values": [],
+    "issuer_route": "verify_and_issue_experiment_003_run_registration",
+    "logical_authority": "003",
+    "process_issuance_latch": "shared_across_all_profiles",
+    "profile_binding_fields": [
+      "registration_experiment",
+      "run_config_path",
+      "runtime_fingerprint_domain",
+      "child_bundle_magic",
+      "source_bundle_domain",
+      "sealed_origin_prefix",
+      "activation_magic",
+      "activation_ticket_domain",
+      "issuer_route",
+      "sealed_child_issuer_route"
+    ],
+    "publisher_profile_check_required": true,
+    "reverify_dispatch": "retained_capability_state_profile_only",
+    "sealed_child_issuer_route": "_verify_and_issue_experiment_003_sealed_child_registration",
+    "shared_engine": "src/falsewake/experiment_002_run_authority.py"
+  },
+  "evidence_contract": {
+    "failure_pairs": [
+      {
+        "code": "staging_prepare_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "cpu_affinity_capture_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_create_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_close_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "seed_selection_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "completed_evidence_rejected",
+        "phase": "completed_evidence"
+      },
+      {
+        "code": "pre_cleanup_quiescence_failed",
+        "phase": "parent_boundary"
+      }
+    ],
+    "outer_experiment": "003",
+    "predecessor_binding_required": true,
+    "report_last": true,
+    "report_mode": "0444",
+    "scientific_protocol": "002",
+    "statuses": {
+      "execution_failure": {
+        "artifact_paths": [],
+        "checkpoint_reusable": false
+      },
+      "gate_failure": {
+        "artifact_paths": [
+          "reports/experiment-003-seed-20260719-history.json",
+          "reports/experiment-003-seed-20260720-history.json",
+          "reports/experiment-003-seed-20260721-history.json",
+          "reports/experiment-003-selected-rerun-history.json"
+        ],
+        "checkpoint_reusable": false
+      },
+      "pass": {
+        "artifact_paths": [
+          "reports/experiment-003-seed-20260719-history.json",
+          "reports/experiment-003-seed-20260720-history.json",
+          "reports/experiment-003-seed-20260721-history.json",
+          "reports/experiment-003-selected-rerun-history.json",
+          "models/experiment-003-selected.safetensors"
+        ],
+        "checkpoint_reusable": true
+      }
+    }
+  },
+  "execution_delta": {
+    "classification": "infrastructure_recovery",
+    "permitted_existing_source_changes": [
+      {
+        "path": "src/falsewake/experiment_002_run_authority.py",
+        "scope": "extend_in_place_as_a_profile_bound_shared_authority_engine_without_changing_scientific_inputs_or_registered_training_semantics"
+      }
+    ],
+    "procfs_repair": {
+      "affected_path": "src/falsewake/experiment_002_supervisor.py",
+      "experiment_003_parity": {
+        "forbidden_candidate_markers": [
+          "Experiment 002",
+          "Experiment002",
+          "src/falsewake/experiment_002_runner.py",
+          "falsewake-experiment-002-scratch",
+          "falsewake-experiment-002-staging",
+          "falsewake-experiment-002-launch",
+          "falsewake-exp002-child-activation",
+          "from falsewake.experiment_003_child_result import"
+        ],
+        "immutable_limits": {
+          "activation_join_milliseconds_maximum": 35000,
+          "activation_start_grace_milliseconds": 50,
+          "cpu_count": 2,
+          "output_bytes_maximum": 4294967296,
+          "poll_interval_maximum_nanoseconds": 100000000,
+          "poll_interval_nanoseconds": 25000000,
+          "rss_bytes_maximum": 8589934592,
+          "termination_nanoseconds_maximum": 10000000000,
+          "thread_retire_nanoseconds_maximum": 100000000,
+          "wall_nanoseconds_maximum": 21600000000000
+        },
+        "immutable_process_checks": [
+          "CPU_affinity",
+          "descendant_enumeration",
+          "process_cycle_detection",
+          "wall_deadline",
+          "bounded_live_RSS",
+          "terminal_wait4_ru_maxrss",
+          "output_accounting",
+          "process_group_cleanup"
+        ],
+        "normalization": {
+          "application": "replace_the_one_exact_runner_sha256_assignment_value_then_apply_each_literal_substitution_globally_in_list_order",
+          "direction": "experiment_003_candidate_to_repaired_experiment_002_reference",
+          "encoding": "UTF-8",
+          "ordered_literal_substitutions": [
+            {
+              "candidate": "Experiment 003",
+              "reference": "Experiment 002"
+            },
+            {
+              "candidate": "Experiment003",
+              "reference": "Experiment002"
+            },
+            {
+              "candidate": "experiment_003",
+              "reference": "experiment_002"
+            },
+            {
+              "candidate": "experiment-003",
+              "reference": "experiment-002"
+            },
+            {
+              "candidate": "exp003",
+              "reference": "exp002"
+            }
+          ],
+          "runner_sha256_assignment": {
+            "candidate_value": "one_exact_future_64_lowercase_hex_digest",
+            "normalize_to_reference_value": "3aaa25b54670c357d528887d582d39e5fb0b815edb86201a7eef793c92b4931d",
+            "target": "_RUNNER_SHA256"
+          }
+        },
+        "normalized_source_equality_required": true,
+        "reference_path": "src/falsewake/experiment_002_supervisor.py",
+        "reference_sha256": "f441f2ead5566094364572138d69256a072165ffb2cc80a71340b4087ba5a8f0",
+        "required_candidate_markers": [
+          "Experiment 003",
+          "Experiment003SupervisorError",
+          "src/falsewake/experiment_003_runner.py",
+          "falsewake-experiment-003-scratch",
+          "falsewake-experiment-003-staging",
+          "falsewake-experiment-003-launch",
+          "falsewake-exp003-child-activation"
+        ],
+        "required_inherited_markers": [
+          "from falsewake.experiment_002_child_result import"
+        ]
+      },
+      "failure_sha256": "417df7117947b41f2857c3400c6fa176a2749a701357f2bb184a3928bbd2c414",
+      "repair_commit": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+      "repair_sha256": "f441f2ead5566094364572138d69256a072165ffb2cc80a71340b4087ba5a8f0",
+      "scope": "bounded_procfs_VmRSS_unavailability_during_userspace_thread_group_leader_exit"
+    },
+    "production_additions": [
+      "src/falsewake/experiment_003_run_authority.py",
+      "src/falsewake/experiment_003_runner.py",
+      "src/falsewake/experiment_003_supervisor.py",
+      "src/falsewake/experiment_003_coordinator.py",
+      "src/falsewake/experiment_003_seed_worker.py",
+      "src/falsewake/experiment_003_final_evidence.py",
+      "src/falsewake/experiment_003_final_publication.py"
+    ],
+    "scientific_protocol_change": false
+  },
+  "experiment": "003",
+  "kind": "execution_only_recovery",
+  "lifecycle": {
+    "attempt_limit": 1,
+    "execution_config_authorizes_registered_training": false,
+    "execution_protocol": {
+      "committed_blob_verification_required": true,
+      "introduction_commit_binding_required": true,
+      "introduction_commit_must_be_direct_child_of": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+      "introduction_commit_must_precede_implementation_commit": true,
+      "path": "configs/experiment-003-execution.json",
+      "run_config_binding_path": "frozen_bindings.execution_protocol",
+      "run_config_sha256_binding_required": true
+    },
+    "implementation_commit_must_descend_from": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+    "implementation_commit_must_exclude": [
+      "configs/experiment-003-run.json",
+      "models/experiment-003-selected.safetensors",
+      "reports/experiment-003-seed-20260719-history.json",
+      "reports/experiment-003-seed-20260720-history.json",
+      "reports/experiment-003-seed-20260721-history.json",
+      "reports/experiment-003-selected-rerun-history.json",
+      "reports/experiment-003-training.json"
+    ],
+    "implementation_commit_required_production_additions": "execution_delta.production_additions",
+    "pre_registration_observations": {
+      "registered_optimizer_updates": 0,
+      "registered_validation_examples": 0
+    },
+    "registration_commit": {
+      "execution_protocol_binding": "lifecycle.execution_protocol",
+      "only_change": "A configs/experiment-003-run.json",
+      "parent": "implementation_commit",
+      "required_mode": "100644"
+    },
+    "retry_policy": "any_terminal_attempt_requires_a_new_experiment_identifier",
+    "terminal_execution_failure": {
+      "artifacts": [],
+      "checkpoint_reusable": false
+    }
+  },
+  "namespace": {
+    "authority_module": "falsewake.experiment_003_run_authority",
+    "child_control_fd": 3,
+    "child_source_bundle_fd": 7,
+    "managed_outputs": {
+      "histories": [
+        "reports/experiment-003-seed-20260719-history.json",
+        "reports/experiment-003-seed-20260720-history.json",
+        "reports/experiment-003-seed-20260721-history.json"
+      ],
+      "model": "models/experiment-003-selected.safetensors",
+      "report": "reports/experiment-003-training.json",
+      "selected_rerun_history": "reports/experiment-003-selected-rerun-history.json"
+    },
+    "run_config": "configs/experiment-003-run.json",
+    "runner": "src/falsewake/experiment_003_runner.py",
+    "scratch_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
+    "sealed_child_memfd_target": "/memfd:falsewake-exp003-child-bundle (deleted)",
+    "staging_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-003-staging",
+    "temporary_publication_prefix": ".falsewake-exp003-publication-",
+    "transport": {
+      "activation_magic": "FW3ACTV1",
+      "activation_ticket_domain": "falsewake-exp003-activation-ticket-v1\u0000",
+      "child_bundle_magic": "FW3CHLD1",
+      "inherited_child_result_envelope_domain": "falsewake-exp002-child-result-envelope-v1\u0000",
+      "inherited_process_guard_domain": "falsewake-exp002-process-guard-filter-v1\u0000",
+      "runtime_fingerprint_domain": "falsewake-exp003-runtime-v1\u0000",
+      "sealed_origin_prefix": "falsewake-sealed://experiment-003",
+      "source_bundle_domain": "falsewake-exp003-source-bundle-v1\u0000"
+    }
+  },
+  "predecessor": {
+    "experiment": "002",
+    "implementation_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+    "incident": {
+      "commit": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+      "path": "reports/experiment-002-execution-incident.json",
+      "sha256": "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59"
+    },
+    "outcome": {
+      "checkpoint_reusable": false,
+      "code": "seed_selection_failed",
+      "commit": "289372957565c093076cb476c84fa900a9cc4cce",
+      "path": "reports/experiment-002-training.json",
+      "phase": "registered_execution",
+      "sha256": "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a",
+      "status": "execution_failure"
+    },
+    "registration": {
+      "commit": "f5d27175496279cf6ee1538f9bae950527cf5db4",
+      "path": "configs/experiment-002-run.json",
+      "sha256": "7086c7df3fa21f43b901f6e7334a64e098d259b91d7dc0d3cdd7dcc203c172a8",
+      "source_bundle_sha256": "840c70f6417245d0c3eb6237bfda9fc88161abcca07dc2c7325bc4287db0653b"
+    },
+    "reuse_forbidden": true,
+    "scientific_protocol": "002",
+    "terminal": true
+  },
+  "schema_version": 1,
+  "scientific_inheritance": {
+    "external_inputs": {
+      "archive_path": "/home/ubuntu/gitcode/.t/falsewake-data/speech_commands_v0.02.tar.gz",
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/manifest-v2-exact/speech-commands.jsonl",
+      "manifest_record_count": 105829,
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "pcm_cache_byte_count": 2995776948,
+      "pcm_cache_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/experiment-002-pcm-v1.cache",
+      "pcm_cache_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    },
+    "frozen_files": [
+      {
+        "path": "configs/experiment-002-training.json",
+        "sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+      },
+      {
+        "path": "configs/experiment-002-numerics.json",
+        "sha256": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9"
+      },
+      {
+        "path": "configs/experiment-002-trainer.json",
+        "sha256": "768720d031a1f2f6d0a36466fd9b4fa095a2f1b9a6fbbc382d4af5fc51514b48"
+      },
+      {
+        "byte_count": 320,
+        "path": "models/experiment-002-normalization.f32",
+        "sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e"
+      },
+      {
+        "path": "reports/experiment-002-normalization.json",
+        "sha256": "2b95565fec7dc956a4b1f667638b87e3df64cfaaca3026017942a8057c5187a8"
+      },
+      {
+        "path": "reports/experiment-002-pcm-cache.json",
+        "sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca"
+      },
+      {
+        "path": "reports/experiment-002-implementation-audit.json",
+        "sha256": "0b8033e7f407550d1c8576d31485e5bbcf825592de0d3b86f42ce98c1fca7116"
+      },
+      {
+        "path": "src/falsewake/causal_kws.py",
+        "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+      }
+    ],
+    "registered_training": {
+      "class_count": 12,
+      "epochs_per_seed": 30,
+      "parameter_tensor_count": 53,
+      "parameter_value_count": 23724,
+      "seeds": [
+        20260719,
+        20260720,
+        20260721
+      ],
+      "selected_seed_rerun_required": true,
+      "total_updates_per_seed": 9390,
+      "training_example_count_per_epoch": 40027,
+      "updates_per_epoch": 313,
+      "validation_example_count": 10583
+    },
+    "runtime": {
+      "numpy_version": "2.5.1",
+      "python_version": "3.12.3",
+      "safetensors_version": "0.8.0",
+      "torch_version": "2.13.0+cpu"
+    },
+    "source_blobs": {
+      "src/falsewake/causal_kws.py": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6",
+      "src/falsewake/experiment_002_checkpoint.py": "1938248029fbbf9f840216e97d701bf6f51d1c9073e769107f55bf619ed104ba",
+      "src/falsewake/experiment_002_child_result.py": "f5358a87e894c1d80fdcf01879845022a8322630434e9a8012f1ec2e1b3f6453",
+      "src/falsewake/experiment_002_data.py": "23b4902e0226b9ff9d792ca27a603a458d87e7401678cee3729f86a30b01d573",
+      "src/falsewake/experiment_002_evaluator.py": "5deb5e6b6a3fa60a377bac319b7c59375abdc14d1f83d88fcd89fff54df0b403",
+      "src/falsewake/experiment_002_evidence.py": "44a6315f83938c2193290da5780f8a4ac0b81931fa724c8baf6fdebb4f4f68e0",
+      "src/falsewake/experiment_002_final_evidence.py": "c7d5070d4c732b68ef5bbea398d68c97c1c46e60728e46e5b51316a9df145ca9",
+      "src/falsewake/experiment_002_frontend.py": "fdfa2534080cfbea2143c5b87905e1ce43be0d1e4aad4503063506d15e6c65ca",
+      "src/falsewake/experiment_002_metrics.py": "eb30e28e9691bfb4a4e03f92293df4bdca3a1219bb1e7210b194841ed92894b5",
+      "src/falsewake/experiment_002_normalization.py": "73bbe76aab35d352d2b702f67480f93645eb09cbd7627a9fafde86d3ecb69a81",
+      "src/falsewake/experiment_002_normalization_artifact.py": "103efbb001de4b75af81f5eaccc4fb8e3ae7dfb905b51860213aa3241e3e7dc9",
+      "src/falsewake/experiment_002_pcm_cache.py": "bcc05ecc797aebf809026675e9d4c71fc51dabfdb8177a04020f85c6d31fc961",
+      "src/falsewake/experiment_002_preprocessing.py": "d4438d9a52b33bbe610026df981ee23d2cb0956e0c1350ccce933c5a85903259",
+      "src/falsewake/experiment_002_process_guard.py": "2c9adc6fae91f8dd39e67881764e27b20c976019b21e44f7f0ed34e9c635fe7d",
+      "src/falsewake/experiment_002_registered_checkpoint.py": "8b83e895406e59cf85111b524881eb4b1b707309c1a76c98c1e0c7782a0ad126",
+      "src/falsewake/experiment_002_registered_evaluator.py": "ae747e405788864a66a3fb575131e6c97d5ff5e45a9a8c8d8f947926b352f299",
+      "src/falsewake/experiment_002_registered_executor.py": "702103f22f5ade061fc8669a8984a9dcb1ab7d516a67e1ce7124261186c40eae",
+      "src/falsewake/experiment_002_registered_history.py": "f1b259b727cb331ef9828597872ce6971000f1d14154f903e58c494babedbf59",
+      "src/falsewake/experiment_002_rng.py": "174e445b47d6da586ae92ea3c4a694966bb6e2acdc2be92f31c1a7023a0fcd4e",
+      "src/falsewake/experiment_002_training_bridge.py": "48f2eb2d193ac668a0b98f5556e286c64b60f9539f41dc018a056a5ee042d069",
+      "src/falsewake/experiment_002_training_evidence.py": "7d58f9c33f563ab3862497e4d86fbead0e58897100f2e2ba49621b5357b2b692",
+      "src/falsewake/experiment_002_training_executor.py": "9b58e97e291c664c3c8097954b75627e8551be7ec57cf04940f054d5f4dac1d2",
+      "src/falsewake/experiment_002_training_history.py": "e984fa7269ab4359384e4ce3c0135049c39a2ddd76b8f2fb0adf52bc6e6a3b0d",
+      "src/falsewake/experiment_002_training_population.py": "c5ba2421a9fc6cc0a0339fb7ff559ce081d3498a235ab0bb62b8ce53278a0034",
+      "src/falsewake/experiment_002_validation.py": "c667c012bb5de864c4d1d105f2892476d663a31d181562a4d20c1e7d3c4b091b",
+      "src/falsewake/feature_matrix.py": "82ca61ebda6ec833d0047acb4a88091411efa16cbc5667ae7b16ca85d8842aff",
+      "src/falsewake/features.py": "3e7baf53c8dc772a68cd256ce6f4ca6428117c36f051c916f247dc409e515e3c",
+      "src/falsewake/speech_commands.py": "f80bd2bad56113d4adc168b04e1633ec22d8513afb973a4b5dc37d616901e234",
+      "src/falsewake/speech_commands_pcm.py": "f4cd5a2e8dd542d67b41cbe7db41ac031c93d3435787cecb941146c0017e8f33"
+    },
+    "source_policy": {
+      "baseline_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+      "immutable_paths": "every_path_in_the_predecessor_source_bundle_except_execution_delta.permitted_existing_source_changes_and_execution_delta.procfs_repair.affected_path",
+      "new_source_paths": "exactly_execution_delta.production_additions",
+      "predecessor_source_bundle_sha256": "840c70f6417245d0c3eb6237bfda9fc88161abcca07dc2c7325bc4287db0653b",
+      "repaired_path": "execution_delta.procfs_repair.affected_path_must_equal_execution_delta.procfs_repair.repair_sha256"
+    }
+  }
+}
