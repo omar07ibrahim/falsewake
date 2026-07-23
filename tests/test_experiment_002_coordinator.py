@@ -781,6 +781,7 @@ def _install_forked_synthetic_registration_authority() -> None:
         implementation_commit=TEST_BINDING.implementation_commit,
         registration_sha256=TEST_BINDING.registration_sha256,
         source_bundle_sha256=TEST_BINDING.source_bundle_sha256,
+        profile=authority._EXPERIMENT_002_PROFILE,
     )
     mutable_authority = cast(Any, authority)
     mutable_authority._AUTHORITY_PROCESS_ID = os.getpid()
@@ -1308,6 +1309,7 @@ def test_full_guarded_fd3_route_uses_real_process_guard_in_fresh_subprocess() ->
             implementation_commit='2' * 40,
             registration_sha256='3' * 64,
             source_bundle_sha256='4' * 64,
+            profile=authority._EXPERIMENT_002_PROFILE,
         )
         authority._verified_state = lambda _registration: synthetic_state
         registration = object.__new__(coordinator.VerifiedRunRegistration)

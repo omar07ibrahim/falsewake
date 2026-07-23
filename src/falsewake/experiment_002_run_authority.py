@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 _RUN_CONFIG_PATH: Final = "configs/experiment-002-run.json"
+_EXPERIMENT_003_RUN_CONFIG_PATH: Final = "configs/experiment-003-run.json"
 _AUTHORITY_SOURCE_PATH: Final = "src/falsewake/experiment_002_run_authority.py"
 _CANONICAL_REPOSITORY_ROOT: Final = Path("/home/ubuntu/gitcode/falsewake")
 _CANONICAL_PYTHON_EXECUTABLE: Final = (
@@ -45,6 +46,8 @@ _TRUSTED_RUNTIME_SYS_PATHS: Final = (
 )
 _SOURCE_BUNDLE_DOMAIN: Final = b"falsewake-exp002-source-bundle-v1\0"
 _RUNTIME_FINGERPRINT_DOMAIN: Final = b"falsewake-exp002-runtime-v1\0"
+_EXPERIMENT_003_SOURCE_BUNDLE_DOMAIN: Final = b"falsewake-exp003-source-bundle-v1\0"
+_EXPERIMENT_003_RUNTIME_FINGERPRINT_DOMAIN: Final = b"falsewake-exp003-runtime-v1\0"
 _MAX_CONFIG_BYTES: Final = 1 << 20
 _MAX_SOURCE_FILE_BYTES: Final = 64 << 20
 _MAX_SOURCE_BUNDLE_BYTES: Final = 256 << 20
@@ -60,12 +63,24 @@ _MAX_WORKTREE_DEPTH: Final = 64
 _MAX_GIT_OUTPUT_BYTES: Final = 32 << 20
 _GIT_TIMEOUT_SECONDS: Final = 30
 _CHILD_BUNDLE_MAGIC: Final = b"FW2CHLD1"
+_EXPERIMENT_003_CHILD_BUNDLE_MAGIC: Final = b"FW3CHLD1"
 _CHILD_BUNDLE_VERSION: Final = 1
 _CHILD_BUNDLE_HEADER: Final = struct.Struct("<8sI40s40s64s64sIQQ")
 _MAX_CHILD_BUNDLE_BYTES: Final = 256 << 20
 _SEALED_CHILD_BUNDLE_FD: Final = 7
 _SEALED_CHILD_MEMFD_TARGET: Final = "/memfd:falsewake-exp002-child-bundle (deleted)"
 _SEALED_ORIGIN_PREFIX: Final = "falsewake-sealed://experiment-002/"
+_EXPERIMENT_003_SEALED_CHILD_MEMFD_TARGET: Final = (
+    "/memfd:falsewake-exp003-child-bundle (deleted)"
+)
+_EXPERIMENT_003_SEALED_ORIGIN_PREFIX: Final = "falsewake-sealed://experiment-003/"
+_EXPERIMENT_003_PROTOCOL_PATH: Final = "configs/experiment-003-execution.json"
+_EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT: Final = (
+    "e47bd581675abe22b529de7bcc825d39e84a00cd"
+)
+_EXPERIMENT_003_PROTOCOL_SHA256: Final = (
+    "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
+)
 _PARENT_ORIGIN_KIND: Final = "parent_repository"
 _SEALED_CHILD_ORIGIN_KIND: Final = "sealed_child"
 _LOWER_HEX_40 = frozenset("0123456789abcdef")
@@ -77,6 +92,66 @@ _PATH_TYPE: Final = type(Path())
 
 class Experiment002RunAuthorityError(ValueError):
     """The source-bound Experiment 002 registration failed closed."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _AuthorityProfile:
+    registration_experiment: str
+    run_config_path: str
+    runtime_fingerprint_domain: bytes
+    child_bundle_magic: bytes
+    source_bundle_domain: bytes
+    sealed_origin_prefix: str
+    sealed_child_memfd_target: str
+    child_bundle_memfd_name: str
+    activation_magic: bytes
+    activation_ticket_domain: bytes
+    issuer_route: str
+    sealed_child_issuer_route: str
+    runner_entrypoint: str
+    scratch_root: str
+
+
+_EXPERIMENT_002_PROFILE: Final = _AuthorityProfile(
+    registration_experiment="002",
+    run_config_path=_RUN_CONFIG_PATH,
+    runtime_fingerprint_domain=_RUNTIME_FINGERPRINT_DOMAIN,
+    child_bundle_magic=_CHILD_BUNDLE_MAGIC,
+    source_bundle_domain=_SOURCE_BUNDLE_DOMAIN,
+    sealed_origin_prefix=_SEALED_ORIGIN_PREFIX,
+    sealed_child_memfd_target=_SEALED_CHILD_MEMFD_TARGET,
+    child_bundle_memfd_name="falsewake-exp002-child-bundle",
+    activation_magic=b"FW2ACTV1",
+    activation_ticket_domain=b"falsewake-exp002-activation-ticket-v1\0",
+    issuer_route="verify_and_issue_experiment_002_run_registration",
+    sealed_child_issuer_route=(
+        "_verify_and_issue_experiment_002_sealed_child_registration"
+    ),
+    runner_entrypoint="src/falsewake/experiment_002_runner.py",
+    scratch_root="/home/ubuntu/gitcode/.t/falsewake-experiment-002-scratch",
+)
+_EXPERIMENT_003_PROFILE: Final = _AuthorityProfile(
+    registration_experiment="003",
+    run_config_path=_EXPERIMENT_003_RUN_CONFIG_PATH,
+    runtime_fingerprint_domain=_EXPERIMENT_003_RUNTIME_FINGERPRINT_DOMAIN,
+    child_bundle_magic=_EXPERIMENT_003_CHILD_BUNDLE_MAGIC,
+    source_bundle_domain=_EXPERIMENT_003_SOURCE_BUNDLE_DOMAIN,
+    sealed_origin_prefix=_EXPERIMENT_003_SEALED_ORIGIN_PREFIX,
+    sealed_child_memfd_target=_EXPERIMENT_003_SEALED_CHILD_MEMFD_TARGET,
+    child_bundle_memfd_name="falsewake-exp003-child-bundle",
+    activation_magic=b"FW3ACTV1",
+    activation_ticket_domain=b"falsewake-exp003-activation-ticket-v1\0",
+    issuer_route="verify_and_issue_experiment_003_run_registration",
+    sealed_child_issuer_route=(
+        "_verify_and_issue_experiment_003_sealed_child_registration"
+    ),
+    runner_entrypoint="src/falsewake/experiment_003_runner.py",
+    scratch_root="/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
+)
+_AUTHORITY_PROFILES: Final = (
+    _EXPERIMENT_002_PROFILE,
+    _EXPERIMENT_003_PROFILE,
+)
 
 
 class _ForkReinitializableLock(Protocol):
@@ -129,8 +204,18 @@ def _capture_loaded_authority_source() -> tuple[
         raise Experiment002RunAuthorityError(
             "run authority loader has no source-data route"
         )
-    if origin.startswith(_SEALED_ORIGIN_PREFIX):
-        suffix = origin.removeprefix(_SEALED_ORIGIN_PREFIX)
+    sealed_profiles = tuple(
+        profile
+        for profile in _AUTHORITY_PROFILES
+        if origin.startswith(profile.sealed_origin_prefix)
+    )
+    if sealed_profiles:
+        if len(sealed_profiles) != 1:
+            raise Experiment002RunAuthorityError(
+                "sealed run-authority origin profile is ambiguous"
+            )
+        loaded_profile = sealed_profiles[0]
+        suffix = origin.removeprefix(loaded_profile.sealed_origin_prefix)
         try:
             source_digest, relative_path = suffix.split("/", maxsplit=1)
         except ValueError as error:
@@ -272,6 +357,14 @@ def _capture_loaded_authority_source() -> tuple[
     _LOADED_SYS_PATH_FRAME,
     _LOADED_SOURCE_SHA256,
 ) = _capture_loaded_authority_source()
+_LOADED_SOURCE_PROFILE: Final = next(
+    (
+        profile
+        for profile in _AUTHORITY_PROFILES
+        if _LOADED_SOURCE_ORIGIN.startswith(profile.sealed_origin_prefix)
+    ),
+    None,
+)
 
 
 @dataclass(frozen=True, slots=True, init=False, eq=False, weakref_slot=True)
@@ -355,6 +448,7 @@ class _VerifiedState:
     origin_binding: _AuthorityOriginBinding
     process_id: int
     nonce: object
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +462,7 @@ class _RepositorySnapshot:
     registration_bytes: bytes = b""
     source_bundle_payload: bytes = b""
     frozen_blobs: tuple[_FrozenBlob, ...] = ()
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +480,7 @@ class _IssuedGuard:
     origin_binding: _AuthorityOriginBinding
     process_id: int
     nonce: object
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,6 +506,7 @@ class _RegistrationDocument:
     runtime: dict[str, Any]
     invocation: dict[str, Any]
     raw_bytes: bytes
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +545,7 @@ class _ChildBundleFrame:
     source_bundle_payload: bytes
     source_blobs: tuple[_FrozenBlob, ...]
     frozen_blobs: tuple[_FrozenBlob, ...]
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,6 +577,87 @@ os.register_at_fork(
 _ISSUANCE_COMPLETE = False
 
 
+def _require_authority_profile(profile: object) -> _AuthorityProfile:
+    if profile is _EXPERIMENT_002_PROFILE:
+        expected = (
+            "002",
+            "configs/experiment-002-run.json",
+            b"falsewake-exp002-runtime-v1\0",
+            b"FW2CHLD1",
+            b"falsewake-exp002-source-bundle-v1\0",
+            "falsewake-sealed://experiment-002/",
+            "/memfd:falsewake-exp002-child-bundle (deleted)",
+            "falsewake-exp002-child-bundle",
+            b"FW2ACTV1",
+            b"falsewake-exp002-activation-ticket-v1\0",
+            "verify_and_issue_experiment_002_run_registration",
+            "_verify_and_issue_experiment_002_sealed_child_registration",
+            "src/falsewake/experiment_002_runner.py",
+            "/home/ubuntu/gitcode/.t/falsewake-experiment-002-scratch",
+        )
+    elif profile is _EXPERIMENT_003_PROFILE:
+        expected = (
+            "003",
+            "configs/experiment-003-run.json",
+            b"falsewake-exp003-runtime-v1\0",
+            b"FW3CHLD1",
+            b"falsewake-exp003-source-bundle-v1\0",
+            "falsewake-sealed://experiment-003/",
+            "/memfd:falsewake-exp003-child-bundle (deleted)",
+            "falsewake-exp003-child-bundle",
+            b"FW3ACTV1",
+            b"falsewake-exp003-activation-ticket-v1\0",
+            "verify_and_issue_experiment_003_run_registration",
+            "_verify_and_issue_experiment_003_sealed_child_registration",
+            "src/falsewake/experiment_003_runner.py",
+            "/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
+        )
+    else:
+        raise Experiment002RunAuthorityError(
+            "run-registration authority profile is not canonical"
+        )
+    if type(profile) is not _AuthorityProfile:
+        raise Experiment002RunAuthorityError(
+            "run-registration authority profile type is invalid"
+        )
+    observed = (
+        profile.registration_experiment,
+        profile.run_config_path,
+        profile.runtime_fingerprint_domain,
+        profile.child_bundle_magic,
+        profile.source_bundle_domain,
+        profile.sealed_origin_prefix,
+        profile.sealed_child_memfd_target,
+        profile.child_bundle_memfd_name,
+        profile.activation_magic,
+        profile.activation_ticket_domain,
+        profile.issuer_route,
+        profile.sealed_child_issuer_route,
+        profile.runner_entrypoint,
+        profile.scratch_root,
+    )
+    if observed != expected:
+        raise Experiment002RunAuthorityError(
+            "run-registration authority profile fields changed"
+        )
+    return profile
+
+
+def _profile_run_config_path(profile: _AuthorityProfile) -> str:
+    canonical = _require_authority_profile(profile)
+    if canonical is _EXPERIMENT_002_PROFILE:
+        return _RUN_CONFIG_PATH
+    return canonical.run_config_path
+
+
+def _loaded_sealed_source_profile() -> _AuthorityProfile | None:
+    if _LOADED_SOURCE_PROFILE is not None:
+        return _require_authority_profile(_LOADED_SOURCE_PROFILE)
+    if _LOADED_SOURCE_ORIGIN_KIND != _SEALED_CHILD_ORIGIN_KIND:
+        return None
+    return _profile_from_sealed_origin(_LOADED_SOURCE_ORIGIN)
+
+
 def _require_authority_process() -> None:
     if os.getpid() != _AUTHORITY_PROCESS_ID:
         raise Experiment002RunAuthorityError(
@@ -494,6 +673,19 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
     verified source location.
     """
 
+    return _verify_and_issue_parent_run_registration(_EXPERIMENT_002_PROFILE)
+
+
+def _verify_and_issue_experiment_003_run_registration() -> VerifiedRunRegistration:
+    """Verify and issue the fixed Experiment 003 parent capability."""
+
+    return _verify_and_issue_parent_run_registration(_EXPERIMENT_003_PROFILE)
+
+
+def _verify_and_issue_parent_run_registration(
+    profile: _AuthorityProfile,
+) -> VerifiedRunRegistration:
+    profile = _require_authority_profile(profile)
     _require_authority_process()
     if _LOADED_SOURCE_ORIGIN_KIND != _PARENT_ORIGIN_KIND:
         raise Experiment002RunAuthorityError(
@@ -509,9 +701,9 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
 
     # Deliberately precede Git, runtime, source, and data inspection.  A missing
     # separately committed registration stops at this boundary.
-    config_path = root / _RUN_CONFIG_PATH
+    config_path = root / _profile_run_config_path(profile)
     raw_config = _read_regular_file(config_path, maximum_bytes=_MAX_CONFIG_BYTES)
-    document = _parse_registration(raw_config)
+    document = _parse_registration_for_profile(raw_config, profile)
 
     snapshot = _verify_committed_repository(root, document)
     _require_production_activation(root, document)
@@ -535,6 +727,21 @@ def _verify_and_issue_experiment_002_sealed_child_registration() -> (
 ):
     """Verify fixed sealed-child state and mint one process-local capability."""
 
+    return _verify_and_issue_sealed_child_registration(_EXPERIMENT_002_PROFILE)
+
+
+def _verify_and_issue_experiment_003_sealed_child_registration() -> (
+    VerifiedRunRegistration
+):
+    """Verify fixed Experiment 003 sealed-child state and mint its capability."""
+
+    return _verify_and_issue_sealed_child_registration(_EXPERIMENT_003_PROFILE)
+
+
+def _verify_and_issue_sealed_child_registration(
+    profile: _AuthorityProfile,
+) -> VerifiedRunRegistration:
+    profile = _require_authority_profile(profile)
     _require_authority_process()
     if _LOADED_SOURCE_ORIGIN_KIND != _SEALED_CHILD_ORIGIN_KIND:
         raise Experiment002RunAuthorityError(
@@ -546,14 +753,18 @@ def _verify_and_issue_experiment_002_sealed_child_registration() -> (
             raise Experiment002RunAuthorityError(
                 "a run registration was already issued in this process"
             )
-    observed = _verify_sealed_child_local_state()
+    if _loaded_sealed_source_profile() is not profile:
+        raise Experiment002RunAuthorityError(
+            "sealed-child issuer profile does not match its source origin"
+        )
+    observed = _verify_sealed_child_local_state(profile)
     with _ISSUED_LOCK:
         _require_authority_process()
         if _ISSUANCE_COMPLETE:
             raise Experiment002RunAuthorityError(
                 "a concurrent run-registration issuance already completed"
             )
-        final_observed = _verify_sealed_child_local_state()
+        final_observed = _verify_sealed_child_local_state(profile)
         if not _sealed_child_snapshots_match(observed, final_observed):
             raise Experiment002RunAuthorityError(
                 "sealed-child authority inputs changed across issuance"
@@ -569,6 +780,17 @@ def verify_verified_run_registration(
     """Reverify repository state and reject any forged or stale capability."""
 
     _require_authority_process()
+    _require_verified_registration_profile(registration, _EXPERIMENT_002_PROFILE)
+    reverify_verified_run_registration(registration)
+
+
+def _verify_experiment_003_run_registration(
+    registration: VerifiedRunRegistration,
+) -> None:
+    """Reverify only a retained Experiment 003 capability."""
+
+    _require_authority_process()
+    _require_verified_registration_profile(registration, _EXPERIMENT_003_PROFILE)
     reverify_verified_run_registration(registration)
 
 
@@ -579,13 +801,14 @@ def reverify_verified_run_registration(
 
     _require_authority_process()
     state = _verified_state(registration)
+    profile = _require_authority_profile(state.profile)
     try:
         if state.origin_binding.kind == _SEALED_CHILD_ORIGIN_KIND:
-            observed_child = _verify_sealed_child_local_state()
+            observed_child = _verify_sealed_child_local_state(profile)
             with _ISSUED_LOCK:
                 _require_authority_process()
                 current_state = _verified_state(registration)
-                final_child = _verify_sealed_child_local_state()
+                final_child = _verify_sealed_child_local_state(profile)
                 if (
                     current_state is not state
                     or not _sealed_child_snapshots_match(observed_child, final_child)
@@ -596,10 +819,10 @@ def reverify_verified_run_registration(
                     )
         else:
             raw_config = _read_regular_file(
-                state.repository_root / _RUN_CONFIG_PATH,
+                state.repository_root / _profile_run_config_path(profile),
                 maximum_bytes=_MAX_CONFIG_BYTES,
             )
-            document = _parse_registration(raw_config)
+            document = _parse_registration_for_profile(raw_config, profile)
             observed = _verify_committed_repository(state.repository_root, document)
             _require_registered_runtime_identity(state.repository_root, document)
             with _ISSUED_LOCK:
@@ -622,6 +845,28 @@ def reverify_verified_run_registration(
             _require_authority_process()
             _FAILED.add(registration)
         raise
+
+
+def _reverify_experiment_003_run_registration(
+    registration: VerifiedRunRegistration,
+) -> None:
+    """Reverify a capability only if its retained profile is Experiment 003."""
+
+    _require_verified_registration_profile(registration, _EXPERIMENT_003_PROFILE)
+    reverify_verified_run_registration(registration)
+
+
+def _require_verified_registration_profile(
+    registration: VerifiedRunRegistration,
+    profile: _AuthorityProfile,
+) -> _VerifiedState:
+    expected = _require_authority_profile(profile)
+    state = _verified_state(registration)
+    if state.profile is not expected:
+        raise Experiment002RunAuthorityError(
+            "run-registration capability belongs to a different authority profile"
+        )
+    return state
 
 
 def _registered_child_input_snapshot(
@@ -650,14 +895,14 @@ def _registered_child_input_snapshot(
             )
 
         first = _registered_child_input_snapshot_from_state(state)
-        _require_registered_child_input_snapshot(first)
+        _require_registered_child_input_snapshot(first, state.profile)
         if _verified_state(registration) is not state:
             raise Experiment002RunAuthorityError(
                 "run-registration authority changed during child input capture"
             )
 
         second = _registered_child_input_snapshot_from_state(state)
-        _require_registered_child_input_snapshot(second)
+        _require_registered_child_input_snapshot(second, state.profile)
         if _verified_state(registration) is not state:
             raise Experiment002RunAuthorityError(
                 "run-registration authority changed during child input recapture"
@@ -672,8 +917,8 @@ def _registered_child_input_snapshot(
             raise Experiment002RunAuthorityError(
                 "run-registration authority changed after child input capture"
             )
-        _require_registered_child_input_snapshot(first)
-        _require_registered_child_input_snapshot(second)
+        _require_registered_child_input_snapshot(first, state.profile)
+        _require_registered_child_input_snapshot(second, state.profile)
         if not _registered_child_input_snapshots_match(first, second):
             raise Experiment002RunAuthorityError(
                 "registered child inputs changed after reverification"
@@ -695,7 +940,8 @@ def _registered_child_input_snapshot_from_state(
             "registered child inputs require a sealed-child authority"
         )
 
-    document = _parse_registration(state.registration_bytes)
+    profile = _require_authority_profile(state.profile)
+    document = _parse_registration_for_profile(state.registration_bytes, profile)
     if type(document) is not _RegistrationDocument:
         raise Experiment002RunAuthorityError(
             "retained child registration has an invalid type"
@@ -706,7 +952,7 @@ def _registered_child_input_snapshot_from_state(
     ):
         raise Experiment002RunAuthorityError("retained child registration changed")
 
-    external_inputs = _require_external_inputs(document.external_inputs)
+    external_inputs = _require_external_inputs(document.external_inputs, profile)
     manifest = _require_exact_object(
         external_inputs["manifest"],
         {"inventory_sha256", "path", "record_count", "sha256"},
@@ -717,7 +963,11 @@ def _registered_child_input_snapshot_from_state(
         {"byte_count", "path", "sha256"},
         "external PCM cache",
     )
-    invocation = _require_invocation_registration(document.invocation, document.runtime)
+    invocation = _require_invocation_registration(
+        document.invocation,
+        document.runtime,
+        profile,
+    )
     environment = _require_exact_object(
         invocation["environment"],
         {
@@ -737,7 +987,7 @@ def _registered_child_input_snapshot_from_state(
         "invocation environment",
     )
 
-    normalization = _registered_normalization_binding(state.frozen_blobs)
+    normalization = _registered_normalization_binding(state.frozen_blobs, profile)
     snapshot = _RegisteredChildInputSnapshot(
         manifest_path=_registered_external_path(manifest["path"], "manifest path"),
         pcm_cache_path=_registered_external_path(pcm_cache["path"], "PCM cache path"),
@@ -748,15 +998,18 @@ def _registered_child_input_snapshot_from_state(
         normalization_sha256=normalization[2],
         scratch_directory=_registered_external_path(environment["TMPDIR"], "TMPDIR"),
     )
-    _require_registered_child_input_snapshot(snapshot)
+    _require_registered_child_input_snapshot(snapshot, profile)
     return snapshot
 
 
 def _registered_normalization_binding(
-    frozen_blobs: tuple[_FrozenBlob, ...], /
+    frozen_blobs: tuple[_FrozenBlob, ...],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+    /,
 ) -> tuple[Path, int, str]:
-    _require_frozen_blob_sequence(frozen_blobs)
-    bindings = _expected_frozen_bindings()
+    profile = _require_authority_profile(profile)
+    _require_frozen_blob_sequence(frozen_blobs, profile)
+    bindings = _expected_frozen_bindings(profile)
     artifacts = _require_exact_object(
         bindings["artifacts"],
         {"normalization", "normalization_report", "pcm_cache", "pcm_cache_report"},
@@ -808,8 +1061,11 @@ def _registered_external_path(value: object, name: str, /) -> Path:
 
 
 def _require_registered_child_input_snapshot(
-    snapshot: _RegisteredChildInputSnapshot, /
+    snapshot: _RegisteredChildInputSnapshot,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+    /,
 ) -> None:
+    profile = _require_authority_profile(profile)
     if type(snapshot) is not _RegisteredChildInputSnapshot:
         raise Experiment002RunAuthorityError(
             "registered child input snapshot has an invalid type"
@@ -828,7 +1084,7 @@ def _require_registered_child_input_snapshot(
     _require_external_path(snapshot.pcm_cache_path.as_posix(), "PCM cache path")
     _require_external_path(snapshot.scratch_directory.as_posix(), "TMPDIR")
 
-    bindings = _expected_frozen_bindings()
+    bindings = _expected_frozen_bindings(profile)
     artifacts = _require_exact_object(
         bindings["artifacts"],
         {"normalization", "normalization_report", "pcm_cache", "pcm_cache_report"},
@@ -913,24 +1169,46 @@ def _create_sealed_experiment_002_child_bundle_fd(
 ) -> int:
     """Return an O_RDONLY fd with mode 0400 and byte seals verified at return."""
 
+    return _create_sealed_child_bundle_fd_for_profile(
+        registration,
+        _EXPERIMENT_002_PROFILE,
+    )
+
+
+def _create_sealed_experiment_003_child_bundle_fd(
+    registration: VerifiedRunRegistration, /
+) -> int:
+    """Return the fixed Experiment 003 sealed source-bundle descriptor."""
+
+    return _create_sealed_child_bundle_fd_for_profile(
+        registration,
+        _EXPERIMENT_003_PROFILE,
+    )
+
+
+def _create_sealed_child_bundle_fd_for_profile(
+    registration: VerifiedRunRegistration,
+    profile: _AuthorityProfile,
+) -> int:
+    profile = _require_authority_profile(profile)
     _require_authority_process()
     writer: int | None = None
     reader: int | None = None
     try:
         reverify_verified_run_registration(registration)
-        state = _verified_state(registration)
+        state = _require_verified_registration_profile(registration, profile)
         if state.origin_binding.kind != _PARENT_ORIGIN_KIND:
             raise Experiment002RunAuthorityError(
                 "sealed child bundles require a parent-origin authority"
             )
         bundle = _child_bundle_bytes_from_state(state)
-        frame = _parse_experiment_002_child_bundle(bundle)
+        frame = _parse_child_bundle_for_profile(bundle, profile)
         _require_child_bundle_matches_state(frame, state)
 
         memfd_flags, required_seals = _memfd_requirements()
         try:
             created_writer = os.memfd_create(
-                "falsewake-exp002-child-bundle",
+                profile.child_bundle_memfd_name,
                 flags=memfd_flags,
             )
         except (AttributeError, OSError) as error:
@@ -1040,12 +1318,23 @@ def _verify_synthetic_repository_for_tests(
 ) -> _RepositorySnapshot:
     """Exercise repository verification without minting a genuine capability."""
 
+    return _verify_synthetic_repository_for_profile_tests(
+        repository_root,
+        _EXPERIMENT_002_PROFILE,
+    )
+
+
+def _verify_synthetic_repository_for_profile_tests(
+    repository_root: Path,
+    profile: _AuthorityProfile,
+) -> _RepositorySnapshot:
+    profile = _require_authority_profile(profile)
     root = _explicit_test_repository_root(repository_root)
     raw_config = _read_regular_file(
-        root / _RUN_CONFIG_PATH,
+        root / _profile_run_config_path(profile),
         maximum_bytes=_MAX_CONFIG_BYTES,
     )
-    document = _parse_registration(raw_config)
+    document = _parse_registration_for_profile(raw_config, profile)
     return _verify_committed_repository(root, document)
 
 
@@ -1133,6 +1422,7 @@ def _guard_from_state(state: _VerifiedState) -> _IssuedGuard:
         origin_binding=_clone_origin_binding(state.origin_binding),
         process_id=state.process_id,
         nonce=state.nonce,
+        profile=state.profile,
     )
 
 
@@ -1226,6 +1516,7 @@ def _origin_bindings_match(
 def _require_origin_binding_frame(
     binding: _AuthorityOriginBinding,
     source_bundle_sha256: str | None,
+    profile: _AuthorityProfile | None = None,
 ) -> None:
     if type(binding) is not _AuthorityOriginBinding:
         raise Experiment002RunAuthorityError(
@@ -1249,6 +1540,8 @@ def _require_origin_binding_frame(
             "run-registration origin binding fields have invalid types"
         )
     if binding.kind == _PARENT_ORIGIN_KIND:
+        if profile is not None:
+            _require_authority_profile(profile)
         expected_parent = (
             binding.parent_process_id == 0
             and binding.bundle_descriptor == -1
@@ -1274,9 +1567,15 @@ def _require_origin_binding_frame(
         return
     if binding.kind != _SEALED_CHILD_ORIGIN_KIND:
         raise Experiment002RunAuthorityError("run-registration origin kind is invalid")
+    if profile is None:
+        profile = _profile_from_sealed_origin(binding.module_origin)
+    profile = _require_authority_profile(profile)
     if source_bundle_sha256 is None:
-        source_bundle_sha256 = _sealed_origin_source_digest(binding.module_origin)
-    expected_origin = _sealed_authority_origin(source_bundle_sha256)
+        source_bundle_sha256 = _sealed_origin_source_digest(
+            binding.module_origin,
+            profile,
+        )
+    expected_origin = _sealed_authority_origin(source_bundle_sha256, profile)
     if (
         binding.parent_process_id < 1
         or binding.parent_process_id == _AUTHORITY_PROCESS_ID
@@ -1284,7 +1583,7 @@ def _require_origin_binding_frame(
         or binding.bundle_descriptor != _SEALED_CHILD_BUNDLE_FD
         or len(binding.bundle_stat_frame) != 9
         or binding.bundle_seals != _required_child_bundle_seals()
-        or binding.bundle_proc_target != _SEALED_CHILD_MEMFD_TARGET
+        or binding.bundle_proc_target != profile.sealed_child_memfd_target
         or binding.bundle_offset != 0
         or binding.source_loader is None
         or binding.source_finder is not binding.source_loader
@@ -1336,6 +1635,7 @@ def _guard_matches_state(guard: _IssuedGuard, state: _VerifiedState) -> bool:
         and _origin_bindings_match(guard.origin_binding, state.origin_binding)
         and guard.process_id == state.process_id
         and guard.nonce is state.nonce
+        and guard.profile is state.profile
     )
 
 
@@ -1358,6 +1658,7 @@ def _require_verified_state_frame(state: _VerifiedState) -> None:
         origin_binding=state.origin_binding,
         process_id=state.process_id,
         nonce=state.nonce,
+        profile=state.profile,
     )
 
 
@@ -1380,6 +1681,7 @@ def _require_guard_frame(guard: _IssuedGuard) -> None:
         origin_binding=guard.origin_binding,
         process_id=guard.process_id,
         nonce=guard.nonce,
+        profile=guard.profile,
     )
 
 
@@ -1398,7 +1700,9 @@ def _require_authority_frame(
     origin_binding: _AuthorityOriginBinding,
     process_id: int,
     nonce: object,
+    profile: _AuthorityProfile,
 ) -> None:
+    profile = _require_authority_profile(profile)
     if (
         issuer_marker is not _ISSUER_MARKER
         or type(repository_root) is not _PATH_TYPE
@@ -1422,8 +1726,9 @@ def _require_authority_frame(
         registration_bytes=registration_bytes,
         source_bundle_payload=source_bundle_payload,
         frozen_blobs=frozen_blobs,
+        profile=profile,
     )
-    _require_origin_binding_frame(origin_binding, source_bundle_sha256)
+    _require_origin_binding_frame(origin_binding, source_bundle_sha256, profile)
     if (
         type(process_id) is not int
         or process_id != _AUTHORITY_PROCESS_ID
@@ -1437,6 +1742,7 @@ def _state_from_snapshot(snapshot: _RepositorySnapshot) -> _VerifiedState:
         raise Experiment002RunAuthorityError(
             "verified repository snapshot has an invalid type"
         )
+    profile = _require_authority_profile(snapshot.profile)
     return _VerifiedState(
         issuer_marker=_ISSUER_MARKER,
         repository_root=snapshot.repository_root,
@@ -1454,6 +1760,7 @@ def _state_from_snapshot(snapshot: _RepositorySnapshot) -> _VerifiedState:
         origin_binding=_parent_origin_binding(),
         process_id=_AUTHORITY_PROCESS_ID,
         nonce=object(),
+        profile=profile,
     )
 
 
@@ -1472,6 +1779,7 @@ def _snapshot_matches_state(
         and snapshot.registration_bytes == state.registration_bytes
         and snapshot.source_bundle_payload == state.source_bundle_payload
         and snapshot.frozen_blobs == state.frozen_blobs
+        and snapshot.profile is state.profile
         and state.origin_binding.kind == _PARENT_ORIGIN_KIND
         and state.process_id == _AUTHORITY_PROCESS_ID
     )
@@ -1481,13 +1789,15 @@ def _verify_committed_repository(
     root: Path,
     document: _RegistrationDocument,
 ) -> _RepositorySnapshot:
+    profile = _require_authority_profile(document.profile)
+    run_config_path = _profile_run_config_path(profile)
     _require_git_toplevel(root)
     head_commit = _head_commit(root)
 
     config_blob = _committed_blob(
         root,
         head_commit,
-        _RUN_CONFIG_PATH,
+        run_config_path,
         maximum_bytes=_MAX_CONFIG_BYTES,
     )
     if config_blob.mode != "100644":
@@ -1498,19 +1808,26 @@ def _verify_committed_repository(
         raise Experiment002RunAuthorityError(
             "run registration differs from its committed HEAD blob"
         )
-    _require_worktree_blob(root, _RUN_CONFIG_PATH, config_blob)
+    _require_worktree_blob(root, run_config_path, config_blob)
     _require_clean_worktree(root, head_commit)
 
     _require_implementation_ancestor(
         root,
         implementation_commit=document.implementation_commit,
         head_commit=head_commit,
+        run_config_path=run_config_path,
     )
     _require_registration_commit_shape(
         root,
         implementation_commit=document.implementation_commit,
         head_commit=head_commit,
+        run_config_path=run_config_path,
     )
+    if profile is _EXPERIMENT_003_PROFILE:
+        _require_experiment_003_implementation_history(
+            root,
+            implementation_commit=document.implementation_commit,
+        )
     minimum_source_byte_count = _minimum_blob_frame_byte_count(document.source_paths)
     maximum_frozen_payload_bytes = min(
         _MAX_FROZEN_BUNDLE_BYTES,
@@ -1527,8 +1844,9 @@ def _verify_committed_repository(
         root,
         head_commit,
         maximum_payload_bytes=maximum_frozen_payload_bytes,
+        profile=profile,
     )
-    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs))
+    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs, profile))
     maximum_source_payload_bytes = min(
         _MAX_SOURCE_BUNDLE_BYTES,
         _MAX_CHILD_BUNDLE_BYTES
@@ -1610,7 +1928,7 @@ def _verify_committed_repository(
             "committed source framing byte count changed"
         )
     source_digest = hashlib.sha256(
-        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+        profile.source_bundle_domain + source_bundle_payload
     ).hexdigest()
     if payload_byte_count != document.source_payload_byte_count:
         raise Experiment002RunAuthorityError(
@@ -1627,12 +1945,13 @@ def _verify_committed_repository(
         raise Experiment002RunAuthorityError(
             "repository HEAD changed during verification"
         )
-    _require_worktree_blob(root, _RUN_CONFIG_PATH, config_blob)
+    _require_worktree_blob(root, run_config_path, config_blob)
     if (
         _capture_frozen_files(
             root,
             head_commit,
             maximum_payload_bytes=maximum_frozen_payload_bytes,
+            profile=profile,
         )
         != frozen_blobs
     ):
@@ -1668,10 +1987,19 @@ def _verify_committed_repository(
         registration_bytes=document.raw_bytes,
         source_bundle_payload=source_bundle_payload,
         frozen_blobs=frozen_blobs,
+        profile=profile,
     )
 
 
 def _parse_registration(raw: bytes) -> _RegistrationDocument:
+    return _parse_registration_for_profile(raw, _EXPERIMENT_002_PROFILE)
+
+
+def _parse_registration_for_profile(
+    raw: bytes,
+    profile: _AuthorityProfile,
+) -> _RegistrationDocument:
+    profile = _require_authority_profile(profile)
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
@@ -1724,14 +2052,19 @@ def _parse_registration(raw: bytes) -> _RegistrationDocument:
     )
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise Experiment002RunAuthorityError("run schema_version must be integer 1")
-    if type(document["experiment"]) is not str or document["experiment"] != "002":
-        raise Experiment002RunAuthorityError("run experiment must be exact string 002")
+    if (
+        type(document["experiment"]) is not str
+        or document["experiment"] != profile.registration_experiment
+    ):
+        raise Experiment002RunAuthorityError(
+            "run experiment does not match the fixed authority profile"
+        )
     implementation_commit = _require_hex(
         document["implementation_commit"],
         length=40,
         name="implementation_commit",
     )
-    expected_bindings = _expected_frozen_bindings()
+    expected_bindings = _expected_frozen_bindings(profile)
     if not _exact_json_equal(document["frozen_bindings"], expected_bindings):
         raise Experiment002RunAuthorityError(
             "run registration does not contain the exact frozen bindings"
@@ -1780,7 +2113,7 @@ def _parse_registration(raw: bytes) -> _RegistrationDocument:
     frozen_paths = tuple(
         path
         for path, _ in sorted(
-            _frozen_file_bindings(), key=lambda item: item[0].encode("utf-8")
+            _frozen_file_bindings(profile), key=lambda item: item[0].encode("utf-8")
         )
     )
     minimum_frozen_byte_count = _minimum_blob_frame_byte_count(frozen_paths)
@@ -1792,9 +2125,13 @@ def _parse_registration(raw: bytes) -> _RegistrationDocument:
     source_sha256 = _require_hex(
         source_object["sha256"], length=64, name="source bundle sha256"
     )
-    external_inputs = _require_external_inputs(document["external_inputs"])
-    runtime = _require_runtime_registration(document["runtime"])
-    invocation = _require_invocation_registration(document["invocation"], runtime)
+    external_inputs = _require_external_inputs(document["external_inputs"], profile)
+    runtime = _require_runtime_registration(document["runtime"], profile)
+    invocation = _require_invocation_registration(
+        document["invocation"],
+        runtime,
+        profile,
+    )
     return _RegistrationDocument(
         implementation_commit=implementation_commit,
         import_roots=import_roots,
@@ -1805,10 +2142,15 @@ def _parse_registration(raw: bytes) -> _RegistrationDocument:
         runtime=runtime,
         invocation=invocation,
         raw_bytes=raw,
+        profile=profile,
     )
 
 
-def _require_external_inputs(value: object) -> dict[str, Any]:
+def _require_external_inputs(
+    value: object,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> dict[str, Any]:
+    profile = _require_authority_profile(profile)
     if type(value) is not dict:
         raise Experiment002RunAuthorityError("external_inputs must be an object")
     inputs = cast(dict[str, Any], value)
@@ -1831,7 +2173,7 @@ def _require_external_inputs(value: object) -> dict[str, Any]:
     pcm_path = _require_external_path(pcm_cache["path"], "PCM cache path")
     if len({archive_path, manifest_path, pcm_path}) != 3:
         raise Experiment002RunAuthorityError("external input paths must be distinct")
-    expected = _expected_frozen_bindings()["inputs"]
+    expected = _expected_frozen_bindings(profile)["inputs"]
     expected_inputs = cast(dict[str, Any], expected)
     _require_exact_scalar(
         archive["sha256"], expected_inputs["archive_sha256"], "archive sha256"
@@ -1849,7 +2191,7 @@ def _require_external_inputs(value: object) -> dict[str, Any]:
         expected_inputs["manifest_record_count"],
         "manifest record count",
     )
-    artifacts = cast(dict[str, Any], _expected_frozen_bindings()["artifacts"])
+    artifacts = cast(dict[str, Any], _expected_frozen_bindings(profile)["artifacts"])
     expected_pcm = cast(dict[str, Any], artifacts["pcm_cache"])
     _require_exact_scalar(
         pcm_cache["sha256"], expected_pcm["sha256"], "PCM cache sha256"
@@ -1862,7 +2204,11 @@ def _require_external_inputs(value: object) -> dict[str, Any]:
     return inputs
 
 
-def _require_runtime_registration(value: object) -> dict[str, Any]:
+def _require_runtime_registration(
+    value: object,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> dict[str, Any]:
+    profile = _require_authority_profile(profile)
     runtime = _require_exact_object(
         value,
         {
@@ -1908,7 +2254,7 @@ def _require_runtime_registration(value: object) -> dict[str, Any]:
         "safetensors_version": runtime["safetensors_version"],
         "torch_version": runtime["torch_version"],
     }
-    expected_fingerprint = _runtime_fingerprint_sha256(fingerprint_fields)
+    expected_fingerprint = _runtime_fingerprint_sha256(fingerprint_fields, profile)
     _require_exact_scalar(
         runtime["fingerprint_sha256"],
         expected_fingerprint,
@@ -1917,7 +2263,11 @@ def _require_runtime_registration(value: object) -> dict[str, Any]:
     return runtime
 
 
-def _runtime_fingerprint_sha256(fields: dict[str, Any]) -> str:
+def _runtime_fingerprint_sha256(
+    fields: dict[str, Any],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> str:
+    profile = _require_authority_profile(profile)
     payload = (
         json.dumps(
             fields,
@@ -1928,13 +2278,15 @@ def _runtime_fingerprint_sha256(fields: dict[str, Any]) -> str:
         )
         + "\n"
     ).encode("ascii")
-    return hashlib.sha256(_RUNTIME_FINGERPRINT_DOMAIN + payload).hexdigest()
+    return hashlib.sha256(profile.runtime_fingerprint_domain + payload).hexdigest()
 
 
 def _require_invocation_registration(
     value: object,
     runtime: dict[str, Any],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
 ) -> dict[str, Any]:
+    profile = _require_authority_profile(profile)
     invocation = _require_exact_object(
         value,
         {
@@ -2020,6 +2372,16 @@ def _require_invocation_registration(
     )
     for key in flags:
         _require_exact_scalar(flags[key], 1, f"Python flag {key}")
+    if profile is _EXPERIMENT_003_PROFILE:
+        if argv != (profile.runner_entrypoint,):
+            raise Experiment002RunAuthorityError(
+                "invocation runner does not match the fixed authority profile"
+            )
+        _require_exact_scalar(
+            environment["TMPDIR"],
+            profile.scratch_root,
+            "invocation TMPDIR",
+        )
     return invocation
 
 
@@ -2159,10 +2521,13 @@ def _require_external_path(value: object, name: str) -> str:
     return path
 
 
-def _expected_frozen_bindings() -> dict[str, Any]:
+def _expected_frozen_bindings(
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> dict[str, Any]:
     """Return a fresh exact copy of the already frozen trust bindings."""
 
-    return {
+    profile = _require_authority_profile(profile)
+    bindings: dict[str, Any] = {
         "artifacts": {
             "normalization": {
                 "byte_count": 320,
@@ -2243,13 +2608,58 @@ def _expected_frozen_bindings() -> dict[str, Any]:
             ),
         },
     }
+    if profile is _EXPERIMENT_003_PROFILE:
+        bindings["execution_protocol"] = {
+            "introduction_commit": _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT,
+            "path": _EXPERIMENT_003_PROTOCOL_PATH,
+            "sha256": _EXPERIMENT_003_PROTOCOL_SHA256,
+        }
+        bindings["predecessor"] = {
+            "experiment": "002",
+            "implementation_commit": ("21bbcc56e898beb44edc8e3ff775fa9642f87577"),
+            "incident": {
+                "commit": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+                "path": "reports/experiment-002-execution-incident.json",
+                "sha256": (
+                    "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59"
+                ),
+            },
+            "outcome": {
+                "checkpoint_reusable": False,
+                "code": "seed_selection_failed",
+                "commit": "289372957565c093076cb476c84fa900a9cc4cce",
+                "path": "reports/experiment-002-training.json",
+                "phase": "registered_execution",
+                "sha256": (
+                    "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a"
+                ),
+                "status": "execution_failure",
+            },
+            "registration": {
+                "commit": "f5d27175496279cf6ee1538f9bae950527cf5db4",
+                "path": "configs/experiment-002-run.json",
+                "sha256": (
+                    "7086c7df3fa21f43b901f6e7334a64e098d259b91d7dc0d3cdd7dcc203c172a8"
+                ),
+                "source_bundle_sha256": (
+                    "840c70f6417245d0c3eb6237bfda9fc88161abcca07dc2c7325bc4287db0653b"
+                ),
+            },
+            "reuse_forbidden": True,
+            "scientific_protocol": "002",
+            "terminal": True,
+        }
+    return bindings
 
 
-def _frozen_file_bindings() -> tuple[tuple[str, str], ...]:
-    frozen = _expected_frozen_bindings()
+def _frozen_file_bindings(
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> tuple[tuple[str, str], ...]:
+    profile = _require_authority_profile(profile)
+    frozen = _expected_frozen_bindings(profile)
     artifacts = cast(dict[str, Any], frozen["artifacts"])
     configs = cast(dict[str, Any], frozen["configs"])
-    return (
+    bindings = (
         (
             cast(dict[str, str], frozen["trainer"])["path"],
             cast(dict[str, str], frozen["trainer"])["sha256"],
@@ -2283,6 +2693,23 @@ def _frozen_file_bindings() -> tuple[tuple[str, str], ...]:
             cast(dict[str, str], artifacts["pcm_cache_report"])["sha256"],
         ),
     )
+    if profile is _EXPERIMENT_002_PROFILE:
+        return bindings
+    execution_protocol = cast(dict[str, str], frozen["execution_protocol"])
+    predecessor = cast(dict[str, Any], frozen["predecessor"])
+    predecessor_registration = cast(dict[str, str], predecessor["registration"])
+    predecessor_outcome = cast(dict[str, Any], predecessor["outcome"])
+    predecessor_incident = cast(dict[str, str], predecessor["incident"])
+    return (
+        *bindings,
+        (execution_protocol["path"], execution_protocol["sha256"]),
+        (
+            predecessor_registration["path"],
+            predecessor_registration["sha256"],
+        ),
+        (predecessor_outcome["path"], cast(str, predecessor_outcome["sha256"])),
+        (predecessor_incident["path"], predecessor_incident["sha256"]),
+    )
 
 
 def _capture_frozen_files(
@@ -2290,9 +2717,14 @@ def _capture_frozen_files(
     head_commit: str,
     *,
     maximum_payload_bytes: int,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
 ) -> tuple[_FrozenBlob, ...]:
+    profile = _require_authority_profile(profile)
     bindings = tuple(
-        sorted(_frozen_file_bindings(), key=lambda item: item[0].encode("utf-8"))
+        sorted(
+            _frozen_file_bindings(profile),
+            key=lambda item: item[0].encode("utf-8"),
+        )
     )
     if len({path for path, _ in bindings}) != len(bindings):
         raise Experiment002RunAuthorityError("frozen file bindings are not unique")
@@ -2343,19 +2775,26 @@ def _capture_frozen_files(
     return tuple(result)
 
 
-def _require_frozen_files(root: Path, head_commit: str) -> None:
+def _require_frozen_files(
+    root: Path,
+    head_commit: str,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> None:
     _capture_frozen_files(
         root,
         head_commit,
         maximum_payload_bytes=_MAX_FROZEN_BUNDLE_BYTES,
+        profile=profile,
     )
 
 
 def _source_bundle_digest(
     sources: tuple[tuple[str, bytes], ...],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
 ) -> tuple[int, str]:
+    profile = _require_authority_profile(profile)
     payload = _source_bundle_payload(sources)
-    digest = hashlib.sha256(_SOURCE_BUNDLE_DOMAIN + payload).hexdigest()
+    digest = hashlib.sha256(profile.source_bundle_domain + payload).hexdigest()
     return len(payload), digest
 
 
@@ -2475,11 +2914,18 @@ def _parse_source_bundle_payload(payload: bytes) -> tuple[_FrozenBlob, ...]:
     )
 
 
-def _require_frozen_blob_sequence(blobs: tuple[_FrozenBlob, ...]) -> None:
+def _require_frozen_blob_sequence(
+    blobs: tuple[_FrozenBlob, ...],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> None:
+    profile = _require_authority_profile(profile)
     if type(blobs) is not tuple:
         raise Experiment002RunAuthorityError("frozen blob sequence type is invalid")
     expected_bindings = tuple(
-        sorted(_frozen_file_bindings(), key=lambda item: item[0].encode("utf-8"))
+        sorted(
+            _frozen_file_bindings(profile),
+            key=lambda item: item[0].encode("utf-8"),
+        )
     )
     if len(blobs) != len(expected_bindings):
         raise Experiment002RunAuthorityError("frozen blob file count is invalid")
@@ -2519,8 +2965,12 @@ def _require_frozen_blob_sequence(blobs: tuple[_FrozenBlob, ...]) -> None:
         raise Experiment002RunAuthorityError("frozen blob sequence changed")
 
 
-def _frozen_blob_payload(blobs: tuple[_FrozenBlob, ...]) -> bytes:
-    _require_frozen_blob_sequence(blobs)
+def _frozen_blob_payload(
+    blobs: tuple[_FrozenBlob, ...],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> bytes:
+    profile = _require_authority_profile(profile)
+    _require_frozen_blob_sequence(blobs, profile)
     payload = bytearray(struct.pack("<I", len(blobs)))
     for blob in blobs:
         path_bytes = blob.path.encode("utf-8")
@@ -2533,15 +2983,19 @@ def _frozen_blob_payload(blobs: tuple[_FrozenBlob, ...]) -> bytes:
     return bytes(payload)
 
 
-def _parse_frozen_blob_payload(payload: bytes) -> tuple[_FrozenBlob, ...]:
+def _parse_frozen_blob_payload(
+    payload: bytes,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> tuple[_FrozenBlob, ...]:
+    profile = _require_authority_profile(profile)
     blobs = _parse_blob_frames(
         payload,
         name="frozen bundle",
-        maximum_files=len(_frozen_file_bindings()),
+        maximum_files=len(_frozen_file_bindings(profile)),
         maximum_file_bytes=_MAX_FROZEN_FILE_BYTES,
         maximum_payload_bytes=_MAX_FROZEN_BUNDLE_BYTES,
     )
-    _require_frozen_blob_sequence(blobs)
+    _require_frozen_blob_sequence(blobs, profile)
     return blobs
 
 
@@ -2554,7 +3008,9 @@ def _require_retained_launch_material(
     registration_bytes: bytes,
     source_bundle_payload: bytes,
     frozen_blobs: tuple[_FrozenBlob, ...],
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
 ) -> None:
+    profile = _require_authority_profile(profile)
     if (
         type(registration_bytes) is not bytes
         or type(source_bundle_payload) is not bytes
@@ -2578,7 +3034,7 @@ def _require_retained_launch_material(
         raise Experiment002RunAuthorityError("retained registration is too large")
     if hashlib.sha256(registration_bytes).hexdigest() != registration_sha256:
         raise Experiment002RunAuthorityError("retained registration digest changed")
-    document = _parse_registration(registration_bytes)
+    document = _parse_registration_for_profile(registration_bytes, profile)
     if document.implementation_commit != implementation_commit:
         raise Experiment002RunAuthorityError(
             "retained registration implementation changed"
@@ -2590,7 +3046,7 @@ def _require_retained_launch_material(
             "retained source payload byte count changed"
         )
     observed_source_sha256 = hashlib.sha256(
-        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+        profile.source_bundle_domain + source_bundle_payload
     ).hexdigest()
     if (
         observed_source_sha256 != source_bundle_sha256
@@ -2600,8 +3056,8 @@ def _require_retained_launch_material(
     source_blobs = _parse_source_bundle_payload(source_bundle_payload)
     if tuple(blob.path for blob in source_blobs) != source_paths:
         raise Experiment002RunAuthorityError("retained source payload paths changed")
-    _require_frozen_blob_sequence(frozen_blobs)
-    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs))
+    _require_frozen_blob_sequence(frozen_blobs, profile)
+    frozen_payload_byte_count = len(_frozen_blob_payload(frozen_blobs, profile))
     _require_child_bundle_total_byte_count(
         len(registration_bytes),
         len(source_bundle_payload),
@@ -2640,6 +3096,7 @@ def _require_child_bundle_total_byte_count(
 
 def _child_bundle_bytes_from_state(state: _VerifiedState) -> bytes:
     _require_verified_state_frame(state)
+    profile = _require_authority_profile(state.profile)
     if state.origin_binding.kind != _PARENT_ORIGIN_KIND:
         raise Experiment002RunAuthorityError(
             "a child-origin authority cannot create another child bundle"
@@ -2652,14 +3109,14 @@ def _child_bundle_bytes_from_state(state: _VerifiedState) -> bytes:
         raise Experiment002RunAuthorityError(
             "verified authority has no retained child-launch material"
         )
-    frozen_payload = _frozen_blob_payload(state.frozen_blobs)
+    frozen_payload = _frozen_blob_payload(state.frozen_blobs, profile)
     expected_byte_count = _require_child_bundle_total_byte_count(
         len(state.registration_bytes),
         len(state.source_bundle_payload),
         len(frozen_payload),
     )
     header = _CHILD_BUNDLE_HEADER.pack(
-        _CHILD_BUNDLE_MAGIC,
+        profile.child_bundle_magic,
         _CHILD_BUNDLE_VERSION,
         state.head_commit.encode("ascii"),
         state.implementation_commit.encode("ascii"),
@@ -2689,19 +3146,44 @@ def _decode_fixed_ascii(value: bytes, name: str) -> str:
         raise Experiment002RunAuthorityError(f"{name} is not ASCII") from error
 
 
-def _sealed_authority_origin(source_bundle_sha256: str) -> str:
+def _profile_from_sealed_origin(origin: str) -> _AuthorityProfile:
+    if type(origin) is not str:
+        raise Experiment002RunAuthorityError("sealed authority origin is invalid")
+    matches = tuple(
+        profile
+        for profile in _AUTHORITY_PROFILES
+        if origin.startswith(profile.sealed_origin_prefix)
+    )
+    if len(matches) != 1:
+        raise Experiment002RunAuthorityError(
+            "sealed authority origin profile is invalid or ambiguous"
+        )
+    return _require_authority_profile(matches[0])
+
+
+def _sealed_authority_origin(
+    source_bundle_sha256: str,
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> str:
+    profile = _require_authority_profile(profile)
     digest = _require_hex(
         source_bundle_sha256,
         length=64,
         name="sealed authority source bundle sha256",
     )
-    return f"{_SEALED_ORIGIN_PREFIX}{digest}/{_AUTHORITY_SOURCE_PATH}"
+    return f"{profile.sealed_origin_prefix}{digest}/{_AUTHORITY_SOURCE_PATH}"
 
 
-def _sealed_origin_source_digest(origin: str) -> str:
-    if type(origin) is not str or not origin.startswith(_SEALED_ORIGIN_PREFIX):
+def _sealed_origin_source_digest(
+    origin: str,
+    profile: _AuthorityProfile | None = None,
+) -> str:
+    if profile is None:
+        profile = _profile_from_sealed_origin(origin)
+    profile = _require_authority_profile(profile)
+    if type(origin) is not str or not origin.startswith(profile.sealed_origin_prefix):
         raise Experiment002RunAuthorityError("sealed authority origin is invalid")
-    suffix = origin.removeprefix(_SEALED_ORIGIN_PREFIX)
+    suffix = origin.removeprefix(profile.sealed_origin_prefix)
     try:
         digest, path = suffix.split("/", maxsplit=1)
     except ValueError as error:
@@ -2709,7 +3191,10 @@ def _sealed_origin_source_digest(origin: str) -> str:
             "sealed authority origin is malformed"
         ) from error
     _require_hex(digest, length=64, name="sealed authority origin digest")
-    if path != _AUTHORITY_SOURCE_PATH or origin != _sealed_authority_origin(digest):
+    if path != _AUTHORITY_SOURCE_PATH or origin != _sealed_authority_origin(
+        digest,
+        profile,
+    ):
         raise Experiment002RunAuthorityError(
             "sealed authority origin path is not exact"
         )
@@ -2717,6 +3202,18 @@ def _sealed_origin_source_digest(origin: str) -> str:
 
 
 def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
+    return _parse_child_bundle_for_profile(payload, _EXPERIMENT_002_PROFILE)
+
+
+def _parse_experiment_003_child_bundle(payload: bytes) -> _ChildBundleFrame:
+    return _parse_child_bundle_for_profile(payload, _EXPERIMENT_003_PROFILE)
+
+
+def _parse_child_bundle_for_profile(
+    payload: bytes,
+    profile: _AuthorityProfile,
+) -> _ChildBundleFrame:
+    profile = _require_authority_profile(profile)
     if type(payload) is not bytes:
         raise Experiment002RunAuthorityError("child bundle must be exact bytes")
     if len(payload) < _CHILD_BUNDLE_HEADER.size:
@@ -2734,7 +3231,7 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
         source_payload_byte_count,
         frozen_payload_byte_count,
     ) = _CHILD_BUNDLE_HEADER.unpack_from(payload)
-    if magic != _CHILD_BUNDLE_MAGIC or version != _CHILD_BUNDLE_VERSION:
+    if magic != profile.child_bundle_magic or version != _CHILD_BUNDLE_VERSION:
         raise Experiment002RunAuthorityError("child bundle magic or version is invalid")
     if registration_byte_count < 1 or registration_byte_count > _MAX_CONFIG_BYTES:
         raise Experiment002RunAuthorityError(
@@ -2799,7 +3296,7 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
         raise Experiment002RunAuthorityError(
             "child bundle registration digest mismatch"
         )
-    document = _parse_registration(registration_bytes)
+    document = _parse_registration_for_profile(registration_bytes, profile)
     if document.implementation_commit != implementation_commit:
         raise Experiment002RunAuthorityError(
             "child bundle implementation binding mismatch"
@@ -2809,7 +3306,7 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
             "child bundle source byte-count binding mismatch"
         )
     observed_source_sha256 = hashlib.sha256(
-        _SOURCE_BUNDLE_DOMAIN + source_bundle_payload
+        profile.source_bundle_domain + source_bundle_payload
     ).hexdigest()
     if (
         observed_source_sha256 != source_bundle_sha256
@@ -2823,7 +3320,7 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
         raise Experiment002RunAuthorityError(
             "child bundle source path binding mismatch"
         )
-    frozen_blobs = _parse_frozen_blob_payload(frozen_payload)
+    frozen_blobs = _parse_frozen_blob_payload(frozen_payload, profile)
     source_by_path = {blob.path: blob.payload for blob in source_blobs}
     for frozen_blob in frozen_blobs:
         source_blob = source_by_path.get(frozen_blob.path)
@@ -2840,6 +3337,7 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
         source_bundle_payload=source_bundle_payload,
         source_blobs=source_blobs,
         frozen_blobs=frozen_blobs,
+        profile=profile,
     )
 
 
@@ -2850,6 +3348,7 @@ def _require_child_bundle_matches_state(
         raise Experiment002RunAuthorityError("child bundle frame type is invalid")
     if (
         frame.head_commit != state.head_commit
+        or frame.profile is not state.profile
         or frame.implementation_commit != state.implementation_commit
         or frame.registration_sha256 != state.registration_sha256
         or frame.source_bundle_sha256 != state.source_bundle_sha256
@@ -2863,18 +3362,25 @@ def _require_child_bundle_matches_state(
         )
 
 
-def _verify_sealed_child_local_state() -> _SealedChildSnapshot:
+def _verify_sealed_child_local_state(
+    profile: _AuthorityProfile,
+) -> _SealedChildSnapshot:
+    profile = _require_authority_profile(profile)
     if _LOADED_SOURCE_ORIGIN_KIND != _SEALED_CHILD_ORIGIN_KIND:
         raise Experiment002RunAuthorityError(
             "sealed-child verification requires a sealed source origin"
         )
-    descriptor = _read_fixed_sealed_child_bundle()
-    frame = _parse_experiment_002_child_bundle(descriptor.payload)
-    document = _parse_registration(frame.registration_bytes)
+    if _loaded_sealed_source_profile() is not profile:
+        raise Experiment002RunAuthorityError(
+            "sealed-child source origin belongs to a different profile"
+        )
+    descriptor = _read_fixed_sealed_child_bundle(profile)
+    frame = _parse_child_bundle_for_profile(descriptor.payload, profile)
+    document = _parse_registration_for_profile(frame.registration_bytes, profile)
     _require_sealed_child_document_bindings(frame, document)
     _require_sealed_child_runtime_identity(document)
     binding = _capture_sealed_child_origin_binding(frame, descriptor)
-    _require_origin_binding_frame(binding, frame.source_bundle_sha256)
+    _require_origin_binding_frame(binding, frame.source_bundle_sha256, profile)
     return _SealedChildSnapshot(frame=frame, origin_binding=binding)
 
 
@@ -2897,6 +3403,7 @@ def _require_sealed_child_document_bindings(
         registration_bytes=frame.registration_bytes,
         source_bundle_payload=frame.source_bundle_payload,
         frozen_blobs=frame.frozen_blobs,
+        profile=frame.profile,
     )
     invocation = document.invocation
     argv = cast(list[str], invocation["argv"])
@@ -3019,7 +3526,8 @@ def _capture_sealed_child_origin_binding(
     spec_name = getattr(spec, "name", None)
     module_package = getattr(module, "__package__", None)
     module_file = getattr(module, "__file__", None)
-    expected_origin = _sealed_authority_origin(frame.source_bundle_sha256)
+    profile = _require_authority_profile(frame.profile)
+    expected_origin = _sealed_authority_origin(frame.source_bundle_sha256, profile)
     if (
         module is not _LOADED_MODULE
         or spec is not _LOADED_MODULE_SPEC
@@ -3074,7 +3582,8 @@ def _capture_sealed_child_origin_binding(
         or len(authority_blobs) != 1
         or authority_blobs[0].payload != authority_payload
         or hashlib.sha256(authority_payload).hexdigest() != _LOADED_SOURCE_SHA256
-        or _sealed_origin_source_digest(expected_origin) != frame.source_bundle_sha256
+        or _sealed_origin_source_digest(expected_origin, profile)
+        != frame.source_bundle_sha256
         or type(sys.meta_path) is not list
         or not _identity_sequences_match(
             tuple(cast(list[object], sys.meta_path)), meta_path
@@ -3139,6 +3648,7 @@ def _state_from_sealed_child_snapshot(
             "sealed-child snapshot has an invalid type"
         )
     frame = snapshot.frame
+    profile = _require_authority_profile(frame.profile)
     state = _VerifiedState(
         issuer_marker=_ISSUER_MARKER,
         repository_root=_CANONICAL_REPOSITORY_ROOT,
@@ -3156,6 +3666,7 @@ def _state_from_sealed_child_snapshot(
         origin_binding=_clone_origin_binding(snapshot.origin_binding),
         process_id=_AUTHORITY_PROCESS_ID,
         nonce=object(),
+        profile=profile,
     )
     _require_verified_state_frame(state)
     return state
@@ -3170,6 +3681,7 @@ def _sealed_child_snapshot_matches_state(
     frame = snapshot.frame
     return (
         state.origin_binding.kind == _SEALED_CHILD_ORIGIN_KIND
+        and frame.profile is state.profile
         and frame.head_commit == state.head_commit
         and frame.implementation_commit == state.implementation_commit
         and frame.registration_sha256 == state.registration_sha256
@@ -3300,7 +3812,10 @@ def _read_descriptor_exactly(descriptor: int, byte_count: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_fixed_sealed_child_bundle() -> _SealedDescriptorSnapshot:
+def _read_fixed_sealed_child_bundle(
+    profile: _AuthorityProfile = _EXPERIMENT_002_PROFILE,
+) -> _SealedDescriptorSnapshot:
+    profile = _require_authority_profile(profile)
     descriptor = _SEALED_CHILD_BUNDLE_FD
     required_seals = _required_child_bundle_seals()
     try:
@@ -3337,7 +3852,7 @@ def _read_fixed_sealed_child_bundle() -> _SealedDescriptorSnapshot:
         or type(seals) is not int
         or seals != required_seals
         or type(proc_target) is not str
-        or proc_target != _SEALED_CHILD_MEMFD_TARGET
+        or proc_target != profile.sealed_child_memfd_target
         or type(offset) is not int
         or offset != 0
     ):
@@ -3424,7 +3939,7 @@ def _verify_sealed_bundle_descriptor(
         raise Experiment002RunAuthorityError(
             "child-bundle descriptor bytes do not match the authority"
         )
-    frame = _parse_experiment_002_child_bundle(observed_bytes)
+    frame = _parse_child_bundle_for_profile(observed_bytes, state.profile)
     _require_child_bundle_matches_state(frame, state)
     try:
         after = os.fstat(descriptor)
@@ -4497,7 +5012,9 @@ def _require_implementation_ancestor(
     *,
     implementation_commit: str,
     head_commit: str,
+    run_config_path: str,
 ) -> None:
+    _require_relative_path(run_config_path, "run config path")
     resolved = _git(
         root,
         "rev-parse",
@@ -4529,7 +5046,7 @@ def _require_implementation_ancestor(
         "-z",
         implementation_commit,
         "--",
-        _RUN_CONFIG_PATH,
+        run_config_path,
     )
     if earlier_entry:
         raise Experiment002RunAuthorityError(
@@ -4537,12 +5054,162 @@ def _require_implementation_ancestor(
         )
 
 
+def _require_experiment_003_implementation_history(
+    root: Path,
+    *,
+    implementation_commit: str,
+) -> None:
+    repair_commit = "650eefbf9f82b207ed58e3b1a1eac41197466b41"
+    protocol_commit = _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT
+    protocol_path = _EXPERIMENT_003_PROTOCOL_PATH
+
+    protocol_parents = _git(
+        root,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        protocol_commit,
+    )
+    if protocol_parents != f"{protocol_commit} {repair_commit}\n".encode("ascii"):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 protocol introduction topology changed"
+        )
+    protocol_changes = _git(
+        root,
+        "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        repair_commit,
+        protocol_commit,
+    )
+    if protocol_changes != b"A\0" + protocol_path.encode("ascii") + b"\0":
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 protocol introduction changed more than its contract"
+        )
+    protocol_blob = _committed_blob(
+        root,
+        protocol_commit,
+        protocol_path,
+        maximum_bytes=_MAX_CONFIG_BYTES,
+    )
+    if (
+        protocol_blob.mode != "100644"
+        or hashlib.sha256(protocol_blob.payload).hexdigest()
+        != _EXPERIMENT_003_PROTOCOL_SHA256
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 protocol introduction blob changed"
+        )
+    protocol_ancestry = _git_process(
+        root,
+        ("merge-base", "--is-ancestor", protocol_commit, implementation_commit),
+        allowed_returncodes=(0, 1),
+    )
+    if protocol_ancestry.returncode != 0:
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 implementation does not descend from its protocol"
+        )
+
+    expected_source_changes = (
+        ("M", "src/falsewake/experiment_002_run_authority.py"),
+        ("A", "src/falsewake/experiment_003_coordinator.py"),
+        ("A", "src/falsewake/experiment_003_final_evidence.py"),
+        ("A", "src/falsewake/experiment_003_final_publication.py"),
+        ("A", "src/falsewake/experiment_003_run_authority.py"),
+        ("A", "src/falsewake/experiment_003_runner.py"),
+        ("A", "src/falsewake/experiment_003_seed_worker.py"),
+        ("A", "src/falsewake/experiment_003_supervisor.py"),
+    )
+    expected_source_delta = b"".join(
+        status.encode("ascii") + b"\0" + path.encode("ascii") + b"\0"
+        for status, path in expected_source_changes
+    )
+    observed_source_delta = _git(
+        root,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-status",
+        "-z",
+        repair_commit,
+        implementation_commit,
+        "--",
+        "src/falsewake",
+    )
+    if observed_source_delta != expected_source_delta:
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 implementation source delta is not exact"
+        )
+
+    forbidden_implementation_paths = (
+        "configs/experiment-003-run.json",
+        "models/experiment-003-selected.safetensors",
+        "reports/experiment-003-seed-20260719-history.json",
+        "reports/experiment-003-seed-20260720-history.json",
+        "reports/experiment-003-seed-20260721-history.json",
+        "reports/experiment-003-selected-rerun-history.json",
+        "reports/experiment-003-training.json",
+    )
+    for path in forbidden_implementation_paths:
+        if _git(root, "ls-tree", "-z", implementation_commit, "--", path):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 003 implementation contains managed output ({path})"
+            )
+
+    predecessor_frames = (
+        (
+            "f5d27175496279cf6ee1538f9bae950527cf5db4",
+            "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+            "configs/experiment-002-run.json",
+            "7086c7df3fa21f43b901f6e7334a64e098d259b91d7dc0d3cdd7dcc203c172a8",
+        ),
+        (
+            "289372957565c093076cb476c84fa900a9cc4cce",
+            "f5d27175496279cf6ee1538f9bae950527cf5db4",
+            "reports/experiment-002-training.json",
+            "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a",
+        ),
+        (
+            repair_commit,
+            "289372957565c093076cb476c84fa900a9cc4cce",
+            "reports/experiment-002-execution-incident.json",
+            "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59",
+        ),
+    )
+    for commit, parent, path, expected_sha256 in predecessor_frames:
+        parents = _git(root, "rev-list", "--parents", "-n", "1", commit)
+        if parents != f"{commit} {parent}\n".encode("ascii"):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 002 predecessor topology changed ({path})"
+            )
+        blob = _committed_blob(
+            root,
+            commit,
+            path,
+            maximum_bytes=_MAX_CONFIG_BYTES,
+        )
+        if (
+            blob.mode != "100644"
+            or hashlib.sha256(blob.payload).hexdigest() != expected_sha256
+        ):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 002 predecessor blob changed ({path})"
+            )
+
+
 def _require_registration_commit_shape(
     root: Path,
     *,
     implementation_commit: str,
     head_commit: str,
+    run_config_path: str,
 ) -> None:
+    _require_relative_path(run_config_path, "run config path")
     parents = _git(root, "rev-list", "--parents", "-n", "1", head_commit)
     if not parents.endswith(b"\n") or parents.count(b"\n") != 1:
         raise Experiment002RunAuthorityError(
@@ -4570,7 +5237,7 @@ def _require_registration_commit_shape(
         implementation_commit,
         head_commit,
     )
-    if changes != b"A\0" + _RUN_CONFIG_PATH.encode("ascii") + b"\0":
+    if changes != b"A\0" + run_config_path.encode("ascii") + b"\0":
         raise Experiment002RunAuthorityError(
             "registration commit must add only the canonical run config"
         )
