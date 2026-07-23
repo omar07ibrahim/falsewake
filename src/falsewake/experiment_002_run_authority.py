@@ -964,6 +964,10 @@ def _create_sealed_experiment_002_child_bundle_fd(
             ) from error
         reader = _require_descriptor_number(created_reader, "child-bundle reader")
         if reader == writer:
+            # One descriptor cannot have two owners.  Retain the writer slot as
+            # the sole owner so the failure cleanup makes exactly one close
+            # attempt.
+            reader = None
             raise Experiment002RunAuthorityError(
                 "child-bundle reader did not receive an independent descriptor"
             )
@@ -983,8 +987,14 @@ def _create_sealed_experiment_002_child_bundle_fd(
             )
         _require_independent_open_file_descriptions(writer, reader, len(bundle))
 
-        os.close(writer)
+        closing_writer = writer
         writer = None
+        try:
+            os.close(closing_writer)
+        except OSError as error:
+            raise Experiment002RunAuthorityError(
+                "child-bundle writer close failed"
+            ) from error
         _verify_sealed_bundle_descriptor(
             reader,
             expected_bytes=bundle,
@@ -1009,12 +1019,20 @@ def _create_sealed_experiment_002_child_bundle_fd(
         reader = None
         return result
     finally:
-        for descriptor in (reader, writer):
+        cleanup_descriptors = (reader, writer)
+        reader = None
+        writer = None
+        cleanup_failures: list[OSError] = []
+        for descriptor in cleanup_descriptors:
             if descriptor is not None:
                 try:
                     os.close(descriptor)
-                except OSError:
-                    continue
+                except OSError as error:
+                    cleanup_failures.append(error)
+        if cleanup_failures:
+            raise Experiment002RunAuthorityError(
+                "child-bundle descriptor cleanup failed"
+            ) from cleanup_failures[0]
 
 
 def _verify_synthetic_repository_for_tests(

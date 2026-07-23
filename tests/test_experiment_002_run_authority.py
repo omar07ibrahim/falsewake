@@ -2047,6 +2047,144 @@ def test_child_bundle_failure_paths_close_every_owned_descriptor(
     assert _open_descriptors() == descriptors_before
 
 
+def test_child_bundle_writer_close_completed_then_eintr_is_not_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    descriptors_before = _open_descriptors()
+    original_memfd_create = os.memfd_create
+    original_close = os.close
+    writer = -1
+    writer_close_calls = 0
+
+    def recorded_memfd_create(name: str, flags: int = 0) -> int:
+        nonlocal writer
+        writer = original_memfd_create(name, flags)
+        return writer
+
+    def close_completed_then_eintr(descriptor: int) -> None:
+        nonlocal writer_close_calls
+        if descriptor == writer:
+            writer_close_calls += 1
+            if writer_close_calls == 1:
+                original_close(descriptor)
+                raise OSError(errno.EINTR, "injected completed writer close")
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "memfd_create", recorded_memfd_create)
+    monkeypatch.setattr(os, "close", close_completed_then_eintr)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="writer close failed",
+    ):
+        authority._create_sealed_experiment_002_child_bundle_fd(capability)
+
+    assert writer >= 0
+    assert writer_close_calls == 1
+    assert _open_descriptors() == descriptors_before
+
+
+def test_child_bundle_reader_writer_alias_retains_one_close_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    descriptors_before = _open_descriptors()
+    original_memfd_create = os.memfd_create
+    original_open = os.open
+    original_close = os.close
+    writer = -1
+    writer_close_calls = 0
+
+    def recorded_memfd_create(name: str, flags: int = 0) -> int:
+        nonlocal writer
+        writer = original_memfd_create(name, flags)
+        return writer
+
+    def aliased_reader_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if type(path) is str and path == f"/proc/self/fd/{writer}":
+            return writer
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    def tracking_close(descriptor: int) -> None:
+        nonlocal writer_close_calls
+        if descriptor == writer:
+            writer_close_calls += 1
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "memfd_create", recorded_memfd_create)
+    monkeypatch.setattr(os, "open", aliased_reader_open)
+    monkeypatch.setattr(os, "close", tracking_close)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="independent descriptor",
+    ):
+        authority._create_sealed_experiment_002_child_bundle_fd(capability)
+
+    assert writer >= 0
+    assert writer_close_calls == 1
+    assert _open_descriptors() == descriptors_before
+
+
+def test_child_bundle_cleanup_close_failure_is_surfaced_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _valid_repository(tmp_path)
+    snapshot = _prepare_controlled_capability_lifecycle(case, monkeypatch)
+    capability = authority._issue_controlled_snapshot_for_tests(snapshot)
+    descriptors_before = _open_descriptors()
+    original_memfd_create = os.memfd_create
+    original_close = os.close
+    writer = -1
+    writer_close_calls = 0
+
+    def recorded_memfd_create(name: str, flags: int = 0) -> int:
+        nonlocal writer
+        writer = original_memfd_create(name, flags)
+        return writer
+
+    def fail_write(_descriptor: int, _payload: bytes) -> None:
+        raise RuntimeError("injected bundle construction failure")
+
+    def cleanup_close_completed_then_eintr(descriptor: int) -> None:
+        nonlocal writer_close_calls
+        if descriptor == writer:
+            writer_close_calls += 1
+            if writer_close_calls == 1:
+                original_close(descriptor)
+                raise OSError(errno.EINTR, "injected completed cleanup close")
+        original_close(descriptor)
+
+    monkeypatch.setattr(os, "memfd_create", recorded_memfd_create)
+    monkeypatch.setattr(authority, "_write_descriptor_exactly", fail_write)
+    monkeypatch.setattr(os, "close", cleanup_close_completed_then_eintr)
+    with pytest.raises(
+        authority.Experiment002RunAuthorityError,
+        match="descriptor cleanup failed",
+    ) as captured:
+        authority._create_sealed_experiment_002_child_bundle_fd(capability)
+
+    assert writer >= 0
+    assert writer_close_calls == 1
+    assert isinstance(captured.value.__cause__, OSError)
+    assert captured.value.__cause__.errno == errno.EINTR
+    assert _open_descriptors() == descriptors_before
+
+
 def test_child_bundle_rejects_forged_and_stale_capabilities_without_fd_leaks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
