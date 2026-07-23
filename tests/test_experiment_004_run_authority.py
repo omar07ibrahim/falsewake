@@ -26,9 +26,7 @@ P4 = engine._EXPERIMENT_004_PROFILE
 P3_PROTOCOL_COMMIT = "e47bd581675abe22b529de7bcc825d39e84a00cd"
 P3_PROTOCOL_PARENT = "650eefbf9f82b207ed58e3b1a1eac41197466b41"
 P3_PROTOCOL_PATH = "configs/experiment-003-execution.json"
-P3_PROTOCOL_SHA256 = (
-    "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
-)
+P3_PROTOCOL_SHA256 = "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
 P3_IMPLEMENTATION_COMMIT = "4475461d5fd3e5b8969020003424c73bb10d3c9b"
 P3_REGISTRATION_COMMIT = "f7426fb038ae5dc0c24b5141d12d55323ac7c961"
 P3_REGISTRATION_PATH = "configs/experiment-003-run.json"
@@ -37,14 +35,10 @@ P3_REGISTRATION_SHA256 = (
 )
 P3_INCIDENT_COMMIT = "96f151d86ae060b402a0ef5d47de7ad8c1191c0a"
 P3_INCIDENT_PATH = "reports/experiment-003-execution-incident.json"
-P3_INCIDENT_SHA256 = (
-    "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
-)
+P3_INCIDENT_SHA256 = "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
 P4_PROTOCOL_COMMIT = "c7a8b3c493e05211ff7afa3a7abb974fc1c8b4e2"
 P4_PROTOCOL_PATH = "configs/experiment-004-execution.json"
-P4_PROTOCOL_SHA256 = (
-    "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46"
-)
+P4_PROTOCOL_SHA256 = "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46"
 SYNTHETIC_IMPLEMENTATION_COMMIT = "4" * 40
 
 P4_PREDECESSOR: dict[str, Any] = {
@@ -213,16 +207,22 @@ def test_facade_has_one_shared_capability_and_fixed_zero_argument_issuers() -> N
         "verify_and_issue_experiment_004_run_registration",
         "verify_verified_run_registration",
     )
-    assert tuple(
-        inspect.signature(
-            authority.verify_and_issue_experiment_004_run_registration
-        ).parameters
-    ) == ()
-    assert tuple(
-        inspect.signature(
-            authority._verify_and_issue_experiment_004_sealed_child_registration
-        ).parameters
-    ) == ()
+    assert (
+        tuple(
+            inspect.signature(
+                authority.verify_and_issue_experiment_004_run_registration
+            ).parameters
+        )
+        == ()
+    )
+    assert (
+        tuple(
+            inspect.signature(
+                authority._verify_and_issue_experiment_004_sealed_child_registration
+            ).parameters
+        )
+        == ()
+    )
     for route in (
         authority.verify_verified_run_registration,
         authority.reverify_verified_run_registration,
@@ -315,7 +315,7 @@ def test_profile_004_binds_all_fourteen_execution_namespaces_exactly() -> None:
         "src/falsewake/experiment_004_runner.py",
         "/home/ubuntu/gitcode/.t/falsewake-experiment-004-scratch",
     )
-    assert engine._AUTHORITY_PROFILES == (P2, P3, P4)
+    assert engine._AUTHORITY_PROFILES[:3] == (P2, P3, P4)
     assert engine._require_authority_profile(P4) is P4
 
 
@@ -353,9 +353,7 @@ def test_all_six_cross_profile_directions_are_rejected_before_reverification(
         "reverify_verified_run_registration",
         forbidden_reverification,
     )
-    capability = engine._issue_controlled_snapshot_for_tests(
-        _snapshot(source_profile)
-    )
+    capability = engine._issue_controlled_snapshot_for_tests(_snapshot(source_profile))
 
     with pytest.raises(
         engine.Experiment002RunAuthorityError,
@@ -443,9 +441,7 @@ def _install_history_oracle(
             "1",
             P4_PROTOCOL_COMMIT,
         ):
-            parent = (
-                "0" * 40 if fault == "p4-protocol-topology" else P3_INCIDENT_COMMIT
-            )
+            parent = "0" * 40 if fault == "p4-protocol-topology" else P3_INCIDENT_COMMIT
             return f"{P4_PROTOCOL_COMMIT} {parent}\n".encode("ascii")
         if args == (
             "diff-tree",
@@ -496,11 +492,7 @@ def _install_history_oracle(
             "1",
             P3_PROTOCOL_COMMIT,
         ):
-            parent = (
-                "0" * 40
-                if fault == "p3-protocol-topology"
-                else P3_PROTOCOL_PARENT
-            )
+            parent = "0" * 40 if fault == "p3-protocol-topology" else P3_PROTOCOL_PARENT
             return f"{P3_PROTOCOL_COMMIT} {parent}\n".encode("ascii")
         if args == (
             "diff-tree",
@@ -534,9 +526,7 @@ def _install_history_oracle(
             "1",
             P3_INCIDENT_COMMIT,
         ):
-            return (
-                f"{P3_INCIDENT_COMMIT} {P3_REGISTRATION_COMMIT}\n"
-            ).encode("ascii")
+            return (f"{P3_INCIDENT_COMMIT} {P3_REGISTRATION_COMMIT}\n").encode("ascii")
         if args == (
             "diff-tree",
             "--no-ext-diff",
@@ -612,8 +602,7 @@ def _install_history_oracle(
         ):
             payload = b"synthetic shared authority\n"
         elif (
-            commit == SYNTHETIC_IMPLEMENTATION_COMMIT
-            and path in P4_ADDED_SOURCE_PATHS
+            commit == SYNTHETIC_IMPLEMENTATION_COMMIT and path in P4_ADDED_SOURCE_PATHS
         ):
             payload = f"synthetic {path}\n".encode("ascii")
             if fault == "p4-source-mode" and path == P4_ADDED_SOURCE_PATHS[0]:
@@ -624,9 +613,7 @@ def _install_history_oracle(
         }:
             payload = _committed_payload(commit, path)
         else:
-            raise AssertionError(
-                f"unexpected committed blob query: {(commit, path)!r}"
-            )
+            raise AssertionError(f"unexpected committed blob query: {(commit, path)!r}")
         assert len(payload) <= maximum_bytes
         return engine._TreeBlob(mode=mode, oid="a" * 40, payload=payload)
 

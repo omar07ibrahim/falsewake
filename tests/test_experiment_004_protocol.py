@@ -737,7 +737,7 @@ print(
             "profiles": [
                 item.registration_experiment for item in engine._AUTHORITY_PROFILES
             ],
-            "profile_is_last": engine._AUTHORITY_PROFILES[-1] is profile,
+            "profile_index": engine._AUTHORITY_PROFILES.index(profile),
         }},
         sort_keys=True,
     )
@@ -774,8 +774,8 @@ print(
     assert result["routes"] == expected_routes
     assert tuple(result["profile_fields"]) == PROFILE_FIELDS
     assert result["profile_values"] == PROFILE_VALUES
-    assert result["profiles"] == ["002", "003", "004"]
-    assert result["profile_is_last"] is True
+    assert result["profiles"][:3] == ["002", "003", "004"]
+    assert result["profile_index"] == 2
     assert not os.path.lexists(ATTEMPT_MARKER)
 
 

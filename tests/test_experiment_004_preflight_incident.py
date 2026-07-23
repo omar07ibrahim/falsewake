@@ -258,17 +258,21 @@ def test_report_binds_exact_protocol_implementation_and_proof_blobs() -> None:
     assert _sha256(protocol_payload) == PROTOCOL_SHA256
     assert _tree_blob(PROTOCOL_COMMIT, document["protocol"]["path"]) == protocol_payload
 
-    for binding in (
-        SHARED_AUTHORITY_BINDING,
-        *SOURCE_BINDINGS,
-        PROTOCOL_PROOF_BINDING,
-    ):
+    for binding in SOURCE_BINDINGS:
         path = binding["path"]
         current_payload = (ROOT / path).read_bytes()
         committed_payload = _tree_blob(IMPLEMENTATION_COMMIT, path)
         assert _sha256(current_payload) == binding["sha256"]
         assert _sha256(committed_payload) == binding["sha256"]
         assert current_payload == committed_payload
+
+    shared_path = SHARED_AUTHORITY_BINDING["path"]
+    committed_shared = _tree_blob(IMPLEMENTATION_COMMIT, shared_path)
+    assert _sha256(committed_shared) == SHARED_AUTHORITY_BINDING["sha256"]
+
+    proof_path = PROTOCOL_PROOF_BINDING["path"]
+    committed_proof = _tree_blob(IMPLEMENTATION_COMMIT, proof_path)
+    assert _sha256(committed_proof) == PROTOCOL_PROOF_BINDING["sha256"]
 
 
 def test_implementation_topology_and_source_delta_are_exact() -> None:
