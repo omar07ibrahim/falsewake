@@ -13,6 +13,7 @@ import json
 import os
 import pickle
 import socket
+import stat
 import subprocess
 import sys
 import textwrap
@@ -41,6 +42,19 @@ TEST_BINDING = coordinator._RegistrationBinding(
     source_bundle_sha256="4" * 64,
 )
 _TICKET_IDS = itertools.count(1)
+
+
+def _registered_experiment_state() -> coordinator._RegisteredExperimentState:
+    closure = dict(
+        zip(
+            coordinator.run_registered_experiment.__code__.co_freevars,
+            coordinator.run_registered_experiment.__closure__ or (),
+            strict=True,
+        )
+    )
+    state = closure["state"].cell_contents
+    assert type(state) is coordinator._RegisteredExperimentState
+    return state
 
 
 @pytest.fixture(autouse=True)
@@ -1147,6 +1161,8 @@ def test_coordinator_import_does_not_load_parent_execution_modules() -> None:
         names = (
             'falsewake.experiment_002_supervisor',
             'falsewake.experiment_002_child_result',
+            'falsewake.experiment_002_final_evidence',
+            'falsewake.experiment_002_final_publication',
         )
         print(json.dumps({{name: name in sys.modules for name in names}}))
         """
@@ -1162,6 +1178,8 @@ def test_coordinator_import_does_not_load_parent_execution_modules() -> None:
     assert json.loads(completed.stdout) == {
         "falsewake.experiment_002_supervisor": False,
         "falsewake.experiment_002_child_result": False,
+        "falsewake.experiment_002_final_evidence": False,
+        "falsewake.experiment_002_final_publication": False,
     }
 
 
@@ -1392,28 +1410,73 @@ def test_public_parent_surface_has_one_positional_only_argument() -> None:
     assert parameters[0].name == "registration"
     assert parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
     assert signature.return_annotation in {None, "None"}
-
-
-def test_public_parent_reverifies_then_stops_before_supervisor(
-    synthetic_registration: coordinator.VerifiedRunRegistration,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[coordinator.VerifiedRunRegistration] = []
-
-    def verify(value: coordinator.VerifiedRunRegistration) -> None:
-        calls.append(value)
-
-    monkeypatch.setattr(coordinator, "verify_verified_run_registration", verify)
-    with pytest.raises(
-        coordinator.Experiment002CoordinatorError,
-        match="supervisor and resource-control",
-    ):
-        coordinator.run_registered_experiment(synthetic_registration)
-    assert calls == [synthetic_registration]
     with pytest.raises(TypeError):
-        cast(Any, coordinator.run_registered_experiment)(
-            registration=synthetic_registration
-        )
+        cast(Any, coordinator.run_registered_experiment)(registration=object())
+
+
+def test_public_parent_burns_before_rejecting_mutated_admission_route() -> None:
+    script = textwrap.dedent(
+        f"""
+        import json
+        import sys
+
+        sys.path.insert(0, {os.fspath(SOURCE_ROOT)!r})
+        import falsewake.experiment_002_coordinator as coordinator
+
+        registration = object.__new__(coordinator.VerifiedRunRegistration)
+        original = coordinator.verify_verified_run_registration
+        calls = []
+
+        def replacement(value):
+            calls.append(value)
+
+        coordinator.verify_verified_run_registration = replacement
+        first = None
+        first_cause = None
+        try:
+            coordinator.run_registered_experiment(registration)
+        except coordinator.Experiment002CoordinatorError as error:
+            first = str(error)
+            first_cause = str(error.__cause__)
+        coordinator.verify_verified_run_registration = original
+        second = None
+        try:
+            coordinator.run_registered_experiment(registration)
+        except coordinator.Experiment002CoordinatorError as error:
+            second = str(error)
+        closure = dict(zip(
+            coordinator.run_registered_experiment.__code__.co_freevars,
+            coordinator.run_registered_experiment.__closure__ or (),
+            strict=True,
+        ))
+        state = closure['state'].cell_contents
+        print(json.dumps({{
+            'calls': len(calls),
+            'first': first,
+            'first_cause': first_cause,
+            'second': second,
+            'attempted': state.attempted,
+            'in_flight': state.in_flight,
+        }}, sort_keys=True))
+        """
+    )
+    completed = subprocess.run(
+        (sys.executable, "-I", "-S", "-B", "-c", script),
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    observed = json.loads(completed.stdout)
+    assert observed == {
+        "attempted": True,
+        "calls": 0,
+        "first": "registered experiment admission failed closed",
+        "first_cause": "registered experiment coordinator authority changed",
+        "in_flight": True,
+        "second": "registered experiment was already attempted",
+    }
 
 
 def test_public_parent_rejects_forged_and_subclassed_registrations() -> None:
@@ -5211,16 +5274,1397 @@ def test_registered_seed_selection_source_has_no_extra_resource_or_import_routes
         assert forbidden not in source
 
 
-def test_public_parent_terminal_ast_remains_reverify_then_raise() -> None:
+def test_public_parent_terminal_ast_has_no_blocked_stub_or_override_surface() -> None:
     source = textwrap.dedent(inspect.getsource(coordinator.run_registered_experiment))
     function = cast(ast.FunctionDef, ast.parse(source).body[0])
-    executable_body = function.body[1:]
-    assert len(executable_body) == 2
-    verification = cast(ast.Expr, executable_body[0])
-    assert isinstance(verification.value, ast.Call)
-    assert isinstance(verification.value.func, ast.Name)
-    assert verification.value.func.id == "_require_registration"
-    terminal = cast(ast.Raise, executable_body[1])
-    assert isinstance(terminal.exc, ast.Call)
-    assert isinstance(terminal.exc.func, ast.Name)
-    assert terminal.exc.func.id == "Experiment002CoordinatorError"
+    assert [argument.arg for argument in function.args.posonlyargs] == ["registration"]
+    assert function.args.args == []
+    assert function.args.kwonlyargs == []
+    assert "supervisor and resource-control layer are not enabled" not in source
+    assert "claim_parent_operations(registration)" in source
+    assert "own_operation_route(" in source
+    assert "typed_operations_descriptors" in source
+    assert "_run_registered_seed_selection" not in source
+
+
+def test_registered_parent_claim_uses_captured_names_and_real_lifecycle_intrinsics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_closure = dict(
+        zip(
+            coordinator.run_registered_experiment.__code__.co_freevars,
+            coordinator.run_registered_experiment.__closure__ or (),
+            strict=True,
+        )
+    )
+    claim = cast(FunctionType, public_closure["claim_parent_operations"].cell_contents)
+    claim_closure = dict(
+        zip(
+            claim.__code__.co_freevars,
+            claim.__closure__ or (),
+            strict=True,
+        )
+    )
+    source = inspect.getsource(claim)
+    assert "dynamic_import(run_authority_module_name)" in source
+    assert "dynamic_import(supervisor_module_name)" in source
+    assert "dynamic_import(evidence_module_name)" in source
+    assert "dynamic_import(publication_module_name)" in source
+    for mutable_name in (
+        "_RUN_AUTHORITY_MODULE",
+        "_SUPERVISOR_MODULE",
+        "_FINAL_EVIDENCE_MODULE",
+        "_FINAL_PUBLICATION_MODULE",
+        "_LOWER_HEX",
+    ):
+        assert mutable_name not in source
+
+    require_authority = cast(
+        FunctionType,
+        claim_closure["require_coordinator_authority"].cell_contents,
+    )
+    canonical_supervisor = cast(
+        str,
+        claim_closure["supervisor_module_name"].cell_contents,
+    )
+    monkeypatch.setattr(coordinator, "_SUPERVISOR_MODULE", "evil.redirect")
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="coordinator authority changed",
+    ):
+        require_authority()
+
+    supervisor = importlib.import_module(canonical_supervisor)
+    expected = (
+        ("_begin_registered_supervisor_child", "begin_registered_child"),
+        (
+            "_finish_registered_supervisor_child_success",
+            "finish_registered_child_success",
+        ),
+        (
+            "_finish_registered_supervisor_child_failure",
+            "finish_registered_child_failure",
+        ),
+    )
+    for binding_name, intrinsic_name in expected:
+        route = cast(FunctionType, getattr(supervisor, binding_name))
+        assert type(route) is FunctionType
+        assert route.__name__ == intrinsic_name
+        assert route.__module__ == canonical_supervisor
+        signature = inspect.signature(route)
+        assert list(signature.parameters) == []
+
+
+def test_registered_parent_claim_composes_real_routes_without_execution() -> None:
+    script = textwrap.dedent(
+        f"""
+        import json
+        import sys
+
+        sys.path.insert(0, {os.fspath(SOURCE_ROOT)!r})
+        import falsewake.experiment_002_run_authority as authority
+
+        state_type = authority._VerifiedState
+        state = object.__new__(state_type)
+        values = (
+            ('head_commit', '1' * 40),
+            ('implementation_commit', '2' * 40),
+            ('registration_sha256', '3' * 64),
+            ('source_bundle_sha256', '4' * 64),
+        )
+        for name, value in values:
+            state_type.__dict__[name].__set__(state, value)
+
+        def verify_verified_run_registration(value):
+            if type(value) is not authority.VerifiedRunRegistration:
+                raise TypeError
+
+        def reverify_verified_run_registration(value):
+            return verify_verified_run_registration(value)
+
+        def _verified_state(value):
+            verify_verified_run_registration(value)
+            return state
+
+        for route in (
+            verify_verified_run_registration,
+            reverify_verified_run_registration,
+            _verified_state,
+        ):
+            route.__module__ = authority.__name__
+        authority.verify_verified_run_registration = verify_verified_run_registration
+        authority.reverify_verified_run_registration = (
+            reverify_verified_run_registration
+        )
+        authority._verified_state = _verified_state
+
+        import falsewake.experiment_002_coordinator as coordinator
+
+        registration = object.__new__(authority.VerifiedRunRegistration)
+        public = coordinator.run_registered_experiment
+        public_closure = dict(zip(
+            public.__code__.co_freevars,
+            public.__closure__,
+            strict=True,
+        ))
+        parent_state = public_closure['state'].cell_contents
+        parent_state_type = public_closure['state_type'].cell_contents
+        state_descriptors = public_closure['typed_state_descriptors'].cell_contents
+        state_descriptors[0].__set__(parent_state, True)
+        state_descriptors[1].__set__(parent_state, True)
+        assert type(parent_state) is parent_state_type
+
+        claim = public_closure['claim_parent_operations'].cell_contents
+        frame, operations = claim(registration)
+        assert type(operations) is coordinator._RegisteredExperimentOperations
+        assert operations.require_authority() is None
+        checker = operations.require_authority
+        assert 'publish_final' not in checker.__code__.co_freevars
+        assert all(
+            node[0] is not operations.publish_final_evidence
+            for node in operations.authority_integrity
+        )
+        state_descriptors[1].__set__(parent_state, False)
+        try:
+            operations.require_authority()
+        except coordinator.Experiment002CoordinatorError:
+            pass
+        else:
+            raise AssertionError('parent attempt state loss was accepted')
+        state_descriptors[1].__set__(parent_state, True)
+        checker_closure = dict(zip(
+            checker.__code__.co_freevars,
+            checker.__closure__,
+            strict=True,
+        ))
+        require_run_authority = checker_closure[
+            'require_run_authority'
+        ].cell_contents
+        run_checker_closure = dict(zip(
+            require_run_authority.__code__.co_freevars,
+            require_run_authority.__closure__,
+            strict=True,
+        ))
+        required_seals_route = run_checker_closure[
+            'required_seals_route'
+        ].cell_contents
+        original_required_seals_code = required_seals_route.__code__
+
+        def executed_if_authority_check_is_late():
+            raise AssertionError('mutated seals route executed')
+
+        required_seals_route.__code__ = (
+            executed_if_authority_check_is_late.__code__
+        )
+        try:
+            operations.require_authority()
+        except coordinator.Experiment002CoordinatorError:
+            pass
+        else:
+            raise AssertionError('mutated seals route was accepted')
+        finally:
+            required_seals_route.__code__ = original_required_seals_code
+        publication = sys.modules[
+            'falsewake.experiment_002_final_publication'
+        ]
+        publication_namespace = publication.__dict__
+        saved_publication_route = publication_namespace.pop(
+            'build_execution_failure_evidence'
+        )
+        fallback_lookups = []
+
+        def module_fallback(name):
+            fallback_lookups.append(name)
+            return saved_publication_route
+
+        publication_namespace['__getattr__'] = module_fallback
+        try:
+            try:
+                operations.require_authority()
+            except coordinator.Experiment002CoordinatorError:
+                pass
+            else:
+                raise AssertionError(
+                    'module fallback replaced a missing authority binding'
+                )
+            assert fallback_lookups == []
+        finally:
+            publication_namespace[
+                'build_execution_failure_evidence'
+            ] = saved_publication_route
+            publication_namespace.pop('__getattr__')
+        colliding_binding_name = 'build_execution_failure_evidence'
+        saved_colliding_route = publication_namespace.pop(
+            colliding_binding_name
+        )
+        key_comparisons = []
+
+        class CollidingModuleKey:
+            def __hash__(self):
+                return hash(colliding_binding_name)
+
+            def __eq__(self, other):
+                key_comparisons.append(other)
+                return True
+
+        colliding_key = CollidingModuleKey()
+        publication_namespace[colliding_key] = saved_colliding_route
+        key_comparisons.clear()
+        try:
+            try:
+                operations.require_authority()
+            except coordinator.Experiment002CoordinatorError:
+                pass
+            else:
+                raise AssertionError(
+                    'hostile module key retained parent authority'
+                )
+            assert key_comparisons == []
+        finally:
+            publication_namespace.pop(colliding_key)
+            publication_namespace[
+                colliding_binding_name
+            ] = saved_colliding_route
+        original_publication_type = type(publication)
+        module_dictionary_reads = []
+
+        class MutatedPublicationModule(original_publication_type):
+            def __getattribute__(self, name):
+                if name == '__dict__':
+                    module_dictionary_reads.append(name)
+                return super().__getattribute__(name)
+
+        publication.__class__ = MutatedPublicationModule
+        try:
+            try:
+                operations.require_authority()
+            except coordinator.Experiment002CoordinatorError:
+                pass
+            else:
+                raise AssertionError(
+                    'mutated module type retained parent authority'
+                )
+            assert module_dictionary_reads == []
+        finally:
+            publication.__class__ = original_publication_type
+        publisher_support_integrity = checker_closure[
+            'publisher_support_integrity'
+        ].cell_contents
+        assert all(
+            node[0] is not operations.publish_final_evidence
+            and 'attempted' not in node[1].co_freevars
+            and 'in_flight' not in node[1].co_freevars
+            for node in publisher_support_integrity
+        )
+        publisher = operations.publish_final_evidence
+        publisher_closure = dict(zip(
+            publisher.__code__.co_freevars,
+            publisher.__closure__,
+            strict=True,
+        ))
+        publisher_helper = publisher_closure['require_routes'].cell_contents
+        publisher_helper.__code__ = publisher_helper.__code__.replace(
+            co_name='tampered_publisher_helper'
+        )
+        try:
+            operations.require_authority()
+        except coordinator.Experiment002CoordinatorError:
+            pass
+        else:
+            raise AssertionError('publisher helper mutation was accepted')
+        print(json.dumps({{
+            'frame': frame,
+            'operation_fields': len(
+                coordinator._REGISTERED_EXPERIMENT_OPERATION_FIELD_NAMES
+            ),
+            'checker': checker.__name__,
+        }}, sort_keys=True))
+        """
+    )
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        (sys.executable, "-I", "-S", "-B", "-c", script),
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result == {
+        "checker": "require_parent_authority",
+        "frame": ["1" * 40, "2" * 40, "3" * 64, "4" * 64],
+        "operation_fields": 17,
+    }
+
+
+def test_registered_parent_factory_rejects_module_subclass_without_protocol() -> None:
+    script = textwrap.dedent(
+        f"""
+        import importlib
+        import json
+        import sys
+
+        sys.path.insert(0, {os.fspath(SOURCE_ROOT)!r})
+        original_module_type = type(importlib)
+        dictionary_reads = []
+
+        class MutatedImportlibModule(original_module_type):
+            def __getattribute__(self, name):
+                if name == '__dict__':
+                    dictionary_reads.append(name)
+                return super().__getattribute__(name)
+
+        importlib.__class__ = MutatedImportlibModule
+        try:
+            try:
+                import falsewake.experiment_002_coordinator
+            except RuntimeError as error:
+                assert str(error) == (
+                    'registered experiment module identities are invalid'
+                )
+            else:
+                raise AssertionError(
+                    'preloaded module subclass reached the parent factory'
+                )
+            assert dictionary_reads == []
+        finally:
+            importlib.__class__ = original_module_type
+        print(json.dumps({{'dictionary_reads': dictionary_reads}}))
+        """
+    )
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        (sys.executable, "-I", "-S", "-B", "-c", script),
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"dictionary_reads": []}
+
+
+@pytest.mark.parametrize(
+    "mutation_target",
+    [
+        "public",
+        "recursive_capture",
+        "required_seals_peer",
+        "registration_verifier_peer",
+    ],
+)
+def test_registered_parent_admission_rejects_in_place_factory_code_mutation(
+    mutation_target: str,
+) -> None:
+    script = textwrap.dedent(
+        f"""
+        import sys
+
+        sys.path.insert(0, {os.fspath(SOURCE_ROOT)!r})
+        import falsewake.experiment_002_run_authority as authority
+
+        state_type = authority._VerifiedState
+        state = object.__new__(state_type)
+        for name, value in (
+            ('head_commit', '1' * 40),
+            ('implementation_commit', '2' * 40),
+            ('registration_sha256', '3' * 64),
+            ('source_bundle_sha256', '4' * 64),
+        ):
+            state_type.__dict__[name].__set__(state, value)
+
+        verification_calls = 0
+
+        def executed_if_registration_check_is_late(value):
+            raise AssertionError('mutated verified-state route executed')
+
+        def verify_verified_run_registration(value):
+            global verification_calls
+            verification_calls += 1
+            if type(value) is not authority.VerifiedRunRegistration:
+                raise TypeError
+            if (
+                {mutation_target!r} == 'registration_verifier_peer'
+                and verification_calls == 2
+            ):
+                authority._verified_state.__code__ = (
+                    executed_if_registration_check_is_late.__code__
+                )
+            coordinator = sys.modules.get(
+                'falsewake.experiment_002_coordinator'
+            )
+            if (
+                coordinator is not None
+                and {mutation_target!r} != 'required_seals_peer'
+            ):
+                if {mutation_target!r} == 'public':
+                    target = coordinator.run_registered_experiment
+                else:
+                    target = coordinator._capture_recursive_function_integrity
+                target.__code__ = target.__code__.replace(
+                    co_name='tampered_in_place'
+                )
+
+        def reverify_verified_run_registration(value):
+            return verify_verified_run_registration(value)
+
+        def _verified_state(value):
+            return state
+
+        for route in (
+            verify_verified_run_registration,
+            reverify_verified_run_registration,
+            _verified_state,
+        ):
+            route.__module__ = authority.__name__
+        authority.verify_verified_run_registration = verify_verified_run_registration
+        authority.reverify_verified_run_registration = (
+            reverify_verified_run_registration
+        )
+        authority._verified_state = _verified_state
+        if {mutation_target!r} == 'required_seals_peer':
+            original_required_seals = authority._required_child_bundle_seals
+
+            def _required_child_bundle_seals():
+                authority._verified_state.__code__ = (
+                    authority._verified_state.__code__.replace(
+                        co_name='tampered_by_required_seals'
+                    )
+                )
+                return original_required_seals()
+
+            _required_child_bundle_seals.__module__ = authority.__name__
+            authority._required_child_bundle_seals = _required_child_bundle_seals
+
+        import falsewake.experiment_002_coordinator as coordinator
+
+        registration = object.__new__(authority.VerifiedRunRegistration)
+        public = coordinator.run_registered_experiment
+        public_closure = dict(zip(
+            public.__code__.co_freevars,
+            public.__closure__,
+            strict=True,
+        ))
+        parent_state = public_closure['state'].cell_contents
+        state_descriptors = public_closure['typed_state_descriptors'].cell_contents
+        state_descriptors[0].__set__(parent_state, True)
+        state_descriptors[1].__set__(parent_state, True)
+        claim = public_closure['claim_parent_operations'].cell_contents
+        try:
+            claim(registration)
+        except coordinator.Experiment002CoordinatorError:
+            raise SystemExit(0)
+        raise SystemExit(91)
+        """
+    )
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        (sys.executable, "-I", "-S", "-B", "-c", script),
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@dataclass(slots=True)
+class _RegisteredParentTrace:
+    completed_status: str = "pass"
+    trace: list[str] | None = None
+    failures: dict[str, BaseException] | None = None
+    published: list[object] | None = None
+    failure_pairs: list[tuple[tuple[str, str, str, str], str, str]] | None = None
+    selector_result: object = ((object(), object(), object()), 1, object())
+    descriptor: int = 91
+    frame_calls: int = 0
+    close_calls: int = 0
+    quiescence_calls: int = 0
+    authority_broken: bool = False
+    break_authority_during_create: bool = False
+    break_authority_during_selector: bool = False
+    restore_authority_during_close: bool = False
+    publish_result: object = None
+    close_result: object = None
+    verify_completed_result: object = None
+    cleanup_result: object = None
+    quiescence_results: tuple[object, object] = (None, None)
+    source_frame_failures: dict[int, BaseException] | None = None
+    mutations: dict[str, Callable[[], None]] | None = None
+    authority_calls: int = 0
+    authority_calls_at_publish: int | None = None
+    completed_verified: bool = False
+    authority_route: Callable[[], None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.trace is None:
+            self.trace = []
+        if self.failures is None:
+            self.failures = {}
+        if self.published is None:
+            self.published = []
+        if self.failure_pairs is None:
+            self.failure_pairs = []
+        if self.source_frame_failures is None:
+            self.source_frame_failures = {}
+        if self.mutations is None:
+            self.mutations = {}
+
+    def _record(self, name: str) -> None:
+        assert self.trace is not None
+        self.trace.append(name)
+        assert self.failures is not None
+        failure = self.failures.get(name)
+        if failure is not None:
+            raise failure
+        assert self.mutations is not None
+        mutation = self.mutations.get(name)
+        if mutation is not None:
+            mutation()
+
+    def require_authority(self) -> None:
+        self.authority_calls += 1
+        if self.authority_broken:
+            raise RuntimeError("synthetic authority loss")
+
+    def prepare(self) -> None:
+        self._record("prepare")
+
+    def cpu(self) -> tuple[int, int]:
+        self._record("cpu")
+        return (2, 7)
+
+    def create(self, _registration: object, /) -> int:
+        self._record("create")
+        if self.break_authority_during_create:
+            self.authority_broken = True
+        return self.descriptor
+
+    def source_frame(
+        self,
+        descriptor: int,
+        /,
+    ) -> coordinator._SourceBundleDescriptorFrame:
+        assert descriptor == self.descriptor
+        self.frame_calls += 1
+        self._record("source_frame")
+        assert self.source_frame_failures is not None
+        failure = self.source_frame_failures.get(self.frame_calls)
+        if failure is not None:
+            raise failure
+        return (
+            descriptor,
+            fcntl.FD_CLOEXEC,
+            os.O_RDONLY,
+            False,
+            (1, 2, stat.S_IFREG | 0o400, 0, os.geteuid(), os.getegid(), 3, 4, 5),
+            15,
+            "/memfd:falsewake-exp002-child-bundle (deleted)",
+            0,
+        )
+
+    def select(
+        self,
+        _registration: object,
+        cpu_ids: tuple[int, int],
+        descriptor: int,
+        /,
+    ) -> object:
+        assert cpu_ids == (2, 7)
+        assert descriptor == self.descriptor
+        self._record("select")
+        if self.break_authority_during_selector:
+            self.authority_broken = True
+            raise RuntimeError("synthetic selector boundary loss")
+        return self.selector_result
+
+    def close(self, descriptor: int, /) -> object:
+        assert descriptor == self.descriptor
+        self.close_calls += 1
+        self._record("close")
+        if self.restore_authority_during_close:
+            self.authority_broken = False
+        return self.close_result
+
+    def build_completed(self, selector_result: object, /) -> object:
+        assert selector_result is self.selector_result
+        self._record("build_completed")
+        return SimpleNamespace(status=self.completed_status)
+
+    def verify_completed(self, evidence: object, /) -> object:
+        assert cast(Any, evidence).status == self.completed_status
+        self._record("verify_completed")
+        self.completed_verified = True
+        return self.verify_completed_result
+
+    def quiescence(self) -> object:
+        self.quiescence_calls += 1
+        assert self.trace is not None
+        name = "quiescence_closed" if "cleanup" in self.trace else "quiescence_active"
+        self._record(name)
+        return self.quiescence_results[self.quiescence_calls - 1]
+
+    def cleanup(self) -> object:
+        self._record("cleanup")
+        return self.cleanup_result
+
+    def registration_frame(
+        self,
+        _registration: object,
+        /,
+    ) -> tuple[str, str, str, str]:
+        self._record("registration_frame")
+        return (
+            TEST_BINDING.head_commit,
+            TEST_BINDING.implementation_commit,
+            TEST_BINDING.registration_sha256,
+            TEST_BINDING.source_bundle_sha256,
+        )
+
+    def build_failure(
+        self,
+        registration_frame: tuple[str, str, str, str],
+        phase: str,
+        code: str,
+        /,
+    ) -> object:
+        self._record("build_failure")
+        assert self.failure_pairs is not None
+        self.failure_pairs.append((registration_frame, phase, code))
+        return SimpleNamespace(status="execution_failure", phase=phase, code=code)
+
+    def verify_failure(self, evidence: object, /) -> None:
+        assert cast(Any, evidence).status == "execution_failure"
+        self._record("verify_failure")
+
+    def publish(self, _registration: object, evidence: object, /) -> object:
+        self._record("publish")
+        assert self.published is not None
+        self.published.append(evidence)
+        self.authority_calls_at_publish = self.authority_calls
+        return self.publish_result
+
+    def operations(self) -> coordinator._RegisteredExperimentOperations:
+        harness = self
+
+        def require_authority() -> None:
+            harness.require_authority()
+
+        authority_route = cast(FunctionType, require_authority)
+        integrity_verifier = cast(
+            FunctionType,
+            coordinator._require_recursive_function_integrity_unchanged,
+        )
+        authority_integrity = coordinator._capture_recursive_function_integrity(
+            (
+                authority_route,
+                integrity_verifier,
+                cast(
+                    FunctionType,
+                    coordinator._call_registered_experiment_operation,
+                ),
+            )
+        )
+        self.authority_route = authority_route
+        return coordinator._RegisteredExperimentOperations(
+            prepare_staging=self.prepare,
+            capture_cpu_ids=self.cpu,
+            create_source_bundle=self.create,
+            run_selection=self.select,
+            build_completed_evidence=self.build_completed,
+            verify_completed_evidence=self.verify_completed,
+            require_quiescence=self.quiescence,
+            cleanup_output_roots=self.cleanup,
+            build_failure_evidence=self.build_failure,
+            verify_failure_evidence=self.verify_failure,
+            publish_final_evidence=self.publish,
+            authority_integrity_verifier=integrity_verifier,
+            authority_integrity=authority_integrity,
+            require_authority=authority_route,
+            registration_frame=self.registration_frame,
+            source_bundle_frame=self.source_frame,
+            close_source_bundle=self.close,
+        )
+
+
+def _admitted_registration_frame() -> tuple[str, str, str, str]:
+    return (
+        TEST_BINDING.head_commit,
+        TEST_BINDING.implementation_commit,
+        TEST_BINDING.registration_sha256,
+        TEST_BINDING.source_bundle_sha256,
+    )
+
+
+@pytest.mark.parametrize("status", ["pass", "gate_failure"])
+def test_registered_parent_pass_and_gate_failure_publish_once_and_return_none(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    status: str,
+) -> None:
+    harness = _RegisteredParentTrace(completed_status=status)
+    assert (
+        cast(Any, coordinator._run_registered_experiment_once)(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+        is None
+    )
+    assert harness.trace == [
+        "prepare",
+        "cpu",
+        "create",
+        "source_frame",
+        "source_frame",
+        "select",
+        "source_frame",
+        "close",
+        "build_completed",
+        "verify_completed",
+        "quiescence_active",
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+        "publish",
+    ]
+    assert harness.close_calls == 1
+    assert harness.frame_calls == 3
+    assert harness.quiescence_calls == 2
+    assert harness.published is not None
+    assert len(harness.published) == 1
+    assert cast(Any, harness.published[0]).status == status
+    assert harness.failure_pairs == []
+    assert harness.authority_calls_at_publish == harness.authority_calls
+
+
+@pytest.mark.parametrize(
+    ("failed_stage", "expected_pair", "expected_prefix"),
+    [
+        (
+            "prepare",
+            ("parent_setup", "staging_prepare_failed"),
+            ["prepare"],
+        ),
+        (
+            "cpu",
+            ("parent_setup", "cpu_affinity_capture_failed"),
+            ["prepare", "cpu"],
+        ),
+        (
+            "create",
+            ("parent_setup", "source_bundle_create_failed"),
+            ["prepare", "cpu", "create"],
+        ),
+        (
+            "select",
+            ("registered_execution", "seed_selection_failed"),
+            [
+                "prepare",
+                "cpu",
+                "create",
+                "source_frame",
+                "source_frame",
+                "select",
+                "source_frame",
+                "close",
+            ],
+        ),
+        (
+            "close",
+            ("registered_execution", "source_bundle_close_failed"),
+            [
+                "prepare",
+                "cpu",
+                "create",
+                "source_frame",
+                "source_frame",
+                "select",
+                "source_frame",
+                "close",
+            ],
+        ),
+        (
+            "build_completed",
+            ("completed_evidence", "completed_evidence_rejected"),
+            [
+                "prepare",
+                "cpu",
+                "create",
+                "source_frame",
+                "source_frame",
+                "select",
+                "source_frame",
+                "close",
+                "build_completed",
+            ],
+        ),
+        (
+            "verify_completed",
+            ("completed_evidence", "completed_evidence_rejected"),
+            [
+                "prepare",
+                "cpu",
+                "create",
+                "source_frame",
+                "source_frame",
+                "select",
+                "source_frame",
+                "close",
+                "build_completed",
+                "verify_completed",
+            ],
+        ),
+        (
+            "quiescence_active",
+            ("parent_boundary", "pre_cleanup_quiescence_failed"),
+            [
+                "prepare",
+                "cpu",
+                "create",
+                "source_frame",
+                "source_frame",
+                "select",
+                "source_frame",
+                "close",
+                "build_completed",
+                "verify_completed",
+                "quiescence_active",
+            ],
+        ),
+    ],
+)
+def test_registered_parent_publishes_only_closed_controlled_failure_pairs(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    failed_stage: str,
+    expected_pair: tuple[str, str],
+    expected_prefix: list[str],
+) -> None:
+    primary = RuntimeError("SECRET PRIMARY DETAIL")
+    harness = _RegisteredParentTrace(failures={failed_stage: primary})
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match=rf"{expected_pair[0]}/{expected_pair[1]}",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is primary
+    assert cast(list[str], harness.trace)[: len(expected_prefix)] == expected_prefix
+    assert cast(list[str], harness.trace)[-6:] == [
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+        "build_failure",
+        "verify_failure",
+        "publish",
+    ]
+    assert harness.failure_pairs == [(_admitted_registration_frame(), *expected_pair)]
+    assert harness.published is not None
+    assert len(harness.published) == 1
+    published = harness.published[0]
+    assert cast(Any, published).phase == expected_pair[0]
+    assert cast(Any, published).code == expected_pair[1]
+    assert "SECRET PRIMARY DETAIL" not in repr(vars(published))
+    assert harness.authority_calls_at_publish == harness.authority_calls
+    assert harness.close_calls == (
+        1
+        if failed_stage
+        in {
+            "select",
+            "close",
+            "build_completed",
+            "verify_completed",
+            "quiescence_active",
+        }
+        else 0
+    )
+
+
+def test_registered_parent_close_failure_overrides_selector_failure_once(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    selector_failure = RuntimeError("selector secret")
+    close_failure = OSError("close secret")
+    harness = _RegisteredParentTrace(
+        failures={"select": selector_failure, "close": close_failure}
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="registered_execution/source_bundle_close_failed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is close_failure
+    assert harness.close_calls == 1
+    assert harness.failure_pairs == [
+        (
+            _admitted_registration_frame(),
+            "registered_execution",
+            "source_bundle_close_failed",
+        )
+    ]
+
+
+def test_registered_parent_non_none_completed_verifier_is_rejected(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    harness = _RegisteredParentTrace(verify_completed_result=object())
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="completed_evidence/completed_evidence_rejected",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.failure_pairs == [
+        (
+            _admitted_registration_frame(),
+            "completed_evidence",
+            "completed_evidence_rejected",
+        )
+    ]
+    assert harness.close_calls == 1
+    assert "quiescence_active" not in cast(list[str], harness.trace)
+    assert cast(list[str], harness.trace).count("quiescence_closed") == 1
+    assert cast(list[str], harness.trace)[-6:] == [
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+        "build_failure",
+        "verify_failure",
+        "publish",
+    ]
+
+
+@pytest.mark.parametrize("frame_call", [2, 3])
+def test_registered_parent_pre_and_post_selection_frame_rejection_close_once(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    frame_call: int,
+) -> None:
+    frame_failure = RuntimeError("source-frame secret")
+    harness = _RegisteredParentTrace(source_frame_failures={frame_call: frame_failure})
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="registered_execution/seed_selection_failed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is frame_failure
+    assert harness.close_calls == 1
+    assert harness.frame_calls == frame_call
+    assert harness.failure_pairs == [
+        (
+            _admitted_registration_frame(),
+            "registered_execution",
+            "seed_selection_failed",
+        )
+    ]
+
+
+def test_registered_parent_non_none_close_result_has_close_failure_precedence(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    harness = _RegisteredParentTrace(close_result=object())
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="registered_execution/source_bundle_close_failed",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.close_calls == 1
+    assert harness.failure_pairs == [
+        (
+            _admitted_registration_frame(),
+            "registered_execution",
+            "source_bundle_close_failed",
+        )
+    ]
+
+
+def test_registered_parent_boundary_loss_never_becomes_reportable_on_close_error(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    close_failure = OSError("close secret")
+    harness = _RegisteredParentTrace(
+        failures={"close": close_failure},
+        break_authority_during_selector=True,
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="terminal cleanup boundary failed closed",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.close_calls == 1
+    assert harness.frame_calls == 2
+    assert harness.failure_pairs == []
+    assert harness.published == []
+    assert "build_failure" not in cast(list[str], harness.trace)
+    assert "publish" not in cast(list[str], harness.trace)
+
+
+def test_registered_parent_transient_boundary_loss_stays_unreportable_after_close(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    harness = _RegisteredParentTrace(
+        break_authority_during_selector=True,
+        restore_authority_during_close=True,
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="unreportable authority boundary",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.close_calls == 1
+    assert harness.failure_pairs == []
+    assert harness.published == []
+    assert cast(list[str], harness.trace)[-3:] == [
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+    ]
+
+
+def test_registered_parent_claims_created_fd_before_post_creation_authority_loss(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    harness = _RegisteredParentTrace(break_authority_during_create=True)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="terminal cleanup boundary failed closed",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.trace == ["prepare", "cpu", "create", "close"]
+    assert harness.close_calls == 1
+    assert harness.frame_calls == 0
+    assert harness.failure_pairs == []
+    assert harness.published == []
+
+
+@pytest.mark.parametrize(
+    ("mutation_stage", "expected_frame_calls"),
+    [
+        ("create", 0),
+        ("select", 2),
+        ("close", 3),
+    ],
+)
+def test_registered_parent_external_checker_anchor_closes_owned_fd_once(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    mutation_stage: str,
+    expected_frame_calls: int,
+) -> None:
+    harness = _RegisteredParentTrace()
+    operations = harness.operations()
+    checker = cast(FunctionType, harness.authority_route)
+    original_code = checker.__code__
+
+    def compatible_noop() -> None:
+        if harness.authority_broken:
+            raise AssertionError
+
+    assert compatible_noop.__closure__ is not None
+    assert checker.__closure__ is not None
+    assert len(compatible_noop.__closure__) == len(checker.__closure__)
+    assert harness.mutations is not None
+    harness.mutations[mutation_stage] = lambda: setattr(
+        checker,
+        "__code__",
+        compatible_noop.__code__,
+    )
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="terminal cleanup boundary failed closed",
+        ):
+            coordinator._run_registered_experiment_once(
+                synthetic_registration,
+                _admitted_registration_frame(),
+                operations,
+            )
+    finally:
+        checker.__code__ = original_code
+    assert harness.close_calls == 1
+    assert harness.frame_calls == expected_frame_calls
+    assert harness.failure_pairs == []
+    assert harness.published == []
+    assert "cleanup" not in cast(list[str], harness.trace)
+    assert "quiescence_closed" not in cast(list[str], harness.trace)
+    assert cast(list[str], harness.trace)[-1] == "close"
+
+
+@pytest.mark.parametrize("target_name", ["integrity_verifier", "operation_caller"])
+def test_registered_parent_close_precedes_external_anchor_rejection(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    target_name: str,
+) -> None:
+    harness = _RegisteredParentTrace()
+    operations = harness.operations()
+    if target_name == "integrity_verifier":
+        target = cast(
+            FunctionType,
+            coordinator._require_recursive_function_integrity_unchanged,
+        )
+
+        def verifier_noop(_frame: object, /) -> None:
+            return None
+
+        replacement_code = verifier_noop.__code__
+    else:
+        target = cast(
+            FunctionType,
+            coordinator._call_registered_experiment_operation,
+        )
+
+        def caller_noop(*_arguments: object, **_keywords: object) -> None:
+            return None
+
+        replacement_code = caller_noop.__code__
+    original_code = target.__code__
+    assert harness.mutations is not None
+    harness.mutations["close"] = lambda: setattr(
+        target,
+        "__code__",
+        replacement_code,
+    )
+    try:
+        with pytest.raises(
+            coordinator.Experiment002CoordinatorError,
+            match="terminal cleanup boundary failed closed",
+        ):
+            coordinator._run_registered_experiment_once(
+                synthetic_registration,
+                _admitted_registration_frame(),
+                operations,
+            )
+    finally:
+        target.__code__ = original_code
+    assert cast(list[str], harness.trace)[-1] == "close"
+    assert harness.close_calls == 1
+    assert harness.failure_pairs == []
+    assert harness.published == []
+
+
+def test_registered_parent_creator_handoff_uses_preallocated_slot() -> None:
+    source = inspect.getsource(coordinator._call_registered_experiment_operation)
+    assert "_result_box[0] = result" in source
+    assert "list_append" not in source
+
+
+def test_registered_parent_rejects_non_none_completed_publisher_result_without_recheck(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    unexpected = object()
+    harness = _RegisteredParentTrace(publish_result=unexpected)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="final publication failed closed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert type(captured.value.__cause__) is coordinator.Experiment002CoordinatorError
+    assert "unexpected value" in str(captured.value.__cause__)
+    assert harness.published is not None
+    assert len(harness.published) == 1
+    assert harness.authority_calls_at_publish == harness.authority_calls
+
+
+def test_registered_parent_completed_publisher_exception_is_terminal_without_fallback(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    publisher_failure = RuntimeError("publisher secret")
+    harness = _RegisteredParentTrace(failures={"publish": publisher_failure})
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="final publication failed closed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is publisher_failure
+    assert cast(list[str], harness.trace).count("publish") == 1
+    assert "build_failure" not in cast(list[str], harness.trace)
+    assert "verify_failure" not in cast(list[str], harness.trace)
+    assert harness.failure_pairs == []
+    assert harness.published == []
+
+
+@pytest.mark.parametrize(
+    ("field_name", "unexpected"),
+    [
+        ("cleanup_result", object()),
+        ("quiescence_results", (None, object())),
+    ],
+)
+def test_registered_parent_non_none_cleanup_boundaries_prohibit_publication(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    field_name: str,
+    unexpected: object,
+) -> None:
+    harness = _RegisteredParentTrace()
+    setattr(harness, field_name, unexpected)
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="terminal cleanup boundary failed closed",
+    ):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert harness.published == []
+    assert harness.failure_pairs == []
+
+
+def test_registered_parent_never_truth_tests_falsey_postcleanup_failure(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    class FalseyFailure(RuntimeError):
+        def __bool__(self) -> bool:
+            return False
+
+    closed_failure = FalseyFailure("closed boundary secret")
+    harness = _RegisteredParentTrace(
+        failures={
+            "cpu": RuntimeError("controlled primary"),
+            "quiescence_closed": closed_failure,
+        }
+    )
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="terminal cleanup boundary failed closed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is closed_failure
+    assert harness.failure_pairs == []
+    assert harness.published == []
+
+
+@pytest.mark.parametrize(
+    "failed_stage",
+    [
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+        "build_failure",
+        "verify_failure",
+        "publish",
+    ],
+)
+def test_registered_parent_terminal_failures_prohibit_any_second_publication(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+    failed_stage: str,
+) -> None:
+    controlled = RuntimeError("controlled primary")
+    terminal = RuntimeError("terminal primary")
+    harness = _RegisteredParentTrace(
+        failures={"cpu": controlled, failed_stage: terminal}
+    )
+    with pytest.raises(coordinator.Experiment002CoordinatorError):
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert cast(list[str], harness.trace).count("cleanup") == 1
+    assert cast(list[str], harness.trace).count("quiescence_closed") == 1
+    assert cast(list[str], harness.trace).count("publish") <= 1
+    if failed_stage in {
+        "cleanup",
+        "quiescence_closed",
+        "registration_frame",
+        "build_failure",
+        "verify_failure",
+    }:
+        assert harness.published == []
+    else:
+        assert harness.published == []
+    assert harness.close_calls == 0
+
+
+def test_registered_parent_source_frame_rejection_still_closes_once(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    inspection_failure = RuntimeError("inspection secret")
+    harness = _RegisteredParentTrace(failures={"source_frame": inspection_failure})
+    with pytest.raises(
+        coordinator.Experiment002CoordinatorError,
+        match="parent_setup/source_bundle_create_failed",
+    ) as captured:
+        coordinator._run_registered_experiment_once(
+            synthetic_registration,
+            _admitted_registration_frame(),
+            harness.operations(),
+        )
+    assert captured.value.__cause__ is inspection_failure
+    assert harness.close_calls == 1
+    assert harness.frame_calls == 1
+    assert harness.failure_pairs == [
+        (
+            _admitted_registration_frame(),
+            "parent_setup",
+            "source_bundle_create_failed",
+        )
+    ]
+
+
+def test_public_parent_owner_thread_rejection_does_not_burn_attempt(
+    synthetic_registration: coordinator.VerifiedRunRegistration,
+) -> None:
+    failures: list[BaseException] = []
+
+    def call() -> None:
+        try:
+            coordinator.run_registered_experiment(synthetic_registration)
+        except BaseException as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    thread.join()
+    assert len(failures) == 1
+    assert type(failures[0]) is coordinator.Experiment002CoordinatorError
+    assert "caller thread changed" in str(failures[0])
+    state = _registered_experiment_state()
+    assert state.attempted is False
+    assert state.in_flight is False

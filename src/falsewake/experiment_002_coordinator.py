@@ -1,19 +1,21 @@
 """Fail-closed process coordination for the registered Experiment 002 run.
 
-The public parent entrypoint deliberately stops before spawning anything until
-the separately reviewed supervisor and resource-control layer exists.  This
-module already defines the activation boundary that layer must use: every
-fresh child first obtains its own process-local run registration, then accepts
-one kernel-credentialled ticket over Unix ``SOCK_SEQPACKET`` descriptor 3.
+The public parent entrypoint owns the single registered attempt from immutable
+registration admission through four supervised children, completed-evidence
+construction, output-root cleanup, and report-last publication.  Every fresh
+child first obtains its own process-local run registration, then accepts one
+kernel-credentialled ticket over Unix ``SOCK_SEQPACKET`` descriptor 3.
 
-Only standard-library modules and the standard-library-only run authority are
-imported here.  Numerical code is imported dynamically after a child activation
-has been verified and claimed for its single dispatch.
+The parent path and all imported parent layers are standard-library only.
+Numerical code is imported dynamically after a child activation has been
+verified and claimed for its single dispatch.
 
 The parent process and its loaded modules are trusted until a route claim is
-established.  The integrity frames below detect persistent mutation from claim
-through use; arbitrary pre-claim same-process reflection is privileged code
-execution outside this boundary.
+established.  From claim through use, integrity checks cover only explicitly
+captured exported routes, closures, and selected bindings; transitive function
+globals remain within each imported module's trusted internal domain.  Arbitrary
+pre-claim same-process reflection is privileged code execution outside this
+boundary.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 from falsewake.experiment_002_run_authority import (
     VerifiedRunRegistration,
+    reverify_verified_run_registration,
     verify_verified_run_registration,
 )
 
@@ -60,6 +63,9 @@ _PROCESS_GUARD_MODULE: Final = "falsewake.experiment_002_process_guard"
 _PROCESS_GUARD_GETTER: Final = "get_registered_child_process_guard"
 _PROCESS_GUARD_VERIFIER: Final = "verify_verified_child_process_guard"
 _SUPERVISOR_MODULE: Final = "falsewake.experiment_002_supervisor"
+_RUN_AUTHORITY_MODULE: Final = "falsewake.experiment_002_run_authority"
+_FINAL_EVIDENCE_MODULE: Final = "falsewake.experiment_002_final_evidence"
+_FINAL_PUBLICATION_MODULE: Final = "falsewake.experiment_002_final_publication"
 _SUPERVISE_CHILD_FUNCTION: Final = "_supervise_registered_child"
 _INJECTABLE_SUPERVISE_CHILD_FUNCTION: Final = "_supervise_child"
 _REGISTERED_SUPERVISOR_PLAN: Final = "_REGISTERED_PLAN"
@@ -115,6 +121,17 @@ type _FunctionIntegrityNode = tuple[
     tuple[_ClosureCellIntegrityFrame, ...],
 ]
 type _FunctionIntegrityFrame = tuple[_FunctionIntegrityNode, ...]
+type _ShallowFunctionIntegrityFrame = tuple[
+    FunctionType,
+    CodeType,
+    str,
+    str,
+    str,
+    tuple[object, ...] | None,
+    dict[str, Any] | None,
+    tuple[CellType, ...] | None,
+    tuple[object, ...],
+]
 type _DynamicClassAuthority = tuple[
     type[object],
     tuple[str, ...],
@@ -284,6 +301,88 @@ type _RegisteredSeedSelection = tuple[
     int,
     _RegisteredParentChildResult,
 ]
+type _RegistrationPublicationFrame = tuple[str, str, str, str]
+type _SourceBundleDescriptorFrame = tuple[
+    int,
+    int,
+    int,
+    bool,
+    tuple[int, ...],
+    int,
+    str,
+    int,
+]
+
+
+class _RegisteredExperimentBoundaryError(Experiment002CoordinatorError):
+    """An authority or terminal parent boundary became unreportable."""
+
+
+@dataclass(slots=True, eq=False)
+class _RegisteredExperimentState:
+    attempted: bool
+    in_flight: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisteredExperimentOperations:
+    prepare_staging: Callable[[], object]
+    capture_cpu_ids: Callable[[], object]
+    create_source_bundle: Callable[[VerifiedRunRegistration], object]
+    run_selection: Callable[
+        [VerifiedRunRegistration, tuple[int, int], int],
+        object,
+    ]
+    build_completed_evidence: Callable[[object], object]
+    verify_completed_evidence: Callable[[object], object]
+    require_quiescence: Callable[[], object]
+    cleanup_output_roots: Callable[[], object]
+    build_failure_evidence: Callable[
+        [_RegistrationPublicationFrame, str, str],
+        object,
+    ]
+    verify_failure_evidence: Callable[[object], object]
+    publish_final_evidence: Callable[
+        [VerifiedRunRegistration, object],
+        object,
+    ]
+    authority_integrity_verifier: FunctionType
+    authority_integrity: _FunctionIntegrityFrame
+    require_authority: Callable[[], object]
+    registration_frame: Callable[
+        [VerifiedRunRegistration],
+        _RegistrationPublicationFrame,
+    ]
+    source_bundle_frame: Callable[[int], _SourceBundleDescriptorFrame]
+    close_source_bundle: Callable[[int], object]
+
+
+_REGISTERED_EXPERIMENT_OPERATION_FIELD_NAMES: Final = (
+    "prepare_staging",
+    "capture_cpu_ids",
+    "create_source_bundle",
+    "run_selection",
+    "build_completed_evidence",
+    "verify_completed_evidence",
+    "require_quiescence",
+    "cleanup_output_roots",
+    "build_failure_evidence",
+    "verify_failure_evidence",
+    "publish_final_evidence",
+    "authority_integrity_verifier",
+    "authority_integrity",
+    "require_authority",
+    "registration_frame",
+    "source_bundle_frame",
+    "close_source_bundle",
+)
+_REGISTERED_EXPERIMENT_OPERATION_DESCRIPTORS: Final = cast(
+    tuple[MemberDescriptorType, ...],
+    tuple(
+        _RegisteredExperimentOperations.__dict__[name]
+        for name in _REGISTERED_EXPERIMENT_OPERATION_FIELD_NAMES
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -673,20 +772,6 @@ def _make_trusted_protocol_ledger() -> tuple[
 ) = _make_trusted_protocol_ledger()
 
 
-def run_registered_experiment(registration: VerifiedRunRegistration, /) -> None:
-    """Admit the parent capability, then stop before an unreviewed supervisor.
-
-    There are intentionally no command, path, seed, callback, environment, or
-    resource overrides.  The later supervisor implementation will replace only
-    this terminal error and will use the private fixed protocol below.
-    """
-
-    _require_registration(registration)
-    raise Experiment002CoordinatorError(
-        "the registered supervisor and resource-control layer are not enabled"
-    )
-
-
 def verify_verified_child_activation(
     registration: VerifiedRunRegistration,
     activation: VerifiedChildActivation,
@@ -989,6 +1074,8 @@ def _require_recursive_function_integrity_unchanged(
                 )
         elif (
             type(keyword_defaults) is not dict
+            or any(type(key) is not str for key in keyword_defaults)
+            or any(type(name) is not str for name in keyword_names)
             or len(keyword_names) != len(keyword_values)
             or tuple(sorted(keyword_defaults)) != keyword_names
             or any(
@@ -1057,6 +1144,10 @@ def _capture_dynamic_class_authority(
             "registered parent dynamic class authority is invalid"
         )
     namespace = dynamic_type.__dict__
+    if any(type(name) is not str for name in namespace):
+        raise Experiment002CoordinatorError(
+            "registered parent dynamic class namespace is invalid"
+        )
     names = tuple(sorted(namespace))
     values = tuple(namespace[name] for name in names)
     descriptors = tuple(namespace.get(name) for name in field_names)
@@ -1101,8 +1192,11 @@ def _require_dynamic_class_authority_unchanged(
             "registered parent dynamic class authority frame is invalid"
         )
     namespace = dynamic_type.__dict__
-    if tuple(sorted(namespace)) != names or any(
-        namespace[name] is not values[index] for index, name in enumerate(names)
+    if (
+        any(type(name) is not str for name in namespace)
+        or any(type(name) is not str for name in names)
+        or tuple(sorted(namespace)) != names
+        or any(namespace[name] is not values[index] for index, name in enumerate(names))
     ):
         raise Experiment002CoordinatorError(
             "registered parent dynamic class changed after claim"
@@ -3446,6 +3540,2598 @@ _run_registered_seed_selection = _bind_registered_seed_selection_integrity(
 )
 del _make_registered_seed_selection
 del _bind_registered_seed_selection_integrity
+
+
+def _call_registered_experiment_operation(
+    boundary_error_type: type[_RegisteredExperimentBoundaryError],
+    base_exception_type: type[BaseException],
+    function_type: type[FunctionType],
+    code_type: type[CodeType],
+    cell_type: type[CellType],
+    require_authority: Callable[[], object],
+    authority_integrity_verifier: FunctionType,
+    authority_integrity: _FunctionIntegrityFrame,
+    caller_integrity: _ShallowFunctionIntegrityFrame,
+    route: Callable[..., object],
+    route_name: str,
+    *arguments: object,
+    _result_box: list[object] | None = None,
+    _result_sentinel: object | None = None,
+    _check_before: bool = True,
+    _operation_completed: bool = False,
+) -> object:
+    """Call one captured route only while its complete authority remains stable."""
+
+    exact_type = type
+    tuple_type = tuple
+    list_type = list
+    dictionary_type = dict
+    string_type = str
+    boolean_type = bool
+    length = len
+    any_value = any
+    enumerate_values = enumerate
+    range_values = range
+    sort_values = sorted
+    value_error_type = ValueError
+
+    if (
+        exact_type(route_name) is not string_type
+        or not route_name
+        or exact_type(_check_before) is not boolean_type
+        or exact_type(_operation_completed) is not boolean_type
+        or (
+            _result_box is not None
+            and (
+                exact_type(_result_box) is not list_type
+                or length(_result_box) != 1
+                or _result_box[0] is not _result_sentinel
+            )
+        )
+        or (_result_box is None and _result_sentinel is not None)
+        or (
+            _operation_completed
+            and (
+                _check_before
+                or arguments
+                or _result_box is not None
+                or _result_sentinel is not None
+            )
+        )
+    ):
+        raise boundary_error_type("registered experiment operation boundary is invalid")
+
+    def require_caller_integrity() -> None:
+        if (
+            exact_type(caller_integrity) is not tuple_type
+            or length(caller_integrity) != 9
+        ):
+            raise boundary_error_type(
+                "registered experiment operation caller frame is invalid"
+            )
+        (
+            caller,
+            code,
+            name,
+            qualified_name,
+            module_name,
+            defaults,
+            keyword_defaults,
+            closure,
+            closure_contents,
+        ) = caller_integrity
+        try:
+            current_closure_contents = tuple_type(
+                cell.cell_contents for cell in tuple_type(closure or ())
+            )
+        except value_error_type as primary:
+            raise boundary_error_type(
+                "registered experiment operation caller changed"
+            ) from primary
+        if (
+            exact_type(caller) is not function_type
+            or exact_type(code) is not code_type
+            or exact_type(name) is not string_type
+            or exact_type(qualified_name) is not string_type
+            or exact_type(module_name) is not string_type
+            or (defaults is not None and exact_type(defaults) is not tuple_type)
+            or (
+                keyword_defaults is not None
+                and exact_type(keyword_defaults) is not dictionary_type
+            )
+            or (closure is not None and exact_type(closure) is not tuple_type)
+            or exact_type(closure_contents) is not tuple_type
+            or caller.__code__ is not code
+            or caller.__name__ is not name
+            or caller.__qualname__ is not qualified_name
+            or caller.__module__ is not module_name
+            or caller.__defaults__ is not defaults
+            or caller.__kwdefaults__ is not keyword_defaults
+            or caller.__closure__ is not closure
+            or exact_type(current_closure_contents) is not tuple_type
+            or length(current_closure_contents) != length(closure_contents)
+            or any_value(
+                current_closure_contents[index] is not closure_contents[index]
+                for index in range_values(length(closure_contents))
+            )
+        ):
+            raise boundary_error_type("registered experiment operation caller changed")
+
+    def require_external_authority_integrity() -> None:
+        require_caller_integrity()
+        if (
+            exact_type(authority_integrity_verifier) is not function_type
+            or exact_type(authority_integrity) is not tuple_type
+            or not authority_integrity
+        ):
+            raise boundary_error_type(
+                "registered experiment authority anchor is invalid"
+            )
+        verifier_node: _FunctionIntegrityNode | None = None
+        for node in authority_integrity:
+            if (
+                exact_type(node) is tuple_type
+                and length(node) == 12
+                and node[0] is authority_integrity_verifier
+            ):
+                verifier_node = node
+                break
+        if verifier_node is None:
+            raise boundary_error_type(
+                "registered experiment authority verifier is not anchored"
+            )
+        (
+            verifier,
+            verifier_code,
+            verifier_name,
+            verifier_qualified_name,
+            verifier_module_name,
+            verifier_defaults,
+            verifier_default_items,
+            verifier_keyword_defaults,
+            verifier_keyword_names,
+            verifier_keyword_values,
+            verifier_closure,
+            verifier_cell_frames,
+        ) = verifier_node
+        if (
+            verifier is not authority_integrity_verifier
+            or exact_type(verifier) is not function_type
+            or exact_type(verifier_code) is not code_type
+            or exact_type(verifier_name) is not string_type
+            or exact_type(verifier_qualified_name) is not string_type
+            or exact_type(verifier_module_name) is not string_type
+            or (
+                verifier_defaults is not None
+                and exact_type(verifier_defaults) is not tuple_type
+            )
+            or exact_type(verifier_default_items) is not tuple_type
+            or (
+                verifier_keyword_defaults is not None
+                and exact_type(verifier_keyword_defaults) is not dictionary_type
+            )
+            or exact_type(verifier_keyword_names) is not tuple_type
+            or exact_type(verifier_keyword_values) is not tuple_type
+            or (
+                verifier_closure is not None
+                and exact_type(verifier_closure) is not tuple_type
+            )
+            or exact_type(verifier_cell_frames) is not tuple_type
+            or verifier.__code__ is not verifier_code
+            or verifier.__name__ is not verifier_name
+            or verifier.__qualname__ is not verifier_qualified_name
+            or verifier.__module__ is not verifier_module_name
+            or verifier.__defaults__ is not verifier_defaults
+            or verifier.__kwdefaults__ is not verifier_keyword_defaults
+            or verifier.__closure__ is not verifier_closure
+        ):
+            raise boundary_error_type(
+                "registered experiment authority verifier changed"
+            )
+        if verifier_defaults is None:
+            if verifier_default_items:
+                raise boundary_error_type(
+                    "registered experiment authority verifier defaults changed"
+                )
+        elif length(verifier_defaults) != length(verifier_default_items) or any_value(
+            verifier_defaults[index] is not verifier_default_items[index]
+            for index in range_values(length(verifier_default_items))
+        ):
+            raise boundary_error_type(
+                "registered experiment authority verifier defaults changed"
+            )
+        if verifier_keyword_defaults is None:
+            if verifier_keyword_names or verifier_keyword_values:
+                raise boundary_error_type(
+                    "registered experiment authority verifier defaults changed"
+                )
+        elif (
+            any_value(
+                exact_type(key) is not string_type for key in verifier_keyword_defaults
+            )
+            or any_value(
+                exact_type(name) is not string_type for name in verifier_keyword_names
+            )
+            or tuple_type(sort_values(verifier_keyword_defaults))
+            != verifier_keyword_names
+            or length(verifier_keyword_names) != length(verifier_keyword_values)
+            or any_value(
+                verifier_keyword_defaults[name] is not verifier_keyword_values[index]
+                for index, name in enumerate_values(verifier_keyword_names)
+            )
+        ):
+            raise boundary_error_type(
+                "registered experiment authority verifier defaults changed"
+            )
+        if verifier_closure is None:
+            if verifier_cell_frames:
+                raise boundary_error_type(
+                    "registered experiment authority verifier closure changed"
+                )
+        elif length(verifier_closure) != length(verifier_cell_frames):
+            raise boundary_error_type(
+                "registered experiment authority verifier closure changed"
+            )
+        else:
+            for index, cell_frame in enumerate_values(verifier_cell_frames):
+                if exact_type(cell_frame) is not tuple_type or length(cell_frame) != 4:
+                    raise boundary_error_type(
+                        "registered experiment authority verifier closure changed"
+                    )
+                cell, free_variable, occupied, content = cell_frame
+                if (
+                    exact_type(cell) is not cell_type
+                    or exact_type(free_variable) is not string_type
+                    or exact_type(occupied) is not boolean_type
+                    or verifier_closure[index] is not cell
+                    or verifier_code.co_freevars[index] != free_variable
+                ):
+                    raise boundary_error_type(
+                        "registered experiment authority verifier closure changed"
+                    )
+                try:
+                    current_content = cell.cell_contents
+                except value_error_type:
+                    if occupied:
+                        raise boundary_error_type(
+                            "registered experiment authority verifier closure changed"
+                        ) from None
+                else:
+                    if not occupied or current_content is not content:
+                        raise boundary_error_type(
+                            "registered experiment authority verifier closure changed"
+                        )
+        try:
+            verified = authority_integrity_verifier(authority_integrity)
+        except base_exception_type as primary:
+            raise boundary_error_type(
+                "registered experiment authority anchor changed"
+            ) from primary
+        if verified is not None:
+            raise boundary_error_type(
+                "registered experiment authority verifier returned an unexpected value"
+            )
+        require_caller_integrity()
+
+    def require_authority_boundary(message: str, /) -> None:
+        require_external_authority_integrity()
+        try:
+            authority_result = require_authority()
+        except base_exception_type as primary:
+            try:
+                require_external_authority_integrity()
+            except base_exception_type as boundary:
+                raise boundary_error_type(message) from boundary
+            raise boundary_error_type(message) from primary
+        require_external_authority_integrity()
+        if authority_result is not None:
+            raise boundary_error_type(message)
+
+    if _check_before:
+        require_authority_boundary(
+            "registered experiment authority failed before an operation"
+        )
+    if _operation_completed:
+        require_authority_boundary(
+            f"registered experiment authority changed after {route_name}"
+        )
+        return None
+    try:
+        result = route(*arguments)
+    except base_exception_type:
+        try:
+            require_authority_boundary(
+                f"registered experiment authority changed during {route_name}"
+            )
+        except base_exception_type as boundary:
+            raise boundary_error_type(
+                f"registered experiment authority changed during {route_name}"
+            ) from boundary
+        raise
+    if _result_box is not None:
+        _result_box[0] = result
+    try:
+        require_authority_boundary(
+            f"registered experiment authority changed after {route_name}"
+        )
+    except base_exception_type as primary:
+        raise boundary_error_type(
+            f"registered experiment authority changed after {route_name}"
+        ) from primary
+    return result
+
+
+def _run_registered_experiment_once(
+    registration: VerifiedRunRegistration,
+    admitted_registration_frame: _RegistrationPublicationFrame,
+    operations: _RegisteredExperimentOperations,
+    operation_descriptors: tuple[
+        MemberDescriptorType,
+        ...,
+    ] = _REGISTERED_EXPERIMENT_OPERATION_DESCRIPTORS,
+    /,
+) -> None:
+    """Execute one already-admitted parent attempt and establish one outcome."""
+
+    exact_type = type
+    object_factory = object
+    tuple_type = tuple
+    list_type = list
+    dictionary_type = dict
+    integer_type = int
+    string_type = str
+    function_type = FunctionType
+    code_type = CodeType
+    cell_type = CellType
+    member_descriptor_type = MemberDescriptorType
+    base_exception_type = BaseException
+    boundary_error_type = _RegisteredExperimentBoundaryError
+    error_type = Experiment002CoordinatorError
+    registration_type = VerifiedRunRegistration
+    operations_type = _RegisteredExperimentOperations
+    call_operation = _call_registered_experiment_operation
+    type_cast = cast
+    length = len
+    any_value = any
+    range_values = range
+    value_error_type = ValueError
+
+    if (
+        exact_type(registration) is not registration_type
+        or exact_type(admitted_registration_frame) is not tuple_type
+        or length(admitted_registration_frame) != 4
+        or any_value(
+            exact_type(value) is not string_type
+            for value in admitted_registration_frame
+        )
+        or exact_type(operations) is not operations_type
+        or exact_type(operation_descriptors) is not tuple_type
+        or length(operation_descriptors) != 17
+        or any_value(
+            exact_type(descriptor) is not member_descriptor_type
+            for descriptor in operation_descriptors
+        )
+        or exact_type(call_operation) is not function_type
+    ):
+        raise boundary_error_type("registered experiment admission frame is invalid")
+
+    operation_values = tuple_type(
+        descriptor.__get__(operations, operations_type)
+        for descriptor in operation_descriptors
+    )
+    (
+        prepare_staging,
+        capture_cpu_ids,
+        create_source_bundle,
+        run_selection,
+        build_completed_evidence,
+        verify_completed_evidence,
+        require_quiescence,
+        cleanup_output_roots,
+        build_failure_evidence,
+        verify_failure_evidence,
+        publish_final_evidence,
+        authority_integrity_verifier,
+        authority_integrity,
+        require_authority,
+        registration_frame_route,
+        source_bundle_frame_route,
+        close_source_bundle,
+    ) = type_cast(
+        (
+            "tuple[Callable[[], object], Callable[[], object], "
+            "Callable[[VerifiedRunRegistration], object], "
+            "Callable[[VerifiedRunRegistration, tuple[int, int], int], object], "
+            "Callable[[object], object], Callable[[object], object], "
+            "Callable[[], object], Callable[[], object], "
+            "Callable[[_RegistrationPublicationFrame, str, str], object], "
+            "Callable[[object], object], "
+            "Callable[[VerifiedRunRegistration, object], object], "
+            "FunctionType, _FunctionIntegrityFrame, Callable[[], object], "
+            "Callable[[VerifiedRunRegistration], _RegistrationPublicationFrame], "
+            "Callable[[int], _SourceBundleDescriptorFrame], "
+            "Callable[[int], object]]"
+        ),
+        operation_values,
+    )
+
+    call_closure = call_operation.__closure__
+    try:
+        call_closure_contents = tuple_type(
+            cell.cell_contents for cell in tuple_type(call_closure or ())
+        )
+    except ValueError as closure_error:
+        raise boundary_error_type(
+            "registered experiment operation caller closure is unavailable"
+        ) from closure_error
+    caller_integrity = type_cast(
+        "_ShallowFunctionIntegrityFrame",
+        (
+            call_operation,
+            call_operation.__code__,
+            call_operation.__name__,
+            call_operation.__qualname__,
+            call_operation.__module__,
+            call_operation.__defaults__,
+            call_operation.__kwdefaults__,
+            call_closure,
+            call_closure_contents,
+        ),
+    )
+
+    def require_call_operation_integrity() -> None:
+        (
+            caller,
+            code,
+            name,
+            qualified_name,
+            module_name,
+            defaults,
+            keyword_defaults,
+            closure,
+            closure_contents,
+        ) = caller_integrity
+        try:
+            current_closure_contents = tuple_type(
+                cell.cell_contents for cell in tuple_type(closure or ())
+            )
+        except value_error_type as primary:
+            raise boundary_error_type(
+                "registered experiment operation caller changed"
+            ) from primary
+        if (
+            exact_type(caller) is not function_type
+            or exact_type(code) is not code_type
+            or exact_type(name) is not string_type
+            or exact_type(qualified_name) is not string_type
+            or exact_type(module_name) is not string_type
+            or (defaults is not None and exact_type(defaults) is not tuple_type)
+            or (
+                keyword_defaults is not None
+                and exact_type(keyword_defaults) is not dictionary_type
+            )
+            or (closure is not None and exact_type(closure) is not tuple_type)
+            or exact_type(closure_contents) is not tuple_type
+            or caller.__code__ is not code
+            or caller.__name__ is not name
+            or caller.__qualname__ is not qualified_name
+            or caller.__module__ is not module_name
+            or caller.__defaults__ is not defaults
+            or caller.__kwdefaults__ is not keyword_defaults
+            or caller.__closure__ is not closure
+            or exact_type(current_closure_contents) is not tuple_type
+            or length(current_closure_contents) != length(closure_contents)
+            or any_value(
+                current_closure_contents[index] is not closure_contents[index]
+                for index in range_values(length(closure_contents))
+            )
+        ):
+            raise boundary_error_type("registered experiment operation caller changed")
+
+    def call_checked(
+        route: Callable[..., object],
+        route_name: str,
+        *arguments: object,
+        result_box: list[object] | None = None,
+        result_sentinel: object | None = None,
+        check_before: bool = True,
+        operation_completed: bool = False,
+    ) -> object:
+        require_call_operation_integrity()
+        return call_operation(
+            boundary_error_type,
+            base_exception_type,
+            function_type,
+            code_type,
+            cell_type,
+            require_authority,
+            authority_integrity_verifier,
+            authority_integrity,
+            caller_integrity,
+            route,
+            route_name,
+            *arguments,
+            _result_box=result_box,
+            _result_sentinel=result_sentinel,
+            _check_before=check_before,
+            _operation_completed=operation_completed,
+        )
+
+    primary: BaseException | None = None
+    failure_pair: tuple[str, str] | None = None
+    reportable = True
+    completed_evidence: object | None = None
+    selection: object | None = None
+    source_bundle_fd: int | None = None
+    source_bundle_frame: _SourceBundleDescriptorFrame | None = None
+    close_attempted = False
+    selection_was_called = False
+
+    try:
+        prepared = call_checked(
+            prepare_staging,
+            "registered staging preparation",
+        )
+        if prepared is not None:
+            raise error_type(
+                "registered staging preparation returned an unexpected value"
+            )
+    except boundary_error_type as error:
+        primary = error
+        reportable = False
+    except base_exception_type as error:
+        primary = error
+        failure_pair = ("parent_setup", "staging_prepare_failed")
+
+    cpu_ids: tuple[int, int] | None = None
+    if primary is None:
+        try:
+            captured_cpu_ids = call_checked(
+                capture_cpu_ids,
+                "registered CPU capture",
+            )
+            if exact_type(captured_cpu_ids) is not tuple_type:
+                raise error_type(
+                    "registered CPU capture returned an invalid exact pair"
+                )
+            captured_cpu_fields = type_cast(
+                "tuple[object, ...]",
+                captured_cpu_ids,
+            )
+            if (
+                length(captured_cpu_fields) != 2
+                or any_value(
+                    exact_type(value) is not integer_type
+                    for value in captured_cpu_fields
+                )
+                or type_cast("int", captured_cpu_fields[0]) < 0
+                or type_cast("int", captured_cpu_fields[0])
+                >= type_cast("int", captured_cpu_fields[1])
+            ):
+                raise error_type(
+                    "registered CPU capture returned an invalid exact pair"
+                )
+            cpu_ids = type_cast("tuple[int, int]", captured_cpu_fields)
+        except boundary_error_type as error:
+            primary = error
+            reportable = False
+        except base_exception_type as error:
+            primary = error
+            failure_pair = ("parent_setup", "cpu_affinity_capture_failed")
+
+    if primary is None:
+        creator_result_sentinel = object_factory()
+        creator_results: list[object] = [creator_result_sentinel]
+        creator_failure: BaseException | None = None
+        try:
+            call_checked(
+                create_source_bundle,
+                "registered source-bundle creation",
+                registration,
+                result_box=creator_results,
+                result_sentinel=creator_result_sentinel,
+            )
+        except base_exception_type as error:
+            creator_failure = error
+        if exact_type(creator_results) is not list_type or length(creator_results) != 1:
+            creator_failure = boundary_error_type(
+                "registered source-bundle creator ownership frame is invalid"
+            )
+        else:
+            raw_creator_result = creator_results[0]
+            if (
+                raw_creator_result is not creator_result_sentinel
+                and exact_type(raw_creator_result) is integer_type
+                and raw_creator_result >= 0  # type: ignore[operator]
+            ):
+                source_bundle_fd = raw_creator_result  # type: ignore[assignment]
+        if exact_type(creator_failure) is boundary_error_type:
+            primary = creator_failure
+            reportable = False
+        elif creator_failure is not None:
+            primary = creator_failure
+            failure_pair = ("parent_setup", "source_bundle_create_failed")
+        elif source_bundle_fd is None:
+            primary = error_type(
+                "registered source-bundle creator returned an invalid descriptor"
+            )
+            failure_pair = ("parent_setup", "source_bundle_create_failed")
+        if primary is None:
+            try:
+                if source_bundle_fd is None:
+                    raise error_type(
+                        "registered source-bundle ownership was not established"
+                    )
+                captured_frame = call_checked(
+                    source_bundle_frame_route,
+                    "registered source-bundle inspection",
+                    source_bundle_fd,
+                )
+                if exact_type(captured_frame) is not tuple_type:
+                    raise error_type(
+                        "registered source-bundle frame has an invalid exact shape"
+                    )
+                captured_frame_fields = type_cast(
+                    "tuple[object, ...]",
+                    captured_frame,
+                )
+                if length(captured_frame_fields) != 8:
+                    raise error_type(
+                        "registered source-bundle frame has an invalid exact shape"
+                    )
+                source_bundle_frame = type_cast(
+                    _SourceBundleDescriptorFrame,
+                    captured_frame_fields,
+                )
+            except boundary_error_type as error:
+                primary = error
+                reportable = False
+            except base_exception_type as error:
+                primary = error
+                failure_pair = ("parent_setup", "source_bundle_create_failed")
+
+    if source_bundle_fd is not None:
+        try:
+            selected_candidate: object | None = None
+            if primary is None:
+                try:
+                    if cpu_ids is None or source_bundle_frame is None:
+                        raise error_type(
+                            "registered selection inputs were not fully captured"
+                        )
+                    before_selection = call_checked(
+                        source_bundle_frame_route,
+                        "pre-selection source-bundle inspection",
+                        source_bundle_fd,
+                    )
+                    if before_selection != source_bundle_frame:
+                        raise error_type(
+                            "source-bundle descriptor changed before selection"
+                        )
+                    selection_was_called = True
+                    selected = call_checked(
+                        run_selection,
+                        "registered seed selection",
+                        registration,
+                        cpu_ids,
+                        source_bundle_fd,
+                    )
+                    if exact_type(selected) is not tuple_type:
+                        raise error_type(
+                            "registered selector returned an invalid exact result"
+                        )
+                    selected_fields = type_cast(
+                        "tuple[object, ...]",
+                        selected,
+                    )
+                    if length(selected_fields) != 3:
+                        raise error_type(
+                            "registered selector returned an invalid exact result"
+                        )
+                    selected_candidate = selected_fields
+                except boundary_error_type as error:
+                    primary = error
+                    reportable = False
+                except base_exception_type as error:
+                    primary = error
+                    failure_pair = ("registered_execution", "seed_selection_failed")
+            if selection_was_called and reportable:
+                try:
+                    after_selection = call_checked(
+                        source_bundle_frame_route,
+                        "post-selection source-bundle inspection",
+                        source_bundle_fd,
+                    )
+                    if after_selection != source_bundle_frame:
+                        raise error_type(
+                            "source-bundle descriptor changed during selection"
+                        )
+                except boundary_error_type as error:
+                    primary = error
+                    failure_pair = None
+                    reportable = False
+                except base_exception_type as error:
+                    primary = error
+                    failure_pair = ("registered_execution", "seed_selection_failed")
+                    selected_candidate = None
+            if primary is None:
+                selection = selected_candidate
+        finally:
+            descriptor_to_close = source_bundle_fd
+            source_bundle_fd = None
+            close_attempted = True
+            close_failure: BaseException | None = None
+            closed: object = None
+            try:
+                closed = close_source_bundle(descriptor_to_close)
+            except base_exception_type as error:
+                close_failure = error
+            close_boundary: BaseException | None = None
+            try:
+                call_checked(
+                    close_source_bundle,
+                    "registered source-bundle close",
+                    check_before=False,
+                    operation_completed=True,
+                )
+            except base_exception_type as error:
+                close_boundary = error
+            if close_boundary is not None:
+                primary = close_boundary
+                failure_pair = None
+                reportable = False
+                selection = None
+            elif close_failure is not None or closed is not None:
+                primary = (
+                    close_failure
+                    if close_failure is not None
+                    else error_type(
+                        "registered source-bundle close returned an unexpected value"
+                    )
+                )
+                failure_pair = (
+                    "registered_execution",
+                    "source_bundle_close_failed",
+                )
+                selection = None
+
+    if source_bundle_fd is not None or (
+        source_bundle_frame is not None and not close_attempted
+    ):
+        raise boundary_error_type(
+            "registered source-bundle ownership was not discharged exactly once"
+        )
+
+    if primary is None:
+        try:
+            if selection is None:
+                raise error_type(
+                    "registered selector did not produce a completed candidate"
+                )
+            completed_evidence = call_checked(
+                build_completed_evidence,
+                "completed-evidence construction",
+                selection,
+            )
+            verified = call_checked(
+                verify_completed_evidence,
+                "completed-evidence verification",
+                completed_evidence,
+            )
+            if verified is not None:
+                raise error_type(
+                    "completed-evidence verifier returned an unexpected value"
+                )
+        except boundary_error_type as error:
+            primary = error
+            reportable = False
+            completed_evidence = None
+        except base_exception_type as error:
+            primary = error
+            failure_pair = ("completed_evidence", "completed_evidence_rejected")
+            completed_evidence = None
+
+    if primary is None:
+        try:
+            quiescent = call_checked(
+                require_quiescence,
+                "active parent quiescence",
+            )
+            if quiescent is not None:
+                raise error_type(
+                    "active parent quiescence returned an unexpected value"
+                )
+        except boundary_error_type as error:
+            primary = error
+            reportable = False
+            completed_evidence = None
+        except base_exception_type as error:
+            primary = error
+            failure_pair = (
+                "parent_boundary",
+                "pre_cleanup_quiescence_failed",
+            )
+            completed_evidence = None
+
+    cleanup_failure: BaseException | None = None
+    try:
+        cleaned = call_checked(
+            cleanup_output_roots,
+            "registered output cleanup",
+        )
+        if cleaned is not None:
+            raise error_type("registered output cleanup returned an unexpected value")
+    except base_exception_type as error:
+        cleanup_failure = error
+
+    postcleanup_failure: BaseException | None = None
+    try:
+        closed_quiescence = call_checked(
+            require_quiescence,
+            "closed parent quiescence",
+        )
+        if closed_quiescence is not None:
+            raise error_type("closed parent quiescence returned an unexpected value")
+    except base_exception_type as error:
+        postcleanup_failure = error
+
+    terminal_boundary_failure = (
+        postcleanup_failure if postcleanup_failure is not None else cleanup_failure
+    )
+    if terminal_boundary_failure is not None:
+        raise error_type(
+            "registered experiment terminal cleanup boundary failed closed"
+        ) from terminal_boundary_failure
+
+    try:
+        final_registration_frame = call_checked(
+            registration_frame_route,
+            "final registration-frame verification",
+            registration,
+        )
+        if final_registration_frame != admitted_registration_frame:
+            raise boundary_error_type(
+                "run registration changed across registered execution"
+            )
+    except base_exception_type as error:
+        raise error_type(
+            "registered experiment final authority failed closed"
+        ) from error
+
+    if primary is None:
+        if completed_evidence is None:
+            raise error_type("registered experiment lost its completed evidence")
+        try:
+            published = publish_final_evidence(registration, completed_evidence)
+            if published is not None:
+                raise error_type(
+                    "registered final publisher returned an unexpected value"
+                )
+            return None
+        except base_exception_type as error:
+            raise error_type(
+                "registered experiment final publication failed closed"
+            ) from error
+
+    if not reportable or failure_pair is None:
+        raise error_type(
+            "registered experiment failed at an unreportable authority boundary"
+        ) from primary
+
+    try:
+        failure_evidence = call_checked(
+            build_failure_evidence,
+            "execution-failure evidence construction",
+            admitted_registration_frame,
+            failure_pair[0],
+            failure_pair[1],
+        )
+        failure_verified = call_checked(
+            verify_failure_evidence,
+            "execution-failure evidence verification",
+            failure_evidence,
+        )
+        if failure_verified is not None:
+            raise error_type(
+                "execution-failure evidence verifier returned an unexpected value"
+            )
+    except base_exception_type as error:
+        raise error_type(
+            "registered experiment failure evidence was rejected"
+        ) from error
+
+    try:
+        published_failure = publish_final_evidence(
+            registration,
+            failure_evidence,
+        )
+        if published_failure is not None:
+            raise error_type("registered final publisher returned an unexpected value")
+    except base_exception_type as error:
+        raise error_type(
+            "registered experiment final publication failed closed"
+        ) from error
+
+    raise error_type(
+        "registered experiment ended with controlled "
+        f"{failure_pair[0]}/{failure_pair[1]}"
+    ) from primary
+
+
+def _make_registered_experiment_route() -> Callable[
+    [VerifiedRunRegistration],
+    None,
+]:
+    """Bind the delayed parent composition and its permanent one-attempt state."""
+
+    module_globals = globals()
+    exact_type = type
+    type_cast = cast
+    tuple_type = tuple
+    any_value = any
+    enumerate_values = enumerate
+    range_values = range
+    frozen_set = frozenset
+    length = len
+    sort_values = sorted
+    zip_values = zip
+    dictionary_type = dict
+    dictionary_get = dict.get
+    string_type = str
+    integer_type = int
+    boolean_type = bool
+    function_type = FunctionType
+    code_type = CodeType
+    module_type = ModuleType
+    member_descriptor_type = MemberDescriptorType
+    error_type = Experiment002CoordinatorError
+    boundary_error_type = _RegisteredExperimentBoundaryError
+    base_exception_type = BaseException
+    type_error = TypeError
+    descriptor_inspection_errors = (OSError, ValueError, AttributeError)
+    registration_type = VerifiedRunRegistration
+    registration_verifier = cast(FunctionType, verify_verified_run_registration)
+    registration_reverifier = cast(
+        FunctionType,
+        reverify_verified_run_registration,
+    )
+    run_authority_module_name = _RUN_AUTHORITY_MODULE
+    supervisor_module_name = _SUPERVISOR_MODULE
+    evidence_module_name = _FINAL_EVIDENCE_MODULE
+    publication_module_name = _FINAL_PUBLICATION_MODULE
+    lower_hex_authority = frozen_set(_LOWER_HEX)
+    coordinator_module_name = __name__
+    os_module = os
+    fcntl_module = fcntl
+    stat_module = stat
+    threading_module = threading
+    importlib_module = importlib
+    if any_value(
+        exact_type(module) is not module_type
+        for module in (
+            os_module,
+            fcntl_module,
+            stat_module,
+            threading_module,
+            importlib_module,
+        )
+    ):
+        raise RuntimeError("registered experiment module identities are invalid")
+    os_namespace = os_module.__dict__
+    fcntl_namespace = fcntl_module.__dict__
+    stat_namespace = stat_module.__dict__
+    threading_namespace = threading_module.__dict__
+    importlib_namespace = importlib_module.__dict__
+    if any_value(
+        exact_type(namespace) is not dictionary_type
+        for namespace in (
+            os_namespace,
+            fcntl_namespace,
+            stat_namespace,
+            threading_namespace,
+            importlib_namespace,
+        )
+    ) or any_value(
+        exact_type(name) is not string_type
+        for namespace in (
+            os_namespace,
+            fcntl_namespace,
+            stat_namespace,
+            threading_namespace,
+            importlib_namespace,
+        )
+        for name in namespace
+    ):
+        raise RuntimeError("registered experiment module namespaces are unavailable")
+    dynamic_import = type_cast(
+        "Callable[[str], ModuleType]",
+        dictionary_get(importlib_namespace, "import_module"),
+    )
+    process_id = type_cast(
+        "Callable[[], int]",
+        dictionary_get(os_namespace, "getpid"),
+    )
+    thread_id = type_cast(
+        "Callable[[], int]",
+        dictionary_get(threading_namespace, "get_ident"),
+    )
+    owner_process = process_id()
+    owner_thread = thread_id()
+    if (
+        exact_type(owner_process) is not integer_type
+        or owner_process < 1
+        or exact_type(owner_thread) is not integer_type
+        or owner_thread < 1
+    ):
+        raise RuntimeError("registered experiment owner identity is invalid")
+
+    state_type = _RegisteredExperimentState
+    operations_type = _RegisteredExperimentOperations
+    state_field_names = ("attempted", "in_flight")
+    operations_field_names = _REGISTERED_EXPERIMENT_OPERATION_FIELD_NAMES
+    initial_state_namespace = state_type.__dict__
+    initial_operations_namespace = operations_type.__dict__
+    if any_value(
+        exact_type(name) is not string_type
+        for namespace in (initial_state_namespace, initial_operations_namespace)
+        for name in namespace
+    ):
+        raise RuntimeError("registered experiment class namespaces are invalid")
+    state_descriptors = tuple_type(
+        initial_state_namespace.get(name) for name in state_field_names
+    )
+    operations_descriptors = _REGISTERED_EXPERIMENT_OPERATION_DESCRIPTORS
+    if any_value(
+        exact_type(descriptor) is not member_descriptor_type
+        for descriptor in (*state_descriptors, *operations_descriptors)
+    ):
+        raise RuntimeError("registered experiment slots are unavailable")
+    typed_state_descriptors = type_cast(
+        "tuple[MemberDescriptorType, MemberDescriptorType]",
+        state_descriptors,
+    )
+    typed_operations_descriptors = type_cast(
+        "tuple[MemberDescriptorType, ...]",
+        operations_descriptors,
+    )
+
+    def class_frame(
+        class_type: type[object],
+        /,
+    ) -> tuple[tuple[str, ...], tuple[object, ...]]:
+        namespace = class_type.__dict__
+        if any_value(exact_type(name) is not string_type for name in namespace):
+            raise boundary_error_type("registered parent class namespace is invalid")
+        names = tuple_type(sort_values(namespace))
+        return names, tuple_type(namespace[name] for name in names)
+
+    coordinator_classes = (
+        registration_type,
+        error_type,
+        boundary_error_type,
+        state_type,
+        operations_type,
+    )
+    coordinator_class_frames = tuple_type(
+        class_frame(class_type) for class_type in coordinator_classes
+    )
+    own_operation = type_cast(FunctionType, _run_registered_experiment_once)
+    own_operation_route: Callable[
+        [
+            VerifiedRunRegistration,
+            _RegistrationPublicationFrame,
+            _RegisteredExperimentOperations,
+            tuple[MemberDescriptorType, ...],
+        ],
+        None,
+    ] = type_cast(
+        Callable[
+            [
+                VerifiedRunRegistration,
+                _RegistrationPublicationFrame,
+                _RegisteredExperimentOperations,
+                tuple[MemberDescriptorType, ...],
+            ],
+            None,
+        ],
+        own_operation,
+    )
+    own_caller = type_cast(FunctionType, _call_registered_experiment_operation)
+    seed_selection = type_cast(FunctionType, _run_registered_seed_selection)
+    recursive_capture = _capture_recursive_function_integrity
+    recursive_require = _require_recursive_function_integrity_unchanged
+
+    def shallow_function_frame(
+        function: FunctionType,
+        /,
+    ) -> _ShallowFunctionIntegrityFrame:
+        closure = function.__closure__
+        try:
+            closure_contents = tuple_type(
+                cell.cell_contents for cell in tuple_type(closure or ())
+            )
+        except ValueError as primary:
+            raise RuntimeError(
+                "registered experiment function closure is unavailable"
+            ) from primary
+        return (
+            function,
+            function.__code__,
+            function.__name__,
+            function.__qualname__,
+            function.__module__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            closure,
+            closure_contents,
+        )
+
+    manually_pinned_function_frames = tuple_type(
+        shallow_function_frame(type_cast("FunctionType", function))
+        for function in (
+            recursive_capture,
+            recursive_require,
+            dynamic_import,
+            type_cast,
+        )
+    )
+    coordinator_integrity = recursive_capture(
+        (
+            own_operation,
+            own_caller,
+            seed_selection,
+            registration_verifier,
+            registration_reverifier,
+        )
+    )
+    coordinator_names = (
+        "VerifiedRunRegistration",
+        "verify_verified_run_registration",
+        "reverify_verified_run_registration",
+        "_run_registered_experiment_once",
+        "_call_registered_experiment_operation",
+        "_run_registered_seed_selection",
+        "_RegisteredExperimentState",
+        "_RegisteredExperimentOperations",
+        "_RegisteredExperimentBoundaryError",
+        "Experiment002CoordinatorError",
+        "_capture_recursive_function_integrity",
+        "_require_recursive_function_integrity_unchanged",
+    )
+    coordinator_values = (
+        registration_type,
+        registration_verifier,
+        registration_reverifier,
+        own_operation,
+        own_caller,
+        seed_selection,
+        state_type,
+        operations_type,
+        boundary_error_type,
+        error_type,
+        recursive_capture,
+        recursive_require,
+    )
+    os_route_names = (
+        "close",
+        "fstat",
+        "geteuid",
+        "getegid",
+        "get_inheritable",
+        "getpid",
+        "lseek",
+        "readlink",
+    )
+    os_routes = tuple_type(
+        dictionary_get(os_namespace, name) for name in os_route_names
+    )
+    os_constant_names = (
+        "O_ACCMODE",
+        "O_APPEND",
+        "O_NONBLOCK",
+        "O_RDONLY",
+        "SEEK_CUR",
+    )
+    os_constants = type_cast(
+        "tuple[int, int, int, int, int]",
+        tuple_type(dictionary_get(os_namespace, name) for name in os_constant_names),
+    )
+    fcntl_route = type_cast(
+        "Callable[[int, int], int]",
+        dictionary_get(fcntl_namespace, "fcntl"),
+    )
+    fcntl_constant_names = ("F_GETFD", "F_GETFL", "F_GET_SEALS", "FD_CLOEXEC")
+    fcntl_constants = type_cast(
+        "tuple[int, int, int, int]",
+        tuple_type(
+            dictionary_get(fcntl_namespace, name) for name in fcntl_constant_names
+        ),
+    )
+    stat_routes = (
+        dictionary_get(stat_namespace, "S_ISREG"),
+        dictionary_get(stat_namespace, "S_IMODE"),
+    )
+    if any_value(
+        exact_type(value) is not integer_type or value < 0
+        for value in (*os_constants, *fcntl_constants)
+    ):
+        raise RuntimeError("registered experiment descriptor constants are unavailable")
+    close_descriptor = type_cast(
+        "Callable[[int], None]",
+        dictionary_get(os_namespace, "close"),
+    )
+    state = state_type(attempted=False, in_flight=False)
+    state_lock = threading.Lock()
+    public_route_box: list[FunctionType] = []
+    public_route_frame_box: list[_ShallowFunctionIntegrityFrame] = []
+    claim_integrity_box: list[_FunctionIntegrityFrame] = []
+    fixed_global_names = (
+        "_RUN_AUTHORITY_MODULE",
+        "_SUPERVISOR_MODULE",
+        "_FINAL_EVIDENCE_MODULE",
+        "_FINAL_PUBLICATION_MODULE",
+        "_LOWER_HEX",
+        "FunctionType",
+        "MemberDescriptorType",
+        "cast",
+        "_REGISTERED_EXPERIMENT_OPERATION_FIELD_NAMES",
+        "_REGISTERED_EXPERIMENT_OPERATION_DESCRIPTORS",
+    )
+    fixed_global_values = (
+        run_authority_module_name,
+        supervisor_module_name,
+        evidence_module_name,
+        publication_module_name,
+        lower_hex_authority,
+        function_type,
+        member_descriptor_type,
+        type_cast,
+        operations_field_names,
+        typed_operations_descriptors,
+    )
+
+    def require_coordinator_authority() -> None:
+        current_state_namespace = state_type.__dict__
+        current_operations_namespace = operations_type.__dict__
+        for function_frame in manually_pinned_function_frames:
+            if (
+                exact_type(function_frame) is not tuple_type
+                or length(function_frame) != 9
+            ):
+                raise boundary_error_type(
+                    "registered experiment function anchor is invalid"
+                )
+            (
+                function,
+                code,
+                name,
+                qualified_name,
+                module_name,
+                defaults,
+                keyword_defaults,
+                closure,
+                closure_contents,
+            ) = function_frame
+            try:
+                current_closure_contents = tuple_type(
+                    cell.cell_contents for cell in tuple_type(closure or ())
+                )
+            except ValueError as primary:
+                raise boundary_error_type(
+                    "registered experiment function anchor changed"
+                ) from primary
+            if (
+                exact_type(function) is not function_type
+                or exact_type(code) is not code_type
+                or exact_type(name) is not string_type
+                or exact_type(qualified_name) is not string_type
+                or exact_type(module_name) is not string_type
+                or (defaults is not None and exact_type(defaults) is not tuple_type)
+                or (
+                    keyword_defaults is not None
+                    and exact_type(keyword_defaults) is not dictionary_type
+                )
+                or (closure is not None and exact_type(closure) is not tuple_type)
+                or exact_type(closure_contents) is not tuple_type
+                or function.__code__ is not code
+                or function.__name__ is not name
+                or function.__qualname__ is not qualified_name
+                or function.__module__ is not module_name
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not keyword_defaults
+                or function.__closure__ is not closure
+                or exact_type(current_closure_contents) is not tuple_type
+                or length(current_closure_contents) != length(closure_contents)
+                or any_value(
+                    current_closure_contents[index] is not closure_contents[index]
+                    for index in range_values(length(closure_contents))
+                )
+            ):
+                raise boundary_error_type(
+                    "registered experiment function anchor changed"
+                )
+        if (
+            exact_type(module_globals) is not dictionary_type
+            or any_value(exact_type(name) is not string_type for name in module_globals)
+            or exact_type(os_module) is not module_type
+            or exact_type(fcntl_module) is not module_type
+            or exact_type(stat_module) is not module_type
+            or exact_type(threading_module) is not module_type
+            or exact_type(importlib_module) is not module_type
+            or os_module.__dict__ is not os_namespace
+            or fcntl_module.__dict__ is not fcntl_namespace
+            or stat_module.__dict__ is not stat_namespace
+            or threading_module.__dict__ is not threading_namespace
+            or importlib_module.__dict__ is not importlib_namespace
+            or any_value(
+                exact_type(name) is not string_type
+                for namespace in (
+                    os_namespace,
+                    fcntl_namespace,
+                    stat_namespace,
+                    threading_namespace,
+                    importlib_namespace,
+                )
+                for name in namespace
+            )
+            or dictionary_get(module_globals, "os") is not os_module
+            or dictionary_get(module_globals, "fcntl") is not fcntl_module
+            or dictionary_get(module_globals, "stat") is not stat_module
+            or dictionary_get(module_globals, "threading") is not threading_module
+            or dictionary_get(module_globals, "importlib") is not importlib_module
+            or dictionary_get(importlib_namespace, "import_module")
+            is not dynamic_import
+            or dictionary_get(threading_namespace, "get_ident") is not thread_id
+            or any_value(
+                dictionary_get(module_globals, name) is not fixed_global_values[index]
+                for index, name in enumerate_values(fixed_global_names)
+            )
+            or any_value(
+                dictionary_get(module_globals, name) is not coordinator_values[index]
+                for index, name in enumerate_values(coordinator_names)
+            )
+            or any_value(
+                dictionary_get(os_namespace, name) is not os_routes[index]
+                for index, name in enumerate_values(os_route_names)
+            )
+            or any_value(
+                dictionary_get(os_namespace, name) is not os_constants[index]
+                for index, name in enumerate_values(os_constant_names)
+            )
+            or dictionary_get(fcntl_namespace, "fcntl") is not fcntl_route
+            or any_value(
+                dictionary_get(fcntl_namespace, name) is not fcntl_constants[index]
+                for index, name in enumerate_values(fcntl_constant_names)
+            )
+            or dictionary_get(stat_namespace, "S_ISREG") is not stat_routes[0]
+            or dictionary_get(stat_namespace, "S_IMODE") is not stat_routes[1]
+            or any_value(
+                exact_type(name) is not string_type for name in current_state_namespace
+            )
+            or any_value(
+                exact_type(name) is not string_type
+                for name in current_operations_namespace
+            )
+            or tuple_type(sort_values(current_state_namespace))
+            != coordinator_class_frames[3][0]
+            or any_value(
+                current_state_namespace[name]
+                is not coordinator_class_frames[3][1][index]
+                for index, name in enumerate_values(coordinator_class_frames[3][0])
+            )
+            or tuple_type(sort_values(current_operations_namespace))
+            != coordinator_class_frames[4][0]
+            or any_value(
+                current_operations_namespace[name]
+                is not coordinator_class_frames[4][1][index]
+                for index, name in enumerate_values(coordinator_class_frames[4][0])
+            )
+            or any_value(
+                current_state_namespace.get(name) is not typed_state_descriptors[index]
+                for index, name in enumerate_values(state_field_names)
+            )
+            or any_value(
+                current_operations_namespace.get(name)
+                is not typed_operations_descriptors[index]
+                for index, name in enumerate_values(operations_field_names)
+            )
+        ):
+            raise boundary_error_type(
+                "registered experiment coordinator authority changed"
+            )
+        for index, class_type in enumerate_values(coordinator_classes[:3]):
+            names, values = coordinator_class_frames[index]
+            current_namespace = class_type.__dict__
+            if (
+                any_value(
+                    exact_type(name) is not string_type for name in current_namespace
+                )
+                or tuple_type(sort_values(current_namespace)) != names
+                or any_value(
+                    current_namespace[name] is not values[item]
+                    for item, name in enumerate_values(names)
+                )
+            ):
+                raise boundary_error_type(
+                    "registered experiment coordinator class authority changed"
+                )
+        if claim_integrity_box:
+            if length(claim_integrity_box) != 1:
+                raise boundary_error_type(
+                    "registered parent route integrity anchor is invalid"
+                )
+            recursive_require(claim_integrity_box[0])
+        recursive_require(coordinator_integrity)
+        if public_route_box:
+            public_route = public_route_box[0]
+            if length(public_route_frame_box) != 1:
+                raise boundary_error_type(
+                    "registered experiment public route frame is invalid"
+                )
+            (
+                framed_public_route,
+                public_code,
+                public_name,
+                public_qualified_name,
+                public_module_name,
+                public_defaults,
+                public_keyword_defaults,
+                public_closure,
+                public_closure_contents,
+            ) = public_route_frame_box[0]
+            try:
+                current_public_closure_contents = tuple_type(
+                    cell.cell_contents for cell in tuple_type(public_closure or ())
+                )
+            except ValueError as primary:
+                raise boundary_error_type(
+                    "registered experiment public route authority changed"
+                ) from primary
+            if (
+                public_route_box[1:]
+                or any_value(
+                    exact_type(name) is not string_type for name in module_globals
+                )
+                or dictionary_get(module_globals, "run_registered_experiment")
+                is not public_route
+                or exact_type(public_route) is not function_type
+                or framed_public_route is not public_route
+                or public_route.__code__ is not public_code
+                or public_route.__name__ is not public_name
+                or public_route.__name__ != "run_registered_experiment"
+                or public_route.__qualname__ is not public_qualified_name
+                or public_route.__module__ is not public_module_name
+                or public_route.__module__ != coordinator_module_name
+                or public_route.__defaults__ is not public_defaults
+                or public_route.__defaults__ is not None
+                or public_route.__kwdefaults__ is not public_keyword_defaults
+                or public_route.__kwdefaults__ is not None
+                or public_route.__closure__ is not public_closure
+                or exact_type(public_closure_contents) is not tuple_type
+                or exact_type(current_public_closure_contents) is not tuple_type
+                or length(current_public_closure_contents)
+                != length(public_closure_contents)
+                or any_value(
+                    current_public_closure_contents[index]
+                    is not public_closure_contents[index]
+                    for index in range_values(length(public_closure_contents))
+                )
+                or public_route.__code__.co_argcount != 1
+                or public_route.__code__.co_posonlyargcount != 1
+                or public_route.__code__.co_kwonlyargcount != 0
+            ):
+                raise boundary_error_type(
+                    "registered experiment public route authority changed"
+                )
+
+    def require_function_identity(
+        route: object,
+        name: str,
+        module_name: str,
+        positional_only: int,
+        positional_or_keyword: int,
+        /,
+    ) -> FunctionType:
+        if exact_type(route) is not function_type:
+            raise boundary_error_type(
+                "registered parent route is not an exact function"
+            )
+        function: FunctionType = type_cast("FunctionType", route)
+        code = function.__code__
+        observed_name = function.__name__
+        observed_module = function.__module__
+        if (
+            exact_type(observed_name) is not string_type
+            or exact_type(observed_module) is not string_type
+            or observed_name != name
+            or observed_module != module_name
+            or code.co_posonlyargcount != positional_only
+            or code.co_argcount != positional_only + positional_or_keyword
+            or code.co_kwonlyargcount != 0
+            or function.__defaults__ is not None
+            or function.__kwdefaults__ is not None
+        ):
+            raise boundary_error_type(
+                "registered parent route signature or identity is invalid"
+            )
+        return function
+
+    def require_exact_module(value: object, name: str, /) -> ModuleType:
+        if exact_type(value) is not module_type:
+            raise boundary_error_type("registered parent module identity is invalid")
+        typed_module: ModuleType = type_cast("ModuleType", value)
+        namespace = typed_module.__dict__
+        if exact_type(namespace) is not dictionary_type or any_value(
+            exact_type(binding_name) is not string_type for binding_name in namespace
+        ):
+            raise boundary_error_type("registered parent module identity is invalid")
+        observed_name = dictionary_get(namespace, "__name__")
+        if exact_type(observed_name) is not string_type or observed_name != name:
+            raise boundary_error_type("registered parent module identity is invalid")
+        return typed_module
+
+    def claim_parent_operations(
+        registration: VerifiedRunRegistration,
+        /,
+    ) -> tuple[_RegistrationPublicationFrame, _RegisteredExperimentOperations]:
+        def require_claim_integrity() -> None:
+            if (
+                length(claim_integrity_box) != 1
+                or length(manually_pinned_function_frames) != 4
+            ):
+                raise boundary_error_type(
+                    "registered parent route integrity anchor is invalid"
+                )
+            (
+                verifier,
+                verifier_code,
+                verifier_name,
+                verifier_qualified_name,
+                verifier_module_name,
+                verifier_defaults,
+                verifier_keyword_defaults,
+                verifier_closure,
+                verifier_closure_contents,
+            ) = manually_pinned_function_frames[1]
+            try:
+                current_verifier_closure_contents = tuple_type(
+                    cell.cell_contents for cell in tuple_type(verifier_closure or ())
+                )
+            except ValueError as primary:
+                raise boundary_error_type(
+                    "registered parent integrity verifier changed"
+                ) from primary
+            if (
+                verifier is not recursive_require
+                or exact_type(verifier) is not function_type
+                or exact_type(verifier_code) is not code_type
+                or verifier.__code__ is not verifier_code
+                or verifier.__name__ is not verifier_name
+                or verifier.__qualname__ is not verifier_qualified_name
+                or verifier.__module__ is not verifier_module_name
+                or verifier.__defaults__ is not verifier_defaults
+                or verifier.__kwdefaults__ is not verifier_keyword_defaults
+                or verifier.__closure__ is not verifier_closure
+                or exact_type(verifier_closure_contents) is not tuple_type
+                or exact_type(current_verifier_closure_contents) is not tuple_type
+                or length(current_verifier_closure_contents)
+                != length(verifier_closure_contents)
+                or any_value(
+                    current_verifier_closure_contents[index]
+                    is not verifier_closure_contents[index]
+                    for index in range_values(length(verifier_closure_contents))
+                )
+            ):
+                raise boundary_error_type(
+                    "registered parent integrity verifier changed"
+                )
+            result = recursive_require(claim_integrity_box[0])
+            if result is not None:
+                raise boundary_error_type(
+                    "registered parent integrity verifier returned an unexpected value"
+                )
+
+        require_claim_integrity()
+        require_coordinator_authority()
+        verification = registration_verifier(registration)
+        require_claim_integrity()
+        require_coordinator_authority()
+        if verification is not None:
+            raise boundary_error_type(
+                "run-registration verifier returned an unexpected value"
+            )
+
+        imported_run_authority_module = dynamic_import(run_authority_module_name)
+        require_claim_integrity()
+        require_coordinator_authority()
+        run_authority_module = require_exact_module(
+            imported_run_authority_module,
+            run_authority_module_name,
+        )
+        run_authority_namespace = run_authority_module.__dict__
+        if exact_type(run_authority_namespace) is not dictionary_type or any_value(
+            exact_type(name) is not string_type for name in run_authority_namespace
+        ):
+            raise boundary_error_type("run-registration module namespace is invalid")
+        verified_state_route = require_function_identity(
+            dictionary_get(run_authority_namespace, "_verified_state"),
+            "_verified_state",
+            run_authority_module_name,
+            0,
+            1,
+        )
+        create_source_bundle = require_function_identity(
+            dictionary_get(
+                run_authority_namespace,
+                "_create_sealed_experiment_002_child_bundle_fd",
+            ),
+            "_create_sealed_experiment_002_child_bundle_fd",
+            run_authority_module_name,
+            1,
+            0,
+        )
+        required_seals_route = require_function_identity(
+            dictionary_get(
+                run_authority_namespace,
+                "_required_child_bundle_seals",
+            ),
+            "_required_child_bundle_seals",
+            run_authority_module_name,
+            0,
+            0,
+        )
+        verified_state_type = dictionary_get(
+            run_authority_namespace,
+            "_VerifiedState",
+        )
+        if exact_type(verified_state_type) is not exact_type:
+            raise boundary_error_type("run-registration state type is invalid")
+        typed_verified_state_type = type_cast("type[object]", verified_state_type)
+        verified_state_names, verified_state_values = class_frame(
+            typed_verified_state_type
+        )
+        verified_state_namespace = typed_verified_state_type.__dict__
+        if any_value(
+            exact_type(name) is not string_type for name in verified_state_namespace
+        ):
+            raise boundary_error_type("run-registration state namespace is invalid")
+        registration_field_names = (
+            "head_commit",
+            "implementation_commit",
+            "registration_sha256",
+            "source_bundle_sha256",
+        )
+        registration_descriptors = tuple_type(
+            verified_state_namespace.get(name) for name in registration_field_names
+        )
+        if any_value(
+            exact_type(descriptor) is not member_descriptor_type
+            for descriptor in registration_descriptors
+        ):
+            raise boundary_error_type(
+                "run-registration state descriptors are unavailable"
+            )
+        typed_registration_descriptors = type_cast(
+            "tuple[MemberDescriptorType, ...]",
+            registration_descriptors,
+        )
+        lower_hex = lower_hex_authority
+        maximum_bundle_bytes = dictionary_get(
+            run_authority_namespace,
+            "_MAX_CHILD_BUNDLE_BYTES",
+        )
+        expected_proc_target = dictionary_get(
+            run_authority_namespace,
+            "_SEALED_CHILD_MEMFD_TARGET",
+        )
+        if (
+            exact_type(maximum_bundle_bytes) is not integer_type
+            or type_cast("int", maximum_bundle_bytes) < 1
+            or exact_type(expected_proc_target) is not string_type
+            or not expected_proc_target
+        ):
+            raise boundary_error_type("source-bundle authority constants are invalid")
+        run_authority_integrity = recursive_capture(
+            (
+                registration_verifier,
+                registration_reverifier,
+                verified_state_route,
+                create_source_bundle,
+                required_seals_route,
+            )
+        )
+        run_authority_names = (
+            "VerifiedRunRegistration",
+            "verify_verified_run_registration",
+            "reverify_verified_run_registration",
+            "_verified_state",
+            "_VerifiedState",
+            "_create_sealed_experiment_002_child_bundle_fd",
+            "_required_child_bundle_seals",
+            "_MAX_CHILD_BUNDLE_BYTES",
+            "_SEALED_CHILD_MEMFD_TARGET",
+        )
+        run_authority_values = (
+            registration_type,
+            registration_verifier,
+            registration_reverifier,
+            verified_state_route,
+            typed_verified_state_type,
+            create_source_bundle,
+            required_seals_route,
+            maximum_bundle_bytes,
+            expected_proc_target,
+        )
+
+        def require_run_bindings() -> None:
+            current_verified_state_namespace = typed_verified_state_type.__dict__
+            if (
+                exact_type(run_authority_module) is not module_type
+                or run_authority_module.__dict__ is not run_authority_namespace
+                or any_value(
+                    exact_type(name) is not string_type
+                    for name in run_authority_namespace
+                )
+                or any_value(
+                    dictionary_get(run_authority_namespace, name)
+                    is not run_authority_values[index]
+                    for index, name in enumerate_values(run_authority_names)
+                )
+                or any_value(
+                    exact_type(name) is not string_type
+                    for name in current_verified_state_namespace
+                )
+                or tuple_type(sort_values(current_verified_state_namespace))
+                != verified_state_names
+                or any_value(
+                    current_verified_state_namespace[name]
+                    is not verified_state_values[index]
+                    for index, name in enumerate_values(verified_state_names)
+                )
+                or any_value(
+                    current_verified_state_namespace.get(name)
+                    is not typed_registration_descriptors[index]
+                    for index, name in enumerate_values(registration_field_names)
+                )
+            ):
+                raise boundary_error_type("run-registration authority changed")
+
+        run_bindings_integrity = recursive_capture(
+            type_cast("FunctionType", require_run_bindings)
+        )
+        require_claim_integrity()
+        require_coordinator_authority()
+        recursive_require(run_authority_integrity)
+        recursive_require(run_bindings_integrity)
+        require_run_bindings()
+        required_seals = required_seals_route()
+        require_claim_integrity()
+        require_coordinator_authority()
+        recursive_require(run_authority_integrity)
+        recursive_require(run_bindings_integrity)
+        require_run_bindings()
+        if exact_type(required_seals) is not integer_type:
+            raise boundary_error_type("source-bundle seals are invalid")
+        typed_required_seals = type_cast("int", required_seals)
+        if typed_required_seals < 1:
+            raise boundary_error_type("source-bundle seals are invalid")
+
+        def require_run_authority() -> None:
+            recursive_require(run_authority_integrity)
+            recursive_require(run_bindings_integrity)
+            require_run_bindings()
+            current_required_seals = required_seals_route()
+            recursive_require(run_authority_integrity)
+            recursive_require(run_bindings_integrity)
+            require_run_bindings()
+            if (
+                exact_type(current_required_seals) is not integer_type
+                or type_cast("int", current_required_seals) != typed_required_seals
+            ):
+                raise boundary_error_type("run-registration authority changed")
+
+        def registration_frame(
+            value: VerifiedRunRegistration,
+            /,
+        ) -> _RegistrationPublicationFrame:
+            if exact_type(value) is not registration_type:
+                raise type_error(
+                    "registration must be an exact VerifiedRunRegistration"
+                )
+            require_run_authority()
+            result = registration_verifier(value)
+            require_run_authority()
+            if result is not None:
+                raise boundary_error_type(
+                    "run-registration verifier returned an unexpected value"
+                )
+            first_state = verified_state_route(value)
+            require_run_authority()
+            if exact_type(first_state) is not typed_verified_state_type:
+                raise boundary_error_type(
+                    "run-registration state has an invalid exact type"
+                )
+
+            def read_fields(state_value: object) -> _RegistrationPublicationFrame:
+                fields = tuple_type(
+                    descriptor.__get__(
+                        state_value,
+                        typed_verified_state_type,
+                    )
+                    for descriptor in typed_registration_descriptors
+                )
+                if (
+                    length(fields) != 4
+                    or any_value(
+                        exact_type(field) is not string_type for field in fields
+                    )
+                    or length(type_cast("str", fields[0])) != 40
+                    or length(type_cast("str", fields[1])) != 40
+                    or length(type_cast("str", fields[2])) != 64
+                    or length(type_cast("str", fields[3])) != 64
+                    or any_value(
+                        character not in lower_hex
+                        for field in fields
+                        for character in type_cast("str", field)
+                    )
+                ):
+                    raise boundary_error_type("run-registration frame is not canonical")
+                typed_fields: _RegistrationPublicationFrame = type_cast(
+                    "_RegistrationPublicationFrame",
+                    fields,
+                )
+                return typed_fields
+
+            first = read_fields(first_state)
+            second_state = verified_state_route(value)
+            require_run_authority()
+            second = read_fields(second_state)
+            if second_state is not first_state or second != first:
+                raise boundary_error_type(
+                    "run-registration frame changed while captured"
+                )
+            return first
+
+        admitted_frame = registration_frame(registration)
+        require_claim_integrity()
+        require_coordinator_authority()
+        require_run_authority()
+
+        imported_supervisor_module = dynamic_import(supervisor_module_name)
+        require_claim_integrity()
+        require_coordinator_authority()
+        supervisor_module = require_exact_module(
+            imported_supervisor_module,
+            supervisor_module_name,
+        )
+        imported_evidence_module = dynamic_import(evidence_module_name)
+        require_claim_integrity()
+        require_coordinator_authority()
+        evidence_module = require_exact_module(
+            imported_evidence_module,
+            evidence_module_name,
+        )
+        imported_publication_module = dynamic_import(publication_module_name)
+        require_claim_integrity()
+        require_coordinator_authority()
+        publication_module = require_exact_module(
+            imported_publication_module,
+            publication_module_name,
+        )
+        supervisor_namespace = supervisor_module.__dict__
+        evidence_namespace = evidence_module.__dict__
+        publication_namespace = publication_module.__dict__
+        if any_value(
+            exact_type(namespace) is not dictionary_type
+            for namespace in (
+                supervisor_namespace,
+                evidence_namespace,
+                publication_namespace,
+            )
+        ) or any_value(
+            exact_type(name) is not string_type
+            for namespace in (
+                supervisor_namespace,
+                evidence_namespace,
+                publication_namespace,
+            )
+            for name in namespace
+        ):
+            raise boundary_error_type("registered parent module namespace is invalid")
+        prepare_staging = require_function_identity(
+            dictionary_get(
+                supervisor_namespace,
+                "_prepare_registered_experiment_staging",
+            ),
+            "_prepare_registered_experiment_staging",
+            supervisor_module_name,
+            0,
+            0,
+        )
+        capture_cpu_ids = require_function_identity(
+            dictionary_get(
+                supervisor_namespace,
+                "_capture_registered_cpu_ids",
+            ),
+            "_capture_registered_cpu_ids",
+            supervisor_module_name,
+            0,
+            0,
+        )
+        require_quiescence = require_function_identity(
+            dictionary_get(
+                supervisor_namespace,
+                "_require_registered_parent_quiescence",
+            ),
+            "_require_registered_parent_quiescence",
+            supervisor_module_name,
+            0,
+            0,
+        )
+        cleanup_output_roots = require_function_identity(
+            dictionary_get(
+                supervisor_namespace,
+                "_cleanup_registered_experiment_output_roots",
+            ),
+            "_cleanup_registered_experiment_output_roots",
+            supervisor_module_name,
+            0,
+            0,
+        )
+        lifecycle_route_bindings = (
+            ("_begin_registered_supervisor_child", "begin_registered_child"),
+            (
+                "_finish_registered_supervisor_child_success",
+                "finish_registered_child_success",
+            ),
+            (
+                "_finish_registered_supervisor_child_failure",
+                "finish_registered_child_failure",
+            ),
+        )
+        lifecycle_route_names = tuple_type(
+            binding_name for binding_name, _route_name in lifecycle_route_bindings
+        )
+        lifecycle_routes = tuple_type(
+            require_function_identity(
+                dictionary_get(supervisor_namespace, binding_name),
+                intrinsic_name,
+                supervisor_module_name,
+                0,
+                0,
+            )
+            for binding_name, intrinsic_name in lifecycle_route_bindings
+        )
+        cpu_helper_names = (
+            "_validate_launch_surface",
+            "_capture_two_lowest_cpu_ids",
+        )
+        cpu_helpers = tuple_type(
+            dictionary_get(supervisor_namespace, name) for name in cpu_helper_names
+        )
+        if any_value(exact_type(route) is not function_type for route in cpu_helpers):
+            raise boundary_error_type("registered CPU helper routes are invalid")
+        supervisor_plan = dictionary_get(
+            supervisor_namespace,
+            "_REGISTERED_PLAN",
+        )
+        supervisor_kernel = dictionary_get(
+            supervisor_namespace,
+            "_REAL_KERNEL",
+        )
+        lifecycle_state_type = dictionary_get(
+            supervisor_namespace,
+            "_RegisteredParentLifecycleState",
+        )
+        if exact_type(lifecycle_state_type) is not exact_type:
+            raise boundary_error_type(
+                "registered parent lifecycle state type is invalid"
+            )
+        typed_lifecycle_state_type = type_cast(
+            "type[object]",
+            lifecycle_state_type,
+        )
+        lifecycle_class_frame = class_frame(typed_lifecycle_state_type)
+
+        def closure_value(function: FunctionType, name: str, /) -> object:
+            closure = function.__closure__
+            if closure is None:
+                raise boundary_error_type(
+                    "registered lifecycle route lacks its state closure"
+                )
+            values = dictionary_type(
+                zip_values(
+                    function.__code__.co_freevars,
+                    closure,
+                    strict=True,
+                )
+            )
+            if name not in values:
+                raise boundary_error_type(
+                    "registered lifecycle route lacks its shared state"
+                )
+            return values[name].cell_contents
+
+        lifecycle_group = (
+            prepare_staging,
+            require_quiescence,
+            cleanup_output_roots,
+            *lifecycle_routes,
+        )
+        shared_lifecycle_state = closure_value(lifecycle_group[0], "state")
+        if exact_type(
+            shared_lifecycle_state
+        ) is not typed_lifecycle_state_type or any_value(
+            closure_value(route, "state") is not shared_lifecycle_state
+            for route in lifecycle_group[1:]
+        ):
+            raise boundary_error_type(
+                "registered lifecycle routes do not share one exact state"
+            )
+
+        build_completed = require_function_identity(
+            dictionary_get(
+                evidence_namespace,
+                "build_completed_final_evidence",
+            ),
+            "build_completed_final_evidence",
+            evidence_module_name,
+            1,
+            0,
+        )
+        verify_completed = require_function_identity(
+            dictionary_get(
+                evidence_namespace,
+                "verify_completed_final_evidence",
+            ),
+            "verify_completed_final_evidence",
+            evidence_module_name,
+            1,
+            0,
+        )
+        completed_type = dictionary_get(
+            evidence_namespace,
+            "FinalCompletedEvidence",
+        )
+        if exact_type(completed_type) is not exact_type:
+            raise boundary_error_type("completed evidence type is invalid")
+        typed_completed_type = type_cast("type[object]", completed_type)
+        completed_class_frame = class_frame(typed_completed_type)
+
+        build_failure = require_function_identity(
+            dictionary_get(
+                publication_namespace,
+                "build_execution_failure_evidence",
+            ),
+            "build_execution_failure_evidence",
+            publication_module_name,
+            3,
+            0,
+        )
+        verify_failure = require_function_identity(
+            dictionary_get(
+                publication_namespace,
+                "verify_execution_failure_evidence",
+            ),
+            "verify_execution_failure_evidence",
+            publication_module_name,
+            1,
+            0,
+        )
+        publish_final = require_function_identity(
+            dictionary_get(
+                publication_namespace,
+                "publish_registered_final_evidence",
+            ),
+            "publish_registered_final_evidence",
+            publication_module_name,
+            2,
+            0,
+        )
+        failure_type = dictionary_get(
+            publication_namespace,
+            "FinalExecutionFailureEvidence",
+        )
+        if exact_type(failure_type) is not exact_type:
+            raise boundary_error_type("execution-failure evidence type is invalid")
+        typed_failure_type = type_cast("type[object]", failure_type)
+        failure_class_frame = class_frame(typed_failure_type)
+
+        safe_routes = (
+            prepare_staging,
+            capture_cpu_ids,
+            require_quiescence,
+            cleanup_output_roots,
+            *lifecycle_routes,
+            *type_cast("tuple[FunctionType, FunctionType]", cpu_helpers),
+            create_source_bundle,
+            seed_selection,
+            build_completed,
+            verify_completed,
+            build_failure,
+            verify_failure,
+            registration_frame,
+        )
+        safe_integrity = recursive_capture(
+            type_cast("tuple[FunctionType, ...]", safe_routes)
+        )
+        publisher_shallow_frame = (
+            publish_final,
+            publish_final.__code__,
+            publish_final.__name__,
+            publish_final.__qualname__,
+            publish_final.__module__,
+            publish_final.__defaults__,
+            publish_final.__kwdefaults__,
+            publish_final.__closure__,
+            tuple_type(publish_final.__closure__ or ()),
+        )
+        publisher_support_routes = tuple_type(
+            cell.cell_contents
+            for cell in tuple_type(publish_final.__closure__ or ())
+            if exact_type(cell.cell_contents) is function_type
+        )
+        if not publisher_support_routes or any_value(
+            route is publish_final for route in publisher_support_routes
+        ):
+            raise boundary_error_type(
+                "registered publisher support authority is invalid"
+            )
+        publisher_support_integrity = recursive_capture(
+            type_cast(
+                "tuple[FunctionType, ...]",
+                publisher_support_routes,
+            )
+        )
+        if any_value(
+            node[0] is publish_final
+            or "attempted" in node[1].co_freevars
+            or "in_flight" in node[1].co_freevars
+            for node in publisher_support_integrity
+        ):
+            raise boundary_error_type(
+                "registered publisher mutable state entered recursive authority"
+            )
+        supervisor_names = (
+            "_prepare_registered_experiment_staging",
+            "_capture_registered_cpu_ids",
+            "_require_registered_parent_quiescence",
+            "_cleanup_registered_experiment_output_roots",
+            *lifecycle_route_names,
+            *cpu_helper_names,
+            "_REGISTERED_PLAN",
+            "_REAL_KERNEL",
+            "_RegisteredParentLifecycleState",
+        )
+        supervisor_values = (
+            prepare_staging,
+            capture_cpu_ids,
+            require_quiescence,
+            cleanup_output_roots,
+            *lifecycle_routes,
+            *cpu_helpers,
+            supervisor_plan,
+            supervisor_kernel,
+            typed_lifecycle_state_type,
+        )
+        evidence_names = (
+            "build_completed_final_evidence",
+            "verify_completed_final_evidence",
+            "FinalCompletedEvidence",
+        )
+        evidence_values = (
+            build_completed,
+            verify_completed,
+            typed_completed_type,
+        )
+        publication_names = (
+            "build_execution_failure_evidence",
+            "verify_execution_failure_evidence",
+            "publish_registered_final_evidence",
+            "FinalExecutionFailureEvidence",
+        )
+        publication_values = (
+            build_failure,
+            verify_failure,
+            publish_final,
+            typed_failure_type,
+        )
+        operations_box: list[_RegisteredExperimentOperations] = []
+        expected_operation_values_box: list[tuple[object, ...]] = []
+        authority_integrity_box: list[_FunctionIntegrityFrame] = []
+
+        def source_bundle_frame(
+            descriptor: int,
+            /,
+        ) -> _SourceBundleDescriptorFrame:
+            if exact_type(descriptor) is not integer_type or descriptor < 0:
+                raise error_type("source-bundle descriptor is invalid")
+
+            def inspect_once() -> _SourceBundleDescriptorFrame:
+                try:
+                    descriptor_flags = fcntl_route(
+                        descriptor,
+                        fcntl_constants[0],
+                    )
+                    status_flags = fcntl_route(
+                        descriptor,
+                        fcntl_constants[1],
+                    )
+                    seals = fcntl_route(descriptor, fcntl_constants[2])
+                    inheritable = type_cast(
+                        "Callable[[int], bool]",
+                        os_routes[4],
+                    )(descriptor)
+                    opened = type_cast(
+                        "Callable[[int], os.stat_result]",
+                        os_routes[1],
+                    )(descriptor)
+                    target = type_cast(
+                        "Callable[[str], str]",
+                        os_routes[7],
+                    )(f"/proc/self/fd/{descriptor}")
+                    offset = type_cast(
+                        "Callable[[int, int, int], int]",
+                        os_routes[6],
+                    )(descriptor, 0, os_constants[4])
+                except descriptor_inspection_errors as primary:
+                    raise error_type(
+                        "source-bundle descriptor cannot be inspected"
+                    ) from primary
+                stat_frame = (
+                    opened.st_dev,
+                    opened.st_ino,
+                    opened.st_mode,
+                    opened.st_nlink,
+                    opened.st_uid,
+                    opened.st_gid,
+                    opened.st_size,
+                    opened.st_mtime_ns,
+                    opened.st_ctime_ns,
+                )
+                if (
+                    exact_type(descriptor_flags) is not integer_type
+                    or descriptor_flags != fcntl_constants[3]
+                    or inheritable is not False
+                    or exact_type(status_flags) is not integer_type
+                    or status_flags & os_constants[0] != os_constants[3]
+                    or status_flags & (os_constants[1] | os_constants[2])
+                    or exact_type(seals) is not integer_type
+                    or seals != required_seals
+                    or not type_cast("Callable[[int], bool]", stat_routes[0])(
+                        opened.st_mode
+                    )
+                    or opened.st_nlink != 0
+                    or opened.st_uid != type_cast("Callable[[], int]", os_routes[2])()
+                    or opened.st_gid != type_cast("Callable[[], int]", os_routes[3])()
+                    or type_cast("Callable[[int], int]", stat_routes[1])(opened.st_mode)
+                    != 0o400
+                    or not 0 < opened.st_size <= maximum_bundle_bytes
+                    or target != expected_proc_target
+                    or exact_type(offset) is not integer_type
+                    or offset != 0
+                    or any_value(
+                        exact_type(value) is not integer_type for value in stat_frame
+                    )
+                ):
+                    raise error_type("source-bundle descriptor frame is not registered")
+                typed_descriptor_flags: int = type_cast(
+                    "int",
+                    descriptor_flags,
+                )
+                typed_status_flags: int = type_cast("int", status_flags)
+                typed_inheritable: bool = type_cast("bool", inheritable)
+                typed_seals: int = type_cast("int", seals)
+                typed_target: str = type_cast("str", target)
+                typed_offset: int = type_cast("int", offset)
+                return (
+                    descriptor,
+                    typed_descriptor_flags,
+                    typed_status_flags,
+                    typed_inheritable,
+                    stat_frame,
+                    typed_seals,
+                    typed_target,
+                    typed_offset,
+                )
+
+            first = inspect_once()
+            second = inspect_once()
+            if second != first:
+                raise error_type("source-bundle descriptor changed while inspected")
+            return first
+
+        source_frame_integrity = recursive_capture(
+            type_cast("FunctionType", source_bundle_frame)
+        )
+
+        def require_parent_authority() -> None:
+            require_coordinator_authority()
+            require_run_authority()
+            attempted = typed_state_descriptors[0].__get__(state, state_type)
+            in_flight = typed_state_descriptors[1].__get__(state, state_type)
+            current_lifecycle_namespace = typed_lifecycle_state_type.__dict__
+            current_completed_namespace = typed_completed_type.__dict__
+            current_failure_namespace = typed_failure_type.__dict__
+            if (
+                exact_type(state) is not state_type
+                or exact_type(attempted) is not boolean_type
+                or exact_type(in_flight) is not boolean_type
+                or attempted is not True
+                or in_flight is not True
+                or exact_type(supervisor_module) is not module_type
+                or exact_type(evidence_module) is not module_type
+                or exact_type(publication_module) is not module_type
+                or supervisor_module.__dict__ is not supervisor_namespace
+                or evidence_module.__dict__ is not evidence_namespace
+                or publication_module.__dict__ is not publication_namespace
+                or any_value(
+                    exact_type(name) is not string_type
+                    for namespace in (
+                        supervisor_namespace,
+                        evidence_namespace,
+                        publication_namespace,
+                    )
+                    for name in namespace
+                )
+                or any_value(
+                    dictionary_get(supervisor_namespace, name)
+                    is not supervisor_values[index]
+                    for index, name in enumerate_values(supervisor_names)
+                )
+                or any_value(
+                    dictionary_get(evidence_namespace, name)
+                    is not evidence_values[index]
+                    for index, name in enumerate_values(evidence_names)
+                )
+                or any_value(
+                    dictionary_get(publication_namespace, name)
+                    is not publication_values[index]
+                    for index, name in enumerate_values(publication_names)
+                )
+                or dictionary_get(publication_namespace, "_completed_evidence")
+                is not evidence_module
+                or dictionary_get(publication_namespace, "_run_authority")
+                is not run_authority_module
+                or any_value(
+                    exact_type(name) is not string_type
+                    for name in current_lifecycle_namespace
+                )
+                or any_value(
+                    exact_type(name) is not string_type
+                    for name in current_completed_namespace
+                )
+                or any_value(
+                    exact_type(name) is not string_type
+                    for name in current_failure_namespace
+                )
+                or tuple_type(sort_values(current_lifecycle_namespace))
+                != lifecycle_class_frame[0]
+                or any_value(
+                    current_lifecycle_namespace[name]
+                    is not lifecycle_class_frame[1][index]
+                    for index, name in enumerate_values(lifecycle_class_frame[0])
+                )
+                or tuple_type(sort_values(current_completed_namespace))
+                != completed_class_frame[0]
+                or any_value(
+                    current_completed_namespace[name]
+                    is not completed_class_frame[1][index]
+                    for index, name in enumerate_values(completed_class_frame[0])
+                )
+                or tuple_type(sort_values(current_failure_namespace))
+                != failure_class_frame[0]
+                or any_value(
+                    current_failure_namespace[name] is not failure_class_frame[1][index]
+                    for index, name in enumerate_values(failure_class_frame[0])
+                )
+                or any_value(
+                    closure_value(route, "state") is not shared_lifecycle_state
+                    for route in lifecycle_group
+                )
+            ):
+                raise boundary_error_type("registered parent authority changed")
+            recursive_require(safe_integrity)
+            recursive_require(source_frame_integrity)
+            recursive_require(publisher_support_integrity)
+            (
+                publisher,
+                publisher_code,
+                publisher_name,
+                publisher_qualified_name,
+                publisher_module_name,
+                publisher_defaults,
+                publisher_keyword_defaults,
+                publisher_closure,
+                publisher_cells,
+            ) = publisher_shallow_frame
+            current_publisher_cells = tuple_type(publisher.__closure__ or ())
+            if (
+                any_value(
+                    exact_type(name) is not string_type
+                    for name in publication_namespace
+                )
+                or dictionary_get(
+                    publication_namespace,
+                    "publish_registered_final_evidence",
+                )
+                is not publisher
+                or publisher.__code__ is not publisher_code
+                or publisher.__name__ is not publisher_name
+                or publisher.__qualname__ is not publisher_qualified_name
+                or publisher.__module__ is not publisher_module_name
+                or publisher.__defaults__ is not publisher_defaults
+                or publisher.__kwdefaults__ is not publisher_keyword_defaults
+                or publisher.__closure__ is not publisher_closure
+                or exact_type(publisher_cells) is not tuple_type
+                or exact_type(current_publisher_cells) is not tuple_type
+                or length(current_publisher_cells) != length(publisher_cells)
+                or any_value(
+                    current_publisher_cells[index] is not publisher_cells[index]
+                    for index in range_values(length(publisher_cells))
+                )
+            ):
+                raise boundary_error_type(
+                    "registered final publisher authority changed"
+                )
+            if (
+                length(operations_box) != 1
+                or length(expected_operation_values_box) != 1
+                or length(authority_integrity_box) != 1
+            ):
+                raise boundary_error_type(
+                    "registered parent operations authority is invalid"
+                )
+            operations = operations_box[0]
+            expected_operation_values = expected_operation_values_box[0]
+            if exact_type(operations) is not operations_type or any_value(
+                descriptor.__get__(operations, operations_type)
+                is not expected_operation_values[index]
+                for index, descriptor in enumerate_values(
+                    typed_operations_descriptors,
+                )
+            ):
+                raise boundary_error_type("registered parent operations changed")
+
+        if "publish_final" in require_parent_authority.__code__.co_freevars:
+            raise boundary_error_type(
+                "registered publisher entered recursive authority"
+            )
+        require_claim_integrity()
+        require_coordinator_authority()
+        authority_integrity = recursive_capture(
+            type_cast(
+                "tuple[FunctionType, ...]",
+                (
+                    require_parent_authority,
+                    recursive_require,
+                    own_caller,
+                ),
+            )
+        )
+        authority_integrity_box.append(authority_integrity)
+        expected_operation_values = (
+            prepare_staging,
+            capture_cpu_ids,
+            create_source_bundle,
+            seed_selection,
+            build_completed,
+            verify_completed,
+            require_quiescence,
+            cleanup_output_roots,
+            build_failure,
+            verify_failure,
+            publish_final,
+            recursive_require,
+            authority_integrity,
+            require_parent_authority,
+            registration_frame,
+            source_bundle_frame,
+            close_descriptor,
+        )
+        expected_operation_values_box.append(expected_operation_values)
+        operations = operations_type(
+            prepare_staging=prepare_staging,
+            capture_cpu_ids=capture_cpu_ids,
+            create_source_bundle=create_source_bundle,
+            run_selection=seed_selection,
+            build_completed_evidence=build_completed,
+            verify_completed_evidence=verify_completed,
+            require_quiescence=require_quiescence,
+            cleanup_output_roots=cleanup_output_roots,
+            build_failure_evidence=build_failure,
+            verify_failure_evidence=verify_failure,
+            publish_final_evidence=publish_final,
+            authority_integrity_verifier=type_cast(
+                "FunctionType",
+                recursive_require,
+            ),
+            authority_integrity=authority_integrity,
+            require_authority=require_parent_authority,
+            registration_frame=registration_frame,
+            source_bundle_frame=source_bundle_frame,
+            close_source_bundle=close_descriptor,
+        )
+        operations_box.append(operations)
+        recursive_require(authority_integrity)
+        require_parent_authority()
+        claimed_frame = registration_frame(registration)
+        recursive_require(authority_integrity)
+        require_parent_authority()
+        if claimed_frame != admitted_frame:
+            raise boundary_error_type(
+                "run-registration frame changed across parent route claim"
+            )
+        return admitted_frame, operations
+
+    require_coordinator_authority()
+    claim_integrity_box.append(
+        recursive_capture(type_cast("FunctionType", claim_parent_operations))
+    )
+    require_coordinator_authority()
+
+    def run_registered_experiment(
+        registration: VerifiedRunRegistration,
+        /,
+    ) -> None:
+        """Run and publish the sole fixed registered Experiment 002 attempt.
+
+        The capability is exact, process-local, and owner-thread bound.  No
+        command, path, seed, callback, environment, resource, or retry override
+        exists at this boundary.
+        """
+
+        if exact_type(registration) is not registration_type:
+            raise type_error("registration must be an exact VerifiedRunRegistration")
+        if process_id() != owner_process:
+            raise error_type("registered experiment route was inherited by a fork")
+        current_thread = thread_id()
+        if exact_type(current_thread) is not integer_type or current_thread < 1:
+            raise error_type("registered experiment thread identity is invalid")
+        if current_thread != owner_thread:
+            raise error_type("registered experiment caller thread changed")
+        if not state_lock.acquire(blocking=False):
+            raise error_type("registered experiment call overlaps another call")
+        try:
+            attempted = typed_state_descriptors[0].__get__(state, state_type)
+            in_flight = typed_state_descriptors[1].__get__(state, state_type)
+            if (
+                exact_type(state) is not state_type
+                or exact_type(attempted) is not boolean_type
+                or exact_type(in_flight) is not boolean_type
+                or in_flight
+                and not attempted
+            ):
+                raise error_type("registered experiment attempt state is invalid")
+            if attempted:
+                raise error_type("registered experiment was already attempted")
+            typed_state_descriptors[0].__set__(state, True)
+            typed_state_descriptors[1].__set__(state, True)
+        finally:
+            state_lock.release()
+
+        try:
+            require_coordinator_authority()
+            admitted_frame, operations = claim_parent_operations(registration)
+        except base_exception_type as primary:
+            raise error_type(
+                "registered experiment admission failed closed"
+            ) from primary
+        return own_operation_route(
+            registration,
+            admitted_frame,
+            operations,
+            typed_operations_descriptors,
+        )
+
+    public_route = type_cast("FunctionType", run_registered_experiment)
+    public_route_frame_box.append(shallow_function_frame(public_route))
+    public_route_box.append(public_route)
+    return run_registered_experiment
+
+
+run_registered_experiment = _make_registered_experiment_route()
+del _make_registered_experiment_route
 
 
 def _make_guarded_registered_seed_child() -> Callable[[VerifiedRunRegistration], None]:
