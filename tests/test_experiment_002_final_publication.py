@@ -1732,10 +1732,15 @@ _, wait_status = os.waitpid(child, 0)
 assert os.waitstatus_to_exitcode(wait_status) == 0
 assert "inherited by a fork" in fork_error
 
+expected_main_error = (
+    "managed publication namespace is not fresh"
+    if os.path.isfile("reports/experiment-002-training.json")
+    else "not issued"
+)
 try:
     publication.publish_registered_final_evidence(registration, evidence)
 except BaseException as error:
-    assert "not issued" in str(error)
+    assert expected_main_error in str(error)
 else:
     raise AssertionError("forged capability unexpectedly published")
 

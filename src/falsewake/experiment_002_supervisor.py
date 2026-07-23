@@ -248,7 +248,7 @@ class _WaitResult:
 
 @dataclass(frozen=True, slots=True)
 class _ProcessSample:
-    rss_bytes: int
+    rss_bytes: int | None
     child_pids: tuple[int, ...]
 
 
@@ -1886,6 +1886,45 @@ def _parse_vmrss_bytes(contents: bytes) -> int:
     return kib * _KIB
 
 
+def _require_userspace_task_status(contents: bytes) -> None:
+    if (
+        type(contents) is not bytes
+        or not contents
+        or len(contents) > _PROC_FILE_BYTES_MAXIMUM
+        or b"\0" in contents
+        or not contents.endswith(b"\n")
+    ):
+        _fail("/proc status payload is not a complete userspace task record")
+    matches = [
+        line
+        for line in contents.splitlines()
+        if line.lstrip().lower().startswith(b"kthread")
+    ]
+    if matches != [b"Kthread:\t0"]:
+        _fail("/proc status does not identify exactly one userspace task")
+
+
+def _parse_task_vmrss_bytes(contents: bytes) -> int | None:
+    _require_userspace_task_status(contents)
+    try:
+        return _parse_vmrss_bytes(contents)
+    except Experiment002SupervisorError:
+        if (
+            type(contents) is not bytes
+            or not contents
+            or len(contents) > _PROC_FILE_BYTES_MAXIMUM
+            or b"\0" in contents
+            or not contents.endswith(b"\n")
+        ):
+            raise
+        vmrss_like = any(
+            line.lstrip().lower().startswith(b"vmrss") for line in contents.splitlines()
+        )
+        if vmrss_like:
+            raise
+        return None
+
+
 def _parse_children_bytes(contents: bytes) -> tuple[int, ...]:
     if (
         type(contents) is not bytes
@@ -1906,14 +1945,6 @@ def _parse_children_bytes(contents: bytes) -> tuple[int, ...]:
             _fail("/proc children payload contains a duplicate or invalid PID")
         children.append(child)
     return tuple(children)
-
-
-def _status_is_zombie(contents: bytes) -> bool:
-    states = [line for line in contents.splitlines() if line.startswith(b"State:")]
-    if len(states) != 1:
-        return False
-    fields = states[0].split()
-    return len(fields) >= 2 and fields[0] == b"State:" and fields[1] == b"Z"
 
 
 def _read_bounded_proc_file(path: str) -> bytes:
@@ -1953,17 +1984,7 @@ def _read_bounded_proc_file(path: str) -> bytes:
 def _read_process_sample(pid: int) -> _ProcessSample:
     _require_exact_integer(pid, "child PID", minimum=1)
     status_contents = _read_bounded_proc_file(f"/proc/{pid}/status")
-    try:
-        rss_bytes = _parse_vmrss_bytes(status_contents)
-    except Experiment002SupervisorError as error:
-        has_vmrss_like_record = any(
-            line.startswith(b"VmRSS") for line in status_contents.splitlines()
-        )
-        if not has_vmrss_like_record and _status_is_zombie(status_contents):
-            raise ProcessLookupError(
-                "child became a zombie before RSS sampling"
-            ) from error
-        raise
+    leader_rss = _parse_task_vmrss_bytes(status_contents)
     task_path = f"/proc/{pid}/task"
     try:
         names = os.listdir(task_path)
@@ -1984,7 +2005,21 @@ def _read_process_sample(pid: int) -> _ProcessSample:
     if pid not in tids or len(tids) != len(set(tids)):
         _fail("child task directory lacks its leader or repeats a TID")
     children: list[int] = []
+    rss_values = [] if leader_rss is None else [leader_rss]
     for tid in sorted(tids):
+        if leader_rss is None:
+            task_status: bytes | None
+            if tid == pid:
+                task_status = status_contents
+            else:
+                try:
+                    task_status = _read_bounded_proc_file(f"{task_path}/{tid}/status")
+                except ProcessLookupError:
+                    task_status = None
+            if task_status is not None:
+                task_rss = _parse_task_vmrss_bytes(task_status)
+                if task_rss is not None:
+                    rss_values.append(task_rss)
         try:
             payload = _read_bounded_proc_file(f"{task_path}/{tid}/children")
         except ProcessLookupError:
@@ -1994,6 +2029,7 @@ def _read_process_sample(pid: int) -> _ProcessSample:
         for child in _parse_children_bytes(payload):
             if child not in children:
                 children.append(child)
+    rss_bytes = max(rss_values) if rss_values else None
     return _ProcessSample(rss_bytes=rss_bytes, child_pids=tuple(children))
 
 
@@ -2764,6 +2800,7 @@ def _monitor_child(
 ) -> _ChildResourceMetrics:
     _require_pinned_roots(roots)
     observed_rss = 0
+    rss_unavailable_since: int | None = None
     affinity_verified = False
     previous_cycle_started = start_nanoseconds
     while True:
@@ -2842,7 +2879,6 @@ def _monitor_child(
             _fail("child disappeared before it could be reaped")
         if type(sample) is not _ProcessSample:
             _fail("process sampler returned an invalid result")
-        _require_exact_integer(sample.rss_bytes, "sampled RSS")
         if type(sample.child_pids) is not tuple or any(
             type(value) is not int or value < 1 for value in sample.child_pids
         ):
@@ -2852,9 +2888,20 @@ def _monitor_child(
         # filter to close the fork-and-exit gap between two procfs observations.
         if sample.child_pids:
             _fail("registered worker created a child process")
-        observed_rss = max(observed_rss, sample.rss_bytes)
-        if observed_rss > limits.rss_bytes:
-            _fail("registered child exceeded its observed RSS budget")
+        if (
+            rss_unavailable_since is not None
+            and cycle_started - rss_unavailable_since
+            > _POLL_INTERVAL_MAXIMUM_NANOSECONDS
+        ):
+            _fail("child RSS remained unavailable for more than 100 milliseconds")
+        if sample.rss_bytes is None:
+            if rss_unavailable_since is None:
+                rss_unavailable_since = cycle_started
+        else:
+            _require_exact_integer(sample.rss_bytes, "sampled RSS")
+            observed_rss = max(observed_rss, sample.rss_bytes)
+            if observed_rss > limits.rss_bytes:
+                _fail("registered child exceeded its observed RSS budget")
         _account_pinned_roots(roots, limits.output_bytes)
 
         cycle_finished = kernel.monotonic_ns()
@@ -2863,6 +2910,14 @@ def _monitor_child(
         cycle_nanoseconds = cycle_finished - cycle_started
         if cycle_nanoseconds > _POLL_INTERVAL_MAXIMUM_NANOSECONDS:
             _fail("one resource sampling cycle exceeded 100 milliseconds")
+        if (
+            rss_unavailable_since is not None
+            and cycle_finished - rss_unavailable_since
+            > _POLL_INTERVAL_MAXIMUM_NANOSECONDS
+        ):
+            _fail("child RSS remained unavailable for more than 100 milliseconds")
+        if sample.rss_bytes is not None:
+            rss_unavailable_since = None
         remaining = limits.wall_nanoseconds - (cycle_finished - start_nanoseconds)
         if remaining < 0:
             _fail("registered child exceeded its wall-time budget")

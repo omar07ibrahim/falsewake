@@ -10,6 +10,8 @@ from typing import Any, cast
 
 CONFIG_PATH = Path("configs/experiment-002-training.json")
 DOC_PATH = Path("docs/experiment-002.md")
+INCIDENT_PATH = Path("reports/experiment-002-execution-incident.json")
+OUTCOME_PATH = Path("reports/experiment-002-training.json")
 
 
 def _config() -> dict[str, Any]:
@@ -120,6 +122,64 @@ def test_training_preregistration_is_canonical_and_has_exact_sections() -> None:
         "committed_before_the_experiment_002_model_implementation_commit"
         in config["identity"]["phase"]
     )
+
+
+def test_execution_incident_is_canonical_and_binds_the_terminal_outcome() -> None:
+    raw = INCIDENT_PATH.read_text(encoding="ascii")
+    incident = json.loads(raw)
+
+    assert (
+        raw
+        == json.dumps(
+            incident,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
+    assert set(incident) == {
+        "diagnosis",
+        "experiment",
+        "incident",
+        "outcome",
+        "registration",
+        "remediation",
+        "runtime_observation",
+        "schema_version",
+    }
+    assert incident["schema_version"] == 1
+    assert incident["experiment"] == "002"
+    assert incident["incident"] == "registered_execution_failure"
+
+    outcome = incident["outcome"]
+    outcome_bytes = OUTCOME_PATH.read_bytes()
+    assert hashlib.sha256(outcome_bytes).hexdigest() == outcome["report_sha256"]
+    assert outcome["report_path"] == OUTCOME_PATH.as_posix()
+    assert outcome["status"] == "execution_failure"
+    assert outcome["phase"] == "registered_execution"
+    assert outcome["code"] == "seed_selection_failed"
+    assert outcome["checkpoint_reusable"] is False
+
+    published = json.loads(outcome_bytes)
+    assert published["status"] == outcome["status"]
+    assert published["failure"] == {
+        "phase": outcome["phase"],
+        "code": outcome["code"],
+    }
+    assert published["checkpoint_reusable"] is False
+    assert published["artifacts"] == []
+    assert published["registration"] == {
+        **incident["registration"],
+        "path": "configs/experiment-002-run.json",
+    }
+
+    assert incident["diagnosis"]["classification"] == ("confirmed_infrastructure_race")
+    assert incident["diagnosis"]["published_scientific_result_admitted"] is False
+    assert incident["remediation"]["reuse_experiment_002"] is False
+    assert incident["remediation"]["next_experiment"] == "003"
+    assert incident["remediation"]["scientific_protocol_change"] is False
 
 
 def test_predecessor_bytes_and_seven_file_digest_are_frozen() -> None:

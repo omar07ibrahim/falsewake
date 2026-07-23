@@ -346,8 +346,26 @@ populations; it cannot turn them into an unseen production estimate.
 ## Status
 
 The phase-1 protocol, numeric and trainer addenda, normalization and PCM-cache
-evidence, and source-bound training implementation are complete. The run
-registration is intentionally isolated in its own single-file descendant commit.
-A registration alone does not claim a result: until the canonical training report
-is published, no trained checkpoint, neural score, export, benchmark, separate
-replay config, or Experiment 002 continuous score belongs to this phase.
+evidence, source-bound training implementation, and single-file run registration
+are complete. The registered entrypoint was invoked exactly once. It terminated
+during registered seed execution and published the canonical
+[`execution_failure`](../reports/experiment-002-training.json), with no admitted
+history, reusable checkpoint, neural score, export, benchmark, or continuous
+replay. Its SHA-256 is
+`494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a`.
+
+The [incident record](../reports/experiment-002-execution-incident.json) binds that
+outcome to registration `f5d2717…`, the exact source bundle, the observed
+supervisor exception, and the Linux 6.17 procfs lifecycle that caused it. The
+resource sampler treated an absent leader `VmRSS` as malformed even though an
+exiting userspace leader can release its address space before reaching zombie
+state, and a live sibling thread can still expose the group RSS. The repaired
+sampler keeps strict procfs parsing, takes the maximum available sibling RSS,
+continues every process, output, affinity, wall-time, and cleanup check, limits a
+fully unavailable RSS window to 100 ms, and retains terminal `wait4.ru_maxrss` as
+the peak authority.
+
+This outcome closes Experiment 002. It will not be rerun, amended, or quietly
+retuned. Any execution repair must use a new Experiment 003 registration and
+publication namespace while preserving the Experiment 002 data, seeds, model,
+hyperparameters, and scientific gates.

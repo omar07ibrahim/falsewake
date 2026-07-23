@@ -18,16 +18,25 @@ registered threshold grid. No threshold satisfies both gates, so the machine-rea
 selection is `reject` with `selected_threshold_milli: null`; the held-out
 LibriSpeech `test-clean` archive remains absent and unread.
 
-Experiment 002 is now registered as an iterative engineering response to that
-failure. Its chunk-invariant streaming frontend and untrained PyTorch model are now
-implemented, but no trained checkpoint, neural score, ONNX artifact, or benchmark
-is claimed yet. The fixed design is a 23,724-parameter causal depthwise-separable
-TCN with explicit ONNX state, a 995 ms receptive field, and deterministic CPU-only
-training. Its replay and deployment gates were frozen before the first experiment
-002 model score on `dev-clean`. Because experiment 001 already exposed the complete
-development curve and top errors, this is deliberately described as
-development—not a blind or independent evaluation. The full contract is in
-[docs/experiment-002.md](docs/experiment-002.md).
+Experiment 002 was registered and launched exactly once as an iterative engineering
+response to that failure. The attempt terminated during registered seed execution
+and published a canonical `execution_failure`; it admitted no history, checkpoint,
+neural score, ONNX artifact, or benchmark. The immediate cause was an
+execution-layer race: Linux may omit a process leader's `VmRSS` after releasing its
+address space but before the leader becomes a zombie, while the original supervisor
+required that record on every sample. The immutable
+[outcome](reports/experiment-002-training.json) and
+[incident record](reports/experiment-002-execution-incident.json) preserve the
+failure and its provenance.
+
+The scientific design remains frozen: a 23,724-parameter causal
+depthwise-separable TCN with explicit ONNX state, a 995 ms receptive field, and
+deterministic CPU-only training. Experiment 002 will not be retried. A separately
+registered Experiment 003 must inherit its data, seeds, model, gates, and runtime
+while changing only the diagnosed execution layer. Because experiment 001 already
+exposed the complete development curve and top errors, any later replay is
+development—not a blind or independent evaluation. The frozen Experiment 002
+contract is in [docs/experiment-002.md](docs/experiment-002.md).
 
 At the last threshold that preserves the registered 80% conditional-retention gate
 (`0.395`), the listener emits 1,895.7103 false events per scored hour. At the first

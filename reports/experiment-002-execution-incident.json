@@ -1,0 +1,58 @@
+{
+  "diagnosis": {
+    "affected_implementation": {
+      "commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+      "path": "src/falsewake/experiment_002_supervisor.py",
+      "sha256": "417df7117947b41f2857c3400c6fa176a2749a701357f2bb184a3928bbd2c414"
+    },
+    "classification": "confirmed_infrastructure_race",
+    "explanation": "The supervisor required the process-group leader status to contain exactly one VmRSS record. Linux emits the memory block only while get_task_mm() returns a memory map. A normal exiting leader can release that map before its task state becomes Z, so State:R, Kthread:0, and no VmRSS is a valid terminal-transition snapshot.",
+    "kernel_sources": [
+      "https://github.com/torvalds/linux/blob/v6.17/fs/proc/array.c",
+      "https://github.com/torvalds/linux/blob/v6.17/kernel/exit.c"
+    ],
+    "published_scientific_result_admitted": false
+  },
+  "experiment": "002",
+  "incident": "registered_execution_failure",
+  "outcome": {
+    "checkpoint_reusable": false,
+    "code": "seed_selection_failed",
+    "commit": "289372957565c093076cb476c84fa900a9cc4cce",
+    "phase": "registered_execution",
+    "report_path": "reports/experiment-002-training.json",
+    "report_sha256": "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a",
+    "status": "execution_failure"
+  },
+  "registration": {
+    "head_commit": "f5d27175496279cf6ee1538f9bae950527cf5db4",
+    "implementation_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+    "registration_sha256": "7086c7df3fa21f43b901f6e7334a64e098d259b91d7dc0d3cdd7dcc203c172a8",
+    "source_bundle_sha256": "840c70f6417245d0c3eb6237bfda9fc88161abcca07dc2c7325bc4287db0653b"
+  },
+  "remediation": {
+    "next_experiment": "003",
+    "requirements": [
+      "Preserve the Experiment 002 registration and outcome bytes.",
+      "Keep the scientific protocol, data, seeds, model, and gates unchanged.",
+      "Validate the procfs lifecycle repair without registered training.",
+      "Use a new authority, publication namespace, and one-attempt registration."
+    ],
+    "reuse_experiment_002": false,
+    "scientific_protocol_change": false
+  },
+  "runtime_observation": {
+    "exception_message": "/proc status does not contain exactly one VmRSS record",
+    "exception_type": "falsewake.experiment_002_supervisor.Experiment002SupervisorError",
+    "kernel_release": "6.17.0-1017-aws",
+    "kernel_version_sha256": "5b5c564601139ea0d70e7666a8d9b885aaf60baa84b59f233035050e1ea96d3d",
+    "supervisor_call_chain": [
+      "_parse_vmrss_bytes",
+      "_read_process_sample",
+      "_monitor_child",
+      "_supervise_child_masked",
+      "_supervise_child"
+    ]
+  },
+  "schema_version": 1
+}

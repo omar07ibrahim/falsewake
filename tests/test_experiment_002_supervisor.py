@@ -1814,38 +1814,78 @@ def test_vmrss_parser_rejects_missing_ambiguous_or_malformed(payload: bytes) -> 
         supervisor._parse_vmrss_bytes(payload)
 
 
-def test_zombie_status_is_distinguished_for_terminal_wait_race() -> None:
-    assert supervisor._status_is_zombie(b"Name:\tx\nState:\tZ (zombie)\n")
-    assert not supervisor._status_is_zombie(b"State:\tR (running)\n")
-    assert not supervisor._status_is_zombie(b"State:\tZ\nState:\tZ\n")
-
-
 @pytest.mark.parametrize(
     "payload",
     [
-        b"State:\tZ (zombie)\nVmRSS: malformed kB\n",
-        b"State:\tZ (zombie)\nVmRSS: 1 kB\nVmRSS: 2 kB\n",
+        b"Name:\tworker\nState:\tR (running)\n",
+        b"Name:\tworker\nState:\tR (running)\nKthread:\t1\n",
+        b"Name:\tworker\nState:\tR (running)\nKthread:\t1\nVmRSS:\t1 kB\n",
+        b"Name:\tworker\nState:\tR (running)\nKthread: 0\n",
+        b"Name:\tworker\nState:\tR (running)\nkthread:\t0\n",
+        (b"Name:\tworker\nState:\tR (running)\nKthread:\t0\nKthread:\t0\n"),
+        b"Name:\tworker\nState:\tR (running)\nKthread:\t0\nvmrss:\t1 kB\n",
+        b"Name:\tworker\nState:\tR (running)\nKthread:\t0\nVmRSS-extra:\t1 kB\n",
+        b"Name:\tworker\nState:\tZ (zombie)\nKthread:\t0\nVmRSS: bad kB\n",
+        (b"Name:\tworker\nState:\tZ (zombie)\nKthread:\t0\nVmRSS: 1 kB\nVmRSS: 2 kB\n"),
     ],
 )
-def test_zombie_does_not_pardon_malformed_or_duplicate_vmrss(
-    monkeypatch: pytest.MonkeyPatch,
-    payload: bytes,
-) -> None:
-    monkeypatch.setattr(supervisor, "_read_bounded_proc_file", lambda _path: payload)
-    with pytest.raises(supervisor.Experiment002SupervisorError, match="VmRSS"):
-        supervisor._read_process_sample(1234)
+def test_task_vmrss_rejects_nonuserspace_or_ambiguous_status(payload: bytes) -> None:
+    with pytest.raises(supervisor.Experiment002SupervisorError):
+        supervisor._parse_task_vmrss_bytes(payload)
 
 
-def test_zombie_pardons_only_entirely_absent_vmrss(
+@pytest.mark.parametrize(
+    "state",
+    [b"R (running)", b"Z (zombie)"],
+)
+def test_task_vmrss_marks_exact_userspace_mm_release_as_unavailable(
+    state: bytes,
+) -> None:
+    payload = b"Name:\tworker\nState:\t" + state + b"\nKthread:\t0\n"
+    assert supervisor._parse_task_vmrss_bytes(payload) is None
+
+
+def test_process_sampler_uses_maximum_live_sibling_rss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    pid = 1234
+    leader = b"Name:\tleader\nState:\tR (running)\nKthread:\t0\n"
+    first = b"Name:\tworker\nState:\tS (sleeping)\nKthread:\t0\nVmRSS:\t11 kB\n"
+    second = b"Name:\tworker\nState:\tS (sleeping)\nKthread:\t0\nVmRSS:\t17 kB\n"
+    payloads = {
+        f"/proc/{pid}/status": leader,
+        f"/proc/{pid}/task/{pid}/children": b"",
+        f"/proc/{pid}/task/1235/status": first,
+        f"/proc/{pid}/task/1235/children": b"",
+        f"/proc/{pid}/task/1236/status": second,
+        f"/proc/{pid}/task/1236/children": b"9000\n",
+    }
+
+    def read(path: str) -> bytes:
+        return payloads[path]
+
+    monkeypatch.setattr(os, "listdir", lambda _path: ["1236", "1234", "1235"])
+    monkeypatch.setattr(supervisor, "_read_bounded_proc_file", read)
+    sample = supervisor._read_process_sample(pid)
+    assert sample == supervisor._ProcessSample(17 * 1024, (9000,))
+
+
+def test_process_sampler_preserves_bounded_rss_unavailability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid = 1234
+    status = b"Name:\tworker\nState:\tR (running)\nKthread:\t0\n"
+    payloads = {
+        f"/proc/{pid}/status": status,
+        f"/proc/{pid}/task/{pid}/children": b"",
+    }
+    monkeypatch.setattr(os, "listdir", lambda _path: [str(pid)])
     monkeypatch.setattr(
         supervisor,
         "_read_bounded_proc_file",
-        lambda _path: b"Name:\tworker\nState:\tZ (zombie)\n",
+        lambda path: payloads[path],
     )
-    with pytest.raises(ProcessLookupError, match="zombie"):
-        supervisor._read_process_sample(1234)
+    assert supervisor._read_process_sample(pid) == supervisor._ProcessSample(None, ())
 
 
 @pytest.mark.parametrize(
@@ -1864,8 +1904,82 @@ def test_children_parser_rejects_invalid_pids(payload: bytes) -> None:
 
 def test_real_process_sampler_reads_current_process() -> None:
     sample = supervisor._read_process_sample(os.getpid())
+    assert sample.rss_bytes is not None
     assert sample.rss_bytes > 0
     assert sample.child_pids == ()
+
+
+def test_real_sampler_recovers_rss_from_live_sibling_after_leader_exit() -> None:
+    script = (
+        "import ctypes,os,threading,time\n"
+        "ready=threading.Event()\n"
+        "def worker():\n"
+        "    ready.set()\n"
+        "    while True:\n"
+        "        time.sleep(1)\n"
+        "threading.Thread(target=worker).start()\n"
+        "ready.wait()\n"
+        "os.write(1,b'ready\\n')\n"
+        "libc=ctypes.CDLL('/lib/x86_64-linux-gnu/libc.so.6')\n"
+        "libc.pthread_exit.argtypes=(ctypes.c_void_p,)\n"
+        "libc.pthread_exit.restype=None\n"
+        "libc.pthread_exit(None)\n"
+        "os._exit(99)\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-S", "-B", "-c", script],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    try:
+        os.set_blocking(process.stdout.fileno(), False)
+        ready = bytearray()
+        ready_deadline = time.monotonic() + 5.0
+        while b"ready\n" not in ready and time.monotonic() < ready_deadline:
+            with suppress(BlockingIOError):
+                ready.extend(os.read(process.stdout.fileno(), 4_096))
+            if process.poll() is not None:
+                pytest.fail(
+                    "leader-exit fixture stopped before readiness: "
+                    + process.stderr.read().decode("utf-8", "replace")
+                )
+            time.sleep(0.005)
+        assert b"ready\n" in ready
+
+        observed: supervisor._ProcessSample | None = None
+        sample_deadline = time.monotonic() + 5.0
+        while observed is None and time.monotonic() < sample_deadline:
+            try:
+                leader_status = Path(f"/proc/{process.pid}/status").read_bytes()
+            except FileNotFoundError:
+                break
+            if b"VmRSS:" not in leader_status:
+                try:
+                    candidate = supervisor._read_process_sample(process.pid)
+                except ProcessLookupError:
+                    candidate = None
+                if candidate is not None and candidate.rss_bytes is not None:
+                    observed = candidate
+                    break
+            time.sleep(0.005)
+        assert observed is not None
+        assert observed.rss_bytes is not None
+        assert observed.rss_bytes > 0
+        assert observed.child_pids == ()
+    finally:
+        with suppress(ProcessLookupError):
+            process.kill()
+        process.wait(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
 
 
 def test_source_bundle_descriptor_is_exact_and_offset_independent() -> None:
@@ -3125,6 +3239,7 @@ def test_early_failures_never_invoke_child_result_loader(
     [
         (supervisor._ProcessSample(1_000_001, ()), "RSS"),
         (supervisor._ProcessSample(1, (55,)), "child process"),
+        (supervisor._ProcessSample(None, (55,)), "child process"),
     ],
 )
 def test_supervise_resource_breach_kills_reaps_and_cleans(
@@ -3199,6 +3314,7 @@ def test_terminal_ru_maxrss_failure_never_signals_reaped_pid(
             supervisor._WaitResult(0, 0, 0),
             supervisor._WaitResult(41_001, 0, 1_001),
         ],
+        samples=[supervisor._ProcessSample(None, ())],
         times=[0, 1, 2, 3],
     )
     with pytest.raises(supervisor.Experiment002SupervisorError, match="RSS"):
@@ -3215,6 +3331,136 @@ def test_terminal_ru_maxrss_failure_never_signals_reaped_pid(
         (kernel.pid, os.WNOHANG),
         (kernel.pid, os.WNOHANG),
     ]
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_rss_unavailable_until_terminal_uses_wait4_peak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(
+        wait_results=[
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(41_001, 0, 3),
+        ],
+        samples=[supervisor._ProcessSample(None, ())],
+        times=[0, 1, 2, 3, 4],
+    )
+    result = _supervise_child(
+        (2, 7),
+        lambda _channel, _pid: None,
+        plan=plan,
+        limits=_limits(),
+        kernel=kernel,
+    )
+    assert result.maximum_rss_bytes == 3 * 1024
+    assert kernel.kill_group_calls == []
+    assert kernel.kill_pid_calls == []
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_valid_rss_after_short_unavailable_window_resumes_enforcement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(
+        wait_results=[
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(41_001, 9, 1),
+        ],
+        samples=[
+            supervisor._ProcessSample(None, ()),
+            supervisor._ProcessSample(1_000_001, ()),
+        ],
+        times=[0, 1, 2, 3],
+    )
+    with pytest.raises(supervisor.Experiment002SupervisorError, match="RSS"):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert kernel.kill_group_calls == [kernel.pid]
+    assert kernel.kill_pid_calls == [kernel.pid]
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_rss_unavailable_beyond_sampling_window_is_contained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(
+        wait_results=[
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(41_001, 9, 1),
+        ],
+        samples=[
+            supervisor._ProcessSample(None, ()),
+            supervisor._ProcessSample(None, ()),
+            supervisor._ProcessSample(None, ()),
+        ],
+        times=[0, 1, 2, 50_000_001, 50_000_002, 100_000_002],
+    )
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="RSS remained unavailable",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(wall=1_000_000_000, poll=25_000_000),
+            kernel=kernel,
+        )
+    assert kernel.kill_group_calls == [kernel.pid]
+    assert kernel.kill_pid_calls == [kernel.pid]
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_rss_recovery_after_sampling_window_is_still_contained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(
+        wait_results=[
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(41_001, 9, 1),
+        ],
+        samples=[
+            supervisor._ProcessSample(None, ()),
+            supervisor._ProcessSample(None, ()),
+            supervisor._ProcessSample(1, ()),
+        ],
+        times=[0, 1, 2, 50_000_001, 50_000_002, 100_000_002],
+    )
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="RSS remained unavailable",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(wall=1_000_000_000, poll=25_000_000),
+            kernel=kernel,
+        )
+    assert kernel.kill_group_calls == [kernel.pid]
+    assert kernel.kill_pid_calls == [kernel.pid]
     supervisor._remove_directory_tree(plan.staging_root)
 
 
@@ -3244,6 +3490,37 @@ def test_proc_disappearance_is_pardoned_only_after_exact_terminal_wait(
         (kernel.pid, os.WNOHANG),
         (kernel.pid, os.WNOHANG),
     ]
+    supervisor._remove_directory_tree(plan.staging_root)
+
+
+def test_proc_disappearance_before_terminal_wait_is_contained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _test_plan(tmp_path, monkeypatch)
+    _prepare_staging(plan)
+    kernel = FakeKernel(
+        wait_results=[
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(0, 0, 0),
+            supervisor._WaitResult(41_001, 9, 1),
+        ],
+        samples=[ProcessLookupError("gone")],
+        times=[0, 1],
+    )
+    with pytest.raises(
+        supervisor.Experiment002SupervisorError,
+        match="disappeared before it could be reaped",
+    ):
+        _supervise_child(
+            (2, 7),
+            lambda _channel, _pid: None,
+            plan=plan,
+            limits=_limits(),
+            kernel=kernel,
+        )
+    assert kernel.kill_group_calls == [kernel.pid]
+    assert kernel.kill_pid_calls == [kernel.pid]
     supervisor._remove_directory_tree(plan.staging_root)
 
 
