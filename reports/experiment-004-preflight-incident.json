@@ -1,0 +1,132 @@
+{
+  "attempt": {
+    "canonical_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-attempt",
+    "canonical_marker_present": false,
+    "optimizer_updates": 0,
+    "registered_attempt_consumed": false,
+    "registered_authority_issuer_invoked": false,
+    "registered_coordinator_invoked": false,
+    "registered_invocation_count": 0,
+    "registered_runner_invoked": false,
+    "validation_examples": 0
+  },
+  "experiment": "004",
+  "implementation": {
+    "commit": "f81cd142885068c27767d6d728da04248fb1a470",
+    "production_sources": [
+      {
+        "path": "src/falsewake/experiment_004_coordinator.py",
+        "sha256": "6e4df88440c361376ce51a3574a16bbec79ecbc6ff4dd1fcf0cf8be86eac1daa"
+      },
+      {
+        "path": "src/falsewake/experiment_004_final_evidence.py",
+        "sha256": "5fcff993e434c36d73c5e9b4f6d1e5954e8a54f2ce9fc17450ea615c5a4df5af"
+      },
+      {
+        "path": "src/falsewake/experiment_004_final_publication.py",
+        "sha256": "b862490f15e88819e815cfe6d7769ff125e21e59cdde4642a4a700e5f2eaad16"
+      },
+      {
+        "path": "src/falsewake/experiment_004_run_authority.py",
+        "sha256": "cacab13729f14bfdce10afa5b53b2a09116cf56abe21aee12ac9220a6ad2e5b5"
+      },
+      {
+        "path": "src/falsewake/experiment_004_runner.py",
+        "sha256": "76f19ec33c10955fa50d26b8d35d56aeb15d712b72b22a17e88933f46d24accf"
+      },
+      {
+        "path": "src/falsewake/experiment_004_seed_worker.py",
+        "sha256": "40cc3f0681006b03eac03f4747c60feb7a0ab42c102772afd6b90ef809929361"
+      },
+      {
+        "path": "src/falsewake/experiment_004_supervisor.py",
+        "sha256": "750371018aefd8dc3cdbffff20a60c3785680992b05d6246f052f37609a6c8c9"
+      }
+    ],
+    "protocol_proof": {
+      "path": "tests/test_experiment_004_protocol.py",
+      "sha256": "8539610615717b8b1fb5ff41876aef41a36e8ac7a8dbda4eeb7307174ae7a3a8"
+    },
+    "shared_authority": {
+      "path": "src/falsewake/experiment_002_run_authority.py",
+      "sha256": "52ce6039345b2159a4bf83ea294af2c3211cdcfbe87e9bc806133c67647b1a47"
+    }
+  },
+  "incident": "pre_registration_protocol_rejection",
+  "kind": "execution_protocol_preflight_incident",
+  "managed_outputs_absent": [
+    "configs/experiment-004-run.json",
+    "models/experiment-004-selected.safetensors",
+    "reports/experiment-004-seed-20260719-history.json",
+    "reports/experiment-004-seed-20260720-history.json",
+    "reports/experiment-004-seed-20260721-history.json",
+    "reports/experiment-004-selected-rerun-history.json",
+    "reports/experiment-004-training.json"
+  ],
+  "preflight_evidence": {
+    "actual_route_matrix": {
+      "parent_routes": 15,
+      "status": "pass",
+      "wrapper_routes": 4
+    },
+    "experiment_002_authority_kernel_regression": {
+      "passed": 780,
+      "status": "pass"
+    },
+    "experiment_003_regression": {
+      "passed": 289,
+      "status": "pass"
+    },
+    "experiment_004_targeted_tests": {
+      "passed": 304,
+      "status": "pass"
+    },
+    "full_registration_gate": {
+      "reason": "frozen_protocol_contract_is_internally_unsatisfiable",
+      "status": "not_run"
+    },
+    "ruff_format_lint_and_mypy": "pass"
+  },
+  "protocol": {
+    "commit": "c7a8b3c493e05211ff7afa3a7abb974fc1c8b4e2",
+    "path": "configs/experiment-004-execution.json",
+    "sha256": "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46"
+  },
+  "recovery_requirements": [
+    "Preserve the Experiment 004 protocol, implementation, and this preflight incident as immutable evidence.",
+    "Use a new experiment identifier, authority profile, registration, transport namespace, publication namespace, scratch root, staging root, and permanent attempt marker.",
+    "Freeze the corrected execution protocol before implementing or observing a registered run.",
+    "Specify an exact facade normalization that can represent the mandatory new-profile bindings, or replace the false byte-parity claim with an explicit semantic route contract.",
+    "List _frozen_file_bindings among every modified shared-authority generic dispatch required by the new profile.",
+    "Retain the Experiment 002 scientific protocol, inputs, seeds, model, optimizer, schedule, validation arithmetic, checkpoint selection, and gates without change.",
+    "Run the complete portable and host-bound gate before creating the config-only registration commit."
+  ],
+  "schema_version": 1,
+  "status": "preflight_rejected",
+  "violations": [
+    {
+      "candidate_normalized_sha256": "2e4909ab2af22c4018e2f543dfe7020b1bf711f53b575788b4aecafc6b959778",
+      "candidate_path": "src/falsewake/experiment_004_run_authority.py",
+      "code": "facade_normalization_recipe_cannot_express_profile_004",
+      "explanation": "The frozen recipe permits eight case-sensitive substitutions and no post-normalization edit. After all eight substitutions, the correct profile-004 facade still differs from the immutable Experiment 003 reference by 11 added and 11 deleted lines. The uncovered text includes profile-004 prose and the mandatory uppercase _EXPERIMENT_004_PROFILE and _EXPERIMENT_004_SEALED_CHILD_MEMFD_TARGET bindings. Replacing those bindings with profile 003 would make the implementation unsafe and semantically wrong.",
+      "normalized_added_lines": 11,
+      "normalized_deleted_lines": 11,
+      "protocol_json_pointer": "/execution_delta/parity_contract/file_recipes/3",
+      "reference_path": "src/falsewake/experiment_003_run_authority.py",
+      "reference_sha256": "690ed90679928766a50219657ba467e0e0d39bf2763fa2b60128640fdf0938e3"
+    },
+    {
+      "actual_required_dispatch": "_frozen_file_bindings",
+      "code": "shared_authority_recipe_omits_required_dispatch",
+      "explanation": "The correct profile-004 implementation must add a _frozen_file_bindings dispatch because the exact Experiment 003 predecessor outcome has no artifact path or SHA-256. The frozen recipe lists five modified generic dispatches but omits this required sixth dispatch. Removing only the listed profile symbols and arms therefore cannot restore the baseline bytes as claimed.",
+      "listed_generic_dispatches": [
+        "_AUTHORITY_PROFILES",
+        "_expected_frozen_bindings",
+        "_require_authority_profile",
+        "_require_invocation_registration",
+        "_verify_committed_repository"
+      ],
+      "protocol_json_pointer": "/execution_delta/shared_authority_recipe/modified_generic_dispatches"
+    }
+  ]
+}
