@@ -1,0 +1,222 @@
+{
+  "experiment": "003",
+  "external_inputs": {
+    "archive": {
+      "path": "/home/ubuntu/gitcode/.t/falsewake-data/speech_commands_v0.02.tar.gz",
+      "sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58"
+    },
+    "manifest": {
+      "inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/manifest-v2-exact/speech-commands.jsonl",
+      "record_count": 105829,
+      "sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b"
+    },
+    "pcm_cache": {
+      "byte_count": 2995776948,
+      "path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/experiment-002-pcm-v1.cache",
+      "sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653"
+    }
+  },
+  "frozen_bindings": {
+    "artifacts": {
+      "normalization": {
+        "byte_count": 320,
+        "path": "models/experiment-002-normalization.f32",
+        "sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e"
+      },
+      "normalization_report": {
+        "path": "reports/experiment-002-normalization.json",
+        "sha256": "2b95565fec7dc956a4b1f667638b87e3df64cfaaca3026017942a8057c5187a8"
+      },
+      "pcm_cache": {
+        "byte_count": 2995776948,
+        "sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653"
+      },
+      "pcm_cache_report": {
+        "path": "reports/experiment-002-pcm-cache.json",
+        "sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca"
+      }
+    },
+    "configs": {
+      "numerics": {
+        "path": "configs/experiment-002-numerics.json",
+        "sha256": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9"
+      },
+      "phase_1": {
+        "path": "configs/experiment-002-training.json",
+        "sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+      }
+    },
+    "execution_protocol": {
+      "introduction_commit": "e47bd581675abe22b529de7bcc825d39e84a00cd",
+      "path": "configs/experiment-003-execution.json",
+      "sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
+    },
+    "implementation_audit": {
+      "path": "reports/experiment-002-implementation-audit.json",
+      "sha256": "0b8033e7f407550d1c8576d31485e5bbcf825592de0d3b86f42ce98c1fca7116"
+    },
+    "inputs": {
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_record_count": 105829,
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    },
+    "model": {
+      "parameter_tensor_count": 53,
+      "parameter_value_count": 23724,
+      "path": "src/falsewake/causal_kws.py",
+      "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+    },
+    "predecessor": {
+      "experiment": "002",
+      "implementation_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+      "incident": {
+        "commit": "650eefbf9f82b207ed58e3b1a1eac41197466b41",
+        "path": "reports/experiment-002-execution-incident.json",
+        "sha256": "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59"
+      },
+      "outcome": {
+        "checkpoint_reusable": false,
+        "code": "seed_selection_failed",
+        "commit": "289372957565c093076cb476c84fa900a9cc4cce",
+        "path": "reports/experiment-002-training.json",
+        "phase": "registered_execution",
+        "sha256": "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a",
+        "status": "execution_failure"
+      },
+      "registration": {
+        "commit": "f5d27175496279cf6ee1538f9bae950527cf5db4",
+        "path": "configs/experiment-002-run.json",
+        "sha256": "7086c7df3fa21f43b901f6e7334a64e098d259b91d7dc0d3cdd7dcc203c172a8",
+        "source_bundle_sha256": "840c70f6417245d0c3eb6237bfda9fc88161abcca07dc2c7325bc4287db0653b"
+      },
+      "reuse_forbidden": true,
+      "scientific_protocol": "002",
+      "terminal": true
+    },
+    "trainer": {
+      "path": "configs/experiment-002-trainer.json",
+      "sha256": "768720d031a1f2f6d0a36466fd9b4fa095a2f1b9a6fbbc382d4af5fc51514b48"
+    }
+  },
+  "implementation_commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+  "invocation": {
+    "argv": [
+      "src/falsewake/experiment_003_runner.py"
+    ],
+    "authority_process_role": "parent_bootstrap",
+    "cwd": "/home/ubuntu/gitcode/falsewake",
+    "environment": {
+      "LANG": "C",
+      "LC_ALL": "C",
+      "MKL_DYNAMIC": "FALSE",
+      "MKL_NUM_THREADS": "1",
+      "OMP_DYNAMIC": "FALSE",
+      "OMP_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONHASHSEED": "0",
+      "PYTHONNOUSERSITE": "1",
+      "TMPDIR": "/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
+      "TZ": "UTC"
+    },
+    "orig_argv": [
+      "/home/ubuntu/gitcode/.t/falsewake-venv/bin/python",
+      "-I",
+      "-S",
+      "-B",
+      "src/falsewake/experiment_003_runner.py"
+    ],
+    "python_flags": {
+      "dont_write_bytecode": 1,
+      "ignore_environment": 1,
+      "isolated": 1,
+      "no_site": 1,
+      "no_user_site": 1
+    },
+    "sys_path": [
+      "/home/ubuntu/gitcode/falsewake/src",
+      "/usr/lib/python312.zip",
+      "/usr/lib/python3.12",
+      "/usr/lib/python3.12/lib-dynload",
+      "/home/ubuntu/gitcode/.t/falsewake-venv/lib/python3.12/site-packages"
+    ]
+  },
+  "runtime": {
+    "fingerprint_sha256": "c167d636026909879c952858c67c304ce5a1bbb981284242c3d6235efe205f8f",
+    "numpy_version": "2.5.1",
+    "python_executable": "/home/ubuntu/gitcode/.t/falsewake-venv/bin/python",
+    "python_sys_path_roots": [
+      "/usr/lib/python312.zip",
+      "/usr/lib/python3.12",
+      "/usr/lib/python3.12/lib-dynload",
+      "/home/ubuntu/gitcode/.t/falsewake-venv/lib/python3.12/site-packages"
+    ],
+    "python_version": "3.12.3",
+    "safetensors_version": "0.8.0",
+    "torch_version": "2.13.0+cpu"
+  },
+  "schema_version": 1,
+  "source_bundle": {
+    "import_roots": [
+      "src/falsewake"
+    ],
+    "paths": [
+      "src/falsewake/__init__.py",
+      "src/falsewake/baseline_data.py",
+      "src/falsewake/causal_kws.py",
+      "src/falsewake/continuous_replay.py",
+      "src/falsewake/experiment_002_checkpoint.py",
+      "src/falsewake/experiment_002_child_result.py",
+      "src/falsewake/experiment_002_coordinator.py",
+      "src/falsewake/experiment_002_data.py",
+      "src/falsewake/experiment_002_evaluator.py",
+      "src/falsewake/experiment_002_evidence.py",
+      "src/falsewake/experiment_002_final_evidence.py",
+      "src/falsewake/experiment_002_final_publication.py",
+      "src/falsewake/experiment_002_frontend.py",
+      "src/falsewake/experiment_002_metrics.py",
+      "src/falsewake/experiment_002_normalization.py",
+      "src/falsewake/experiment_002_normalization_artifact.py",
+      "src/falsewake/experiment_002_pcm_cache.py",
+      "src/falsewake/experiment_002_preprocessing.py",
+      "src/falsewake/experiment_002_process_guard.py",
+      "src/falsewake/experiment_002_registered_checkpoint.py",
+      "src/falsewake/experiment_002_registered_evaluator.py",
+      "src/falsewake/experiment_002_registered_executor.py",
+      "src/falsewake/experiment_002_registered_history.py",
+      "src/falsewake/experiment_002_rng.py",
+      "src/falsewake/experiment_002_run_authority.py",
+      "src/falsewake/experiment_002_runner.py",
+      "src/falsewake/experiment_002_seed_worker.py",
+      "src/falsewake/experiment_002_supervisor.py",
+      "src/falsewake/experiment_002_training_bridge.py",
+      "src/falsewake/experiment_002_training_evidence.py",
+      "src/falsewake/experiment_002_training_executor.py",
+      "src/falsewake/experiment_002_training_history.py",
+      "src/falsewake/experiment_002_training_population.py",
+      "src/falsewake/experiment_002_validation.py",
+      "src/falsewake/experiment_003_coordinator.py",
+      "src/falsewake/experiment_003_final_evidence.py",
+      "src/falsewake/experiment_003_final_publication.py",
+      "src/falsewake/experiment_003_run_authority.py",
+      "src/falsewake/experiment_003_runner.py",
+      "src/falsewake/experiment_003_seed_worker.py",
+      "src/falsewake/experiment_003_supervisor.py",
+      "src/falsewake/feature_matrix.py",
+      "src/falsewake/features.py",
+      "src/falsewake/holdout.py",
+      "src/falsewake/librispeech.py",
+      "src/falsewake/linear_baseline.py",
+      "src/falsewake/py.typed",
+      "src/falsewake/result_plots.py",
+      "src/falsewake/speech_commands.py",
+      "src/falsewake/speech_commands_pcm.py"
+    ],
+    "payload_byte_count": 3379358,
+    "sha256": "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+  }
+}
