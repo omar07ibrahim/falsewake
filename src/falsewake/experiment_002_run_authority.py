@@ -33,6 +33,7 @@ from typing import Any, Final, NoReturn, Protocol, SupportsIndex, cast
 
 _RUN_CONFIG_PATH: Final = "configs/experiment-002-run.json"
 _EXPERIMENT_003_RUN_CONFIG_PATH: Final = "configs/experiment-003-run.json"
+_EXPERIMENT_004_RUN_CONFIG_PATH: Final = "configs/experiment-004-run.json"
 _AUTHORITY_SOURCE_PATH: Final = "src/falsewake/experiment_002_run_authority.py"
 _CANONICAL_REPOSITORY_ROOT: Final = Path("/home/ubuntu/gitcode/falsewake")
 _CANONICAL_PYTHON_EXECUTABLE: Final = (
@@ -48,6 +49,8 @@ _SOURCE_BUNDLE_DOMAIN: Final = b"falsewake-exp002-source-bundle-v1\0"
 _RUNTIME_FINGERPRINT_DOMAIN: Final = b"falsewake-exp002-runtime-v1\0"
 _EXPERIMENT_003_SOURCE_BUNDLE_DOMAIN: Final = b"falsewake-exp003-source-bundle-v1\0"
 _EXPERIMENT_003_RUNTIME_FINGERPRINT_DOMAIN: Final = b"falsewake-exp003-runtime-v1\0"
+_EXPERIMENT_004_SOURCE_BUNDLE_DOMAIN: Final = b"falsewake-exp004-source-bundle-v1\0"
+_EXPERIMENT_004_RUNTIME_FINGERPRINT_DOMAIN: Final = b"falsewake-exp004-runtime-v1\0"
 _MAX_CONFIG_BYTES: Final = 1 << 20
 _MAX_SOURCE_FILE_BYTES: Final = 64 << 20
 _MAX_SOURCE_BUNDLE_BYTES: Final = 256 << 20
@@ -64,6 +67,7 @@ _MAX_GIT_OUTPUT_BYTES: Final = 32 << 20
 _GIT_TIMEOUT_SECONDS: Final = 30
 _CHILD_BUNDLE_MAGIC: Final = b"FW2CHLD1"
 _EXPERIMENT_003_CHILD_BUNDLE_MAGIC: Final = b"FW3CHLD1"
+_EXPERIMENT_004_CHILD_BUNDLE_MAGIC: Final = b"FW4CHLD1"
 _CHILD_BUNDLE_VERSION: Final = 1
 _CHILD_BUNDLE_HEADER: Final = struct.Struct("<8sI40s40s64s64sIQQ")
 _MAX_CHILD_BUNDLE_BYTES: Final = 256 << 20
@@ -80,6 +84,17 @@ _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT: Final = (
 )
 _EXPERIMENT_003_PROTOCOL_SHA256: Final = (
     "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
+)
+_EXPERIMENT_004_SEALED_CHILD_MEMFD_TARGET: Final = (
+    "/memfd:falsewake-exp004-child-bundle (deleted)"
+)
+_EXPERIMENT_004_SEALED_ORIGIN_PREFIX: Final = "falsewake-sealed://experiment-004/"
+_EXPERIMENT_004_PROTOCOL_PATH: Final = "configs/experiment-004-execution.json"
+_EXPERIMENT_004_PROTOCOL_INTRODUCTION_COMMIT: Final = (
+    "c7a8b3c493e05211ff7afa3a7abb974fc1c8b4e2"
+)
+_EXPERIMENT_004_PROTOCOL_SHA256: Final = (
+    "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46"
 )
 _PARENT_ORIGIN_KIND: Final = "parent_repository"
 _SEALED_CHILD_ORIGIN_KIND: Final = "sealed_child"
@@ -148,9 +163,28 @@ _EXPERIMENT_003_PROFILE: Final = _AuthorityProfile(
     runner_entrypoint="src/falsewake/experiment_003_runner.py",
     scratch_root="/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
 )
+_EXPERIMENT_004_PROFILE: Final = _AuthorityProfile(
+    registration_experiment="004",
+    run_config_path=_EXPERIMENT_004_RUN_CONFIG_PATH,
+    runtime_fingerprint_domain=_EXPERIMENT_004_RUNTIME_FINGERPRINT_DOMAIN,
+    child_bundle_magic=_EXPERIMENT_004_CHILD_BUNDLE_MAGIC,
+    source_bundle_domain=_EXPERIMENT_004_SOURCE_BUNDLE_DOMAIN,
+    sealed_origin_prefix=_EXPERIMENT_004_SEALED_ORIGIN_PREFIX,
+    sealed_child_memfd_target=_EXPERIMENT_004_SEALED_CHILD_MEMFD_TARGET,
+    child_bundle_memfd_name="falsewake-exp004-child-bundle",
+    activation_magic=b"FW4ACTV1",
+    activation_ticket_domain=b"falsewake-exp004-activation-ticket-v1\0",
+    issuer_route="verify_and_issue_experiment_004_run_registration",
+    sealed_child_issuer_route=(
+        "_verify_and_issue_experiment_004_sealed_child_registration"
+    ),
+    runner_entrypoint="src/falsewake/experiment_004_runner.py",
+    scratch_root="/home/ubuntu/gitcode/.t/falsewake-experiment-004-scratch",
+)
 _AUTHORITY_PROFILES: Final = (
     _EXPERIMENT_002_PROFILE,
     _EXPERIMENT_003_PROFILE,
+    _EXPERIMENT_004_PROFILE,
 )
 
 
@@ -612,6 +646,23 @@ def _require_authority_profile(profile: object) -> _AuthorityProfile:
             "src/falsewake/experiment_003_runner.py",
             "/home/ubuntu/gitcode/.t/falsewake-experiment-003-scratch",
         )
+    elif profile is _EXPERIMENT_004_PROFILE:
+        expected = (
+            "004",
+            "configs/experiment-004-run.json",
+            b"falsewake-exp004-runtime-v1\0",
+            b"FW4CHLD1",
+            b"falsewake-exp004-source-bundle-v1\0",
+            "falsewake-sealed://experiment-004/",
+            "/memfd:falsewake-exp004-child-bundle (deleted)",
+            "falsewake-exp004-child-bundle",
+            b"FW4ACTV1",
+            b"falsewake-exp004-activation-ticket-v1\0",
+            "verify_and_issue_experiment_004_run_registration",
+            "_verify_and_issue_experiment_004_sealed_child_registration",
+            "src/falsewake/experiment_004_runner.py",
+            "/home/ubuntu/gitcode/.t/falsewake-experiment-004-scratch",
+        )
     else:
         raise Experiment002RunAuthorityError(
             "run-registration authority profile is not canonical"
@@ -682,6 +733,12 @@ def _verify_and_issue_experiment_003_run_registration() -> VerifiedRunRegistrati
     return _verify_and_issue_parent_run_registration(_EXPERIMENT_003_PROFILE)
 
 
+def _verify_and_issue_experiment_004_run_registration() -> VerifiedRunRegistration:
+    """Verify and issue the fixed Experiment 004 parent capability."""
+
+    return _verify_and_issue_parent_run_registration(_EXPERIMENT_004_PROFILE)
+
+
 def _verify_and_issue_parent_run_registration(
     profile: _AuthorityProfile,
 ) -> VerifiedRunRegistration:
@@ -738,6 +795,14 @@ def _verify_and_issue_experiment_003_sealed_child_registration() -> (
     return _verify_and_issue_sealed_child_registration(_EXPERIMENT_003_PROFILE)
 
 
+def _verify_and_issue_experiment_004_sealed_child_registration() -> (
+    VerifiedRunRegistration
+):
+    """Verify fixed Experiment 004 sealed-child state and mint its capability."""
+
+    return _verify_and_issue_sealed_child_registration(_EXPERIMENT_004_PROFILE)
+
+
 def _verify_and_issue_sealed_child_registration(
     profile: _AuthorityProfile,
 ) -> VerifiedRunRegistration:
@@ -791,6 +856,16 @@ def _verify_experiment_003_run_registration(
 
     _require_authority_process()
     _require_verified_registration_profile(registration, _EXPERIMENT_003_PROFILE)
+    reverify_verified_run_registration(registration)
+
+
+def _verify_experiment_004_run_registration(
+    registration: VerifiedRunRegistration,
+) -> None:
+    """Reverify only a retained Experiment 004 capability."""
+
+    _require_authority_process()
+    _require_verified_registration_profile(registration, _EXPERIMENT_004_PROFILE)
     reverify_verified_run_registration(registration)
 
 
@@ -853,6 +928,15 @@ def _reverify_experiment_003_run_registration(
     """Reverify a capability only if its retained profile is Experiment 003."""
 
     _require_verified_registration_profile(registration, _EXPERIMENT_003_PROFILE)
+    reverify_verified_run_registration(registration)
+
+
+def _reverify_experiment_004_run_registration(
+    registration: VerifiedRunRegistration,
+) -> None:
+    """Reverify a capability only if its retained profile is Experiment 004."""
+
+    _require_verified_registration_profile(registration, _EXPERIMENT_004_PROFILE)
     reverify_verified_run_registration(registration)
 
 
@@ -1183,6 +1267,17 @@ def _create_sealed_experiment_003_child_bundle_fd(
     return _create_sealed_child_bundle_fd_for_profile(
         registration,
         _EXPERIMENT_003_PROFILE,
+    )
+
+
+def _create_sealed_experiment_004_child_bundle_fd(
+    registration: VerifiedRunRegistration, /
+) -> int:
+    """Return the fixed Experiment 004 sealed source-bundle descriptor."""
+
+    return _create_sealed_child_bundle_fd_for_profile(
+        registration,
+        _EXPERIMENT_004_PROFILE,
     )
 
 
@@ -1828,6 +1923,11 @@ def _verify_committed_repository(
             root,
             implementation_commit=document.implementation_commit,
         )
+    elif profile is _EXPERIMENT_004_PROFILE:
+        _require_experiment_004_implementation_history(
+            root,
+            implementation_commit=document.implementation_commit,
+        )
     minimum_source_byte_count = _minimum_blob_frame_byte_count(document.source_paths)
     maximum_frozen_payload_bytes = min(
         _MAX_FROZEN_BUNDLE_BYTES,
@@ -2372,7 +2472,7 @@ def _require_invocation_registration(
     )
     for key in flags:
         _require_exact_scalar(flags[key], 1, f"Python flag {key}")
-    if profile is _EXPERIMENT_003_PROFILE:
+    if profile is _EXPERIMENT_003_PROFILE or profile is _EXPERIMENT_004_PROFILE:
         if argv != (profile.runner_entrypoint,):
             raise Experiment002RunAuthorityError(
                 "invocation runner does not match the fixed authority profile"
@@ -2649,6 +2749,64 @@ def _expected_frozen_bindings(
             "scientific_protocol": "002",
             "terminal": True,
         }
+    elif profile is _EXPERIMENT_004_PROFILE:
+        bindings["execution_protocol"] = {
+            "introduction_commit": _EXPERIMENT_004_PROTOCOL_INTRODUCTION_COMMIT,
+            "path": _EXPERIMENT_004_PROTOCOL_PATH,
+            "sha256": _EXPERIMENT_004_PROTOCOL_SHA256,
+        }
+        bindings["predecessor"] = {
+            "execution_protocol": {
+                "introduction_commit": (_EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT),
+                "path": _EXPERIMENT_003_PROTOCOL_PATH,
+                "sha256": _EXPERIMENT_003_PROTOCOL_SHA256,
+            },
+            "experiment": "003",
+            "implementation": {
+                "commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+                "runtime_fingerprint_sha256": (
+                    "c167d636026909879c952858c67c304ce5a1bbb981284242c3d6235efe205f8f"
+                ),
+                "source_bundle_sha256": (
+                    "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+                ),
+            },
+            "incident": {
+                "commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+                "path": "reports/experiment-003-execution-incident.json",
+                "sha256": (
+                    "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
+                ),
+            },
+            "outcome": {
+                "automatic_terminal_report_published": False,
+                "checkpoint_reusable": False,
+                "code": "parent_route_signature_mismatch",
+                "phase": "registered_admission",
+                "status": "execution_failure",
+            },
+            "registration": {
+                "commit": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+                "path": "configs/experiment-003-run.json",
+                "sha256": (
+                    "941a4ec67d2adbe0149861a678fc19e46ac4e2188c126b64c4b9c54f01425b2c"
+                ),
+                "source_bundle_sha256": (
+                    "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+                ),
+            },
+            "reuse_forbidden": True,
+            "scientific_protocol": "002",
+            "terminal": True,
+            "topology": {
+                "incident_commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+                "incident_parent": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+                "outcome_report_path": "reports/experiment-003-training.json",
+                "outcome_report_present": False,
+                "registration_commit": ("f7426fb038ae5dc0c24b5141d12d55323ac7c961"),
+                "registration_parent": ("4475461d5fd3e5b8969020003424c73bb10d3c9b"),
+            },
+        }
     return bindings
 
 
@@ -2700,6 +2858,24 @@ def _frozen_file_bindings(
     predecessor_registration = cast(dict[str, str], predecessor["registration"])
     predecessor_outcome = cast(dict[str, Any], predecessor["outcome"])
     predecessor_incident = cast(dict[str, str], predecessor["incident"])
+    if profile is _EXPERIMENT_004_PROFILE:
+        predecessor_execution_protocol = cast(
+            dict[str, str],
+            predecessor["execution_protocol"],
+        )
+        return (
+            *bindings,
+            (execution_protocol["path"], execution_protocol["sha256"]),
+            (
+                predecessor_execution_protocol["path"],
+                predecessor_execution_protocol["sha256"],
+            ),
+            (
+                predecessor_registration["path"],
+                predecessor_registration["sha256"],
+            ),
+            (predecessor_incident["path"], predecessor_incident["sha256"]),
+        )
     return (
         *bindings,
         (execution_protocol["path"], execution_protocol["sha256"]),
@@ -3207,6 +3383,10 @@ def _parse_experiment_002_child_bundle(payload: bytes) -> _ChildBundleFrame:
 
 def _parse_experiment_003_child_bundle(payload: bytes) -> _ChildBundleFrame:
     return _parse_child_bundle_for_profile(payload, _EXPERIMENT_003_PROFILE)
+
+
+def _parse_experiment_004_child_bundle(payload: bytes) -> _ChildBundleFrame:
+    return _parse_child_bundle_for_profile(payload, _EXPERIMENT_004_PROFILE)
 
 
 def _parse_child_bundle_for_profile(
@@ -5200,6 +5380,359 @@ def _require_experiment_003_implementation_history(
             raise Experiment002RunAuthorityError(
                 f"Experiment 002 predecessor blob changed ({path})"
             )
+
+
+def _require_experiment_004_implementation_history(
+    root: Path,
+    *,
+    implementation_commit: str,
+) -> None:
+    predecessor_implementation_commit = "4475461d5fd3e5b8969020003424c73bb10d3c9b"
+    predecessor_registration_commit = "f7426fb038ae5dc0c24b5141d12d55323ac7c961"
+    incident_commit = "96f151d86ae060b402a0ef5d47de7ad8c1191c0a"
+    protocol_commit = _EXPERIMENT_004_PROTOCOL_INTRODUCTION_COMMIT
+    protocol_path = _EXPERIMENT_004_PROTOCOL_PATH
+
+    protocol_parents = _git(
+        root,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        protocol_commit,
+    )
+    if protocol_parents != f"{protocol_commit} {incident_commit}\n".encode("ascii"):
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 protocol introduction topology changed"
+        )
+    protocol_changes = _git(
+        root,
+        "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        incident_commit,
+        protocol_commit,
+    )
+    if protocol_changes != b"A\0" + protocol_path.encode("ascii") + b"\0":
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 protocol introduction changed more than its contract"
+        )
+    protocol_blob = _committed_blob(
+        root,
+        protocol_commit,
+        protocol_path,
+        maximum_bytes=_MAX_CONFIG_BYTES,
+    )
+    if (
+        protocol_blob.mode != "100644"
+        or hashlib.sha256(protocol_blob.payload).hexdigest()
+        != _EXPERIMENT_004_PROTOCOL_SHA256
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 protocol introduction blob changed"
+        )
+    protocol_ancestry = _git_process(
+        root,
+        ("merge-base", "--is-ancestor", protocol_commit, implementation_commit),
+        allowed_returncodes=(0, 1),
+    )
+    if protocol_ancestry.returncode != 0:
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 implementation does not descend from its protocol"
+        )
+
+    expected_source_changes = (
+        ("M", "src/falsewake/experiment_002_run_authority.py"),
+        ("A", "src/falsewake/experiment_004_coordinator.py"),
+        ("A", "src/falsewake/experiment_004_final_evidence.py"),
+        ("A", "src/falsewake/experiment_004_final_publication.py"),
+        ("A", "src/falsewake/experiment_004_run_authority.py"),
+        ("A", "src/falsewake/experiment_004_runner.py"),
+        ("A", "src/falsewake/experiment_004_seed_worker.py"),
+        ("A", "src/falsewake/experiment_004_supervisor.py"),
+    )
+    expected_source_delta = b"".join(
+        status.encode("ascii") + b"\0" + path.encode("ascii") + b"\0"
+        for status, path in expected_source_changes
+    )
+    observed_source_delta = _git(
+        root,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-status",
+        "-z",
+        incident_commit,
+        implementation_commit,
+        "--",
+        "src/falsewake",
+    )
+    if observed_source_delta != expected_source_delta:
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 implementation source delta is not exact"
+        )
+
+    forbidden_implementation_paths = (
+        "configs/experiment-004-run.json",
+        "models/experiment-004-selected.safetensors",
+        "reports/experiment-004-seed-20260719-history.json",
+        "reports/experiment-004-seed-20260720-history.json",
+        "reports/experiment-004-seed-20260721-history.json",
+        "reports/experiment-004-selected-rerun-history.json",
+        "reports/experiment-004-training.json",
+        "models/experiment-003-selected.safetensors",
+        "reports/experiment-003-seed-20260719-history.json",
+        "reports/experiment-003-seed-20260720-history.json",
+        "reports/experiment-003-seed-20260721-history.json",
+        "reports/experiment-003-selected-rerun-history.json",
+        "reports/experiment-003-training.json",
+    )
+    for path in forbidden_implementation_paths:
+        if _git(root, "ls-tree", "-z", implementation_commit, "--", path):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 004 implementation contains managed output ({path})"
+            )
+
+    predecessor_protocol_parents = _git(
+        root,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT,
+    )
+    predecessor_protocol_parent = "650eefbf9f82b207ed58e3b1a1eac41197466b41"
+    if predecessor_protocol_parents != (
+        f"{_EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT} "
+        f"{predecessor_protocol_parent}\n"
+    ).encode("ascii"):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor protocol topology changed"
+        )
+    predecessor_protocol_changes = _git(
+        root,
+        "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        predecessor_protocol_parent,
+        _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT,
+    )
+    if predecessor_protocol_changes != (
+        b"A\0" + _EXPERIMENT_003_PROTOCOL_PATH.encode("ascii") + b"\0"
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor protocol changed more than its contract"
+        )
+    predecessor_protocol_blob = _committed_blob(
+        root,
+        _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT,
+        _EXPERIMENT_003_PROTOCOL_PATH,
+        maximum_bytes=_MAX_CONFIG_BYTES,
+    )
+    if (
+        predecessor_protocol_blob.mode != "100644"
+        or hashlib.sha256(predecessor_protocol_blob.payload).hexdigest()
+        != _EXPERIMENT_003_PROTOCOL_SHA256
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor protocol blob changed"
+        )
+    predecessor_protocol_ancestry = _git_process(
+        root,
+        (
+            "merge-base",
+            "--is-ancestor",
+            _EXPERIMENT_003_PROTOCOL_INTRODUCTION_COMMIT,
+            predecessor_implementation_commit,
+        ),
+        allowed_returncodes=(0, 1),
+    )
+    if predecessor_protocol_ancestry.returncode != 0:
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 implementation does not descend from its protocol"
+        )
+    _require_experiment_003_implementation_history(
+        root,
+        implementation_commit=predecessor_implementation_commit,
+    )
+
+    baseline_authority_blob = _committed_blob(
+        root,
+        incident_commit,
+        _AUTHORITY_SOURCE_PATH,
+        maximum_bytes=_MAX_SOURCE_FILE_BYTES,
+    )
+    if (
+        baseline_authority_blob.mode != "100644"
+        or hashlib.sha256(baseline_authority_blob.payload).hexdigest()
+        != "1c19b920df0e75a401bbfcc95c36adfc550b24e77d5e13e5a711d61a0f45f315"
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 shared-authority baseline changed"
+        )
+
+    immutable_predecessor_sources = (
+        (
+            "src/falsewake/experiment_003_coordinator.py",
+            "f2b5ff3e8e874ddf408ba97475c69ca13875e7ac3a37c7462ba2637099a77d1a",
+        ),
+        (
+            "src/falsewake/experiment_003_final_evidence.py",
+            "6f0ebd8554e703886e63dc9d508ec83ab5a4ce3997b0f99714b441106216b9ad",
+        ),
+        (
+            "src/falsewake/experiment_003_final_publication.py",
+            "af61f1425a936b51711f70b097c8b5399571e32d39511fdf7dc947270fec59bb",
+        ),
+        (
+            "src/falsewake/experiment_003_run_authority.py",
+            "690ed90679928766a50219657ba467e0e0d39bf2763fa2b60128640fdf0938e3",
+        ),
+        (
+            "src/falsewake/experiment_003_runner.py",
+            "6e9eb84027487b17e4a375fe04f8c704c11aa4d78458405900625d462fcd5a4d",
+        ),
+        (
+            "src/falsewake/experiment_003_seed_worker.py",
+            "f9262a47d0bf2621ebb2837017b9947927980bee2c498171cabc34bd9ba800ad",
+        ),
+        (
+            "src/falsewake/experiment_003_supervisor.py",
+            "aa33a0f852d3b43f3eff0ded09873aa60911008ba1d37fa3acf4b5d34ab501e3",
+        ),
+    )
+    for path, expected_sha256 in immutable_predecessor_sources:
+        blob = _committed_blob(
+            root,
+            implementation_commit,
+            path,
+            maximum_bytes=_MAX_SOURCE_FILE_BYTES,
+        )
+        if (
+            blob.mode != "100644"
+            or hashlib.sha256(blob.payload).hexdigest() != expected_sha256
+        ):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 003 predecessor source changed ({path})"
+            )
+
+    implementation_authority_blob = _committed_blob(
+        root,
+        implementation_commit,
+        _AUTHORITY_SOURCE_PATH,
+        maximum_bytes=_MAX_SOURCE_FILE_BYTES,
+    )
+    if implementation_authority_blob.mode != "100644":
+        raise Experiment002RunAuthorityError(
+            "Experiment 004 shared-authority mode is not exact"
+        )
+
+    added_source_paths = (
+        "src/falsewake/experiment_004_coordinator.py",
+        "src/falsewake/experiment_004_final_evidence.py",
+        "src/falsewake/experiment_004_final_publication.py",
+        "src/falsewake/experiment_004_run_authority.py",
+        "src/falsewake/experiment_004_runner.py",
+        "src/falsewake/experiment_004_seed_worker.py",
+        "src/falsewake/experiment_004_supervisor.py",
+    )
+    for path in added_source_paths:
+        blob = _committed_blob(
+            root,
+            implementation_commit,
+            path,
+            maximum_bytes=_MAX_SOURCE_FILE_BYTES,
+        )
+        if blob.mode != "100644":
+            raise Experiment002RunAuthorityError(
+                f"Experiment 004 source mode is not exact ({path})"
+            )
+
+    predecessor_frames = (
+        (
+            predecessor_registration_commit,
+            predecessor_implementation_commit,
+            "configs/experiment-003-run.json",
+            "941a4ec67d2adbe0149861a678fc19e46ac4e2188c126b64c4b9c54f01425b2c",
+        ),
+        (
+            incident_commit,
+            predecessor_registration_commit,
+            "reports/experiment-003-execution-incident.json",
+            "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688",
+        ),
+    )
+    for commit, parent, path, expected_sha256 in predecessor_frames:
+        parents = _git(root, "rev-list", "--parents", "-n", "1", commit)
+        if parents != f"{commit} {parent}\n".encode("ascii"):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 003 predecessor topology changed ({path})"
+            )
+        blob = _committed_blob(
+            root,
+            commit,
+            path,
+            maximum_bytes=_MAX_CONFIG_BYTES,
+        )
+        if (
+            blob.mode != "100644"
+            or hashlib.sha256(blob.payload).hexdigest() != expected_sha256
+        ):
+            raise Experiment002RunAuthorityError(
+                f"Experiment 003 predecessor blob changed ({path})"
+            )
+
+    predecessor_registration_changes = _git(
+        root,
+        "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        predecessor_implementation_commit,
+        predecessor_registration_commit,
+    )
+    if predecessor_registration_changes != (b"A\0configs/experiment-003-run.json\0"):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor registration shape changed"
+        )
+    incident_changes = _git(
+        root,
+        "diff-tree",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        "-z",
+        predecessor_registration_commit,
+        incident_commit,
+    )
+    if incident_changes != (b"A\0reports/experiment-003-execution-incident.json\0"):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor incident shape changed"
+        )
+    if _git(
+        root,
+        "ls-tree",
+        "-z",
+        incident_commit,
+        "--",
+        "reports/experiment-003-training.json",
+    ):
+        raise Experiment002RunAuthorityError(
+            "Experiment 003 predecessor unexpectedly has an outcome report"
+        )
 
 
 def _require_registration_commit_shape(
