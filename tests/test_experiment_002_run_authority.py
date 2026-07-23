@@ -728,10 +728,11 @@ def test_source_is_strictly_standard_library_only() -> None:
     )
 
 
-def test_actual_repository_is_closed_before_git_or_any_consumer(
+def test_zero_argument_actual_issuer_stops_at_controlled_missing_config(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run_path = PROJECT_ROOT / RUN_CONFIG_PATH
+    run_path = tmp_path / "guaranteed-missing-experiment-002-run.json"
     status_before = _git(PROJECT_ROOT, "status", "--porcelain=v1", "-z")
     files_before = _worktree_snapshot(PROJECT_ROOT)
     called = False
@@ -740,8 +741,9 @@ def test_actual_repository_is_closed_before_git_or_any_consumer(
         nonlocal called
         del args, kwargs
         called = True
-        raise AssertionError("Git must not run before the absent config rejects")
+        raise AssertionError("Git must not run before the controlled gate rejects")
 
+    monkeypatch.setattr(authority, "_RUN_CONFIG_PATH", os.fspath(run_path))
     monkeypatch.setattr(authority, "_git", forbidden)
     assert not run_path.exists()
     with pytest.raises(

@@ -1,9 +1,9 @@
 """Unregistered model-evaluation kernel for Experiment 002.
 
-The source-bound run registration does not exist yet.  Consequently this module
-contains no registered corpus, validation-evidence, metric, history, checkpoint,
-or artifact route.  It only exercises the exact CausalKWS evaluation mechanics on
-caller-supplied synthetic arrays and returns an explicitly unregistered result.
+This module intentionally contains no registered corpus, validation-evidence,
+metric, history, checkpoint, or artifact route.  It only exercises the exact
+CausalKWS evaluation mechanics on caller-supplied synthetic arrays and returns
+an explicitly unregistered result.
 """
 
 from __future__ import annotations

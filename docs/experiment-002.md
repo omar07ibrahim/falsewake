@@ -339,6 +339,9 @@ populations; it cannot turn them into an unseen production estimate.
 
 ## Status
 
-Only the phase-1 training and deployment protocol is registered here. Model code,
-training results, exports, benchmarks, the separate replay config, and Experiment
-002 continuous scores do not yet belong to this phase.
+The phase-1 protocol, numeric and trainer addenda, normalization and PCM-cache
+evidence, and source-bound training implementation are complete. The run
+registration is intentionally isolated in its own single-file descendant commit.
+A registration alone does not claim a result: until the canonical training report
+is published, no trained checkpoint, neural score, export, benchmark, separate
+replay config, or Experiment 002 continuous score belongs to this phase.

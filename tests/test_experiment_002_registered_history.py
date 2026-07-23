@@ -1539,10 +1539,7 @@ def test_exact_registered_constants_match_trainer_config() -> None:
     ]
 
 
-def test_run_registration_is_still_absent_and_tests_do_not_call_registered_routes() -> (
-    None
-):
-    assert not Path("configs/experiment-002-run.json").exists()
+def test_tests_do_not_call_registered_routes() -> None:
     source = Path(__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     called: set[str] = set()

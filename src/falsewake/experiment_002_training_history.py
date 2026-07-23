@@ -1,11 +1,11 @@
 """Tiny synthetic-only training-history kernel for Experiment 002.
 
-The source-bound run registration does not exist yet.  This module therefore
-cannot consume registered epochs, metrics, evidence, populations, checkpoints,
-or artifacts.  It exercises only the canonical history serialization and
-ranking mechanics with a process-local, deliberately tiny synthetic capability
-chain.  Its completed value is explicitly unregistered and must never be
-trusted by a future registered adapter.
+This module intentionally cannot consume registered epochs, metrics, evidence,
+populations, checkpoints, or artifacts.  The source-bound registered history is
+a separate authority.  This kernel exercises only canonical history
+serialization and ranking mechanics with a process-local, deliberately tiny
+synthetic capability chain.  Its completed value is explicitly unregistered
+and must never be trusted as registered evidence.
 """
 
 from __future__ import annotations

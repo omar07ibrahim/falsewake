@@ -640,7 +640,9 @@ def test_missing_fixed_coordinator_function_fails_closed(
         runner._run_coordinator(object())
 
 
-def test_exact_isolated_command_reaches_the_absent_registration_gate() -> None:
+def test_isolated_command_is_forced_to_fail_before_registration() -> None:
+    invalid_environment = dict(EXPECTED_ENVIRONMENT)
+    invalid_environment["FALSEWAKE_PYTEST_PREISSUANCE_GUARD"] = "1"
     completed = subprocess.run(
         (
             PYTHON_EXECUTABLE,
@@ -650,7 +652,7 @@ def test_exact_isolated_command_reaches_the_absent_registration_gate() -> None:
             ENTRYPOINT,
         ),
         cwd=PROJECT_ROOT,
-        env=EXPECTED_ENVIRONMENT,
+        env=invalid_environment,
         capture_output=True,
         check=False,
         text=True,
@@ -658,10 +660,12 @@ def test_exact_isolated_command_reaches_the_absent_registration_gate() -> None:
 
     assert completed.returncode != 0
     assert completed.stdout == ""
-    assert "Experiment002RunAuthorityError" in completed.stderr
-    assert "required regular file is absent or inaccessible" in completed.stderr
-    assert "configs/experiment-002-run.json" in completed.stderr
-    assert "Experiment002RunnerError" not in completed.stderr
+    assert "Experiment002RunnerError" in completed.stderr
+    assert "runner environment is not the exact registered environment" in (
+        completed.stderr
+    )
+    assert "Experiment002RunAuthorityError" not in completed.stderr
+    assert "experiment_002_run_authority" not in completed.stderr
     assert "experiment_002_coordinator" not in completed.stderr
 
 

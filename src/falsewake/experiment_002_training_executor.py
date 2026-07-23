@@ -1,8 +1,10 @@
-"""Synthetic-only exact optimizer probe for Experiment 002.
+"""Synthetic-only exact optimizer kernel for Experiment 002.
 
-The registered executor is intentionally absent until the source-bound run
-registration exists.  This module accepts no external training or validation
-data and can issue only an unregistered synthetic optimizer transition.
+This module exposes no registered executor capability.  The source-bound
+registered executor is a separate authority that reuses only private numerical
+validation helpers from this module.  Its local route accepts no external
+training or validation data and can issue only an unregistered synthetic
+optimizer transition.
 """
 
 from __future__ import annotations

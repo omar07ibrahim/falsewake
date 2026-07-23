@@ -1,12 +1,12 @@
 """Fail-closed parent resource kernel for Experiment 002 children.
 
-The coordinator does not call this module yet.  This slice deliberately provides
-only private composition points so its process and filesystem controls can be
-reviewed independently before the registered parent route is enabled.
+The coordinator imports this module only on the registered parent path and uses
+its private composition points so the process and filesystem controls remain
+independently reviewable.
 
 This kernel freezes only the immediate taskset, Python, and runner launch bytes.
-Its trust claim stops before the runner's later project imports: the eventual
-parent authority must provide those from a separately verified sealed bundle.
+Its trust claim stops before the runner's later project imports: the parent
+authority provides those from a separately verified sealed bundle.
 Pre-existing same-process callbacks and audit hooks are trusted not to mutate
 protected FDs, change signal dispositions, or create processes.
 """
@@ -2891,7 +2891,7 @@ def _supervise_child_masked(
     limits: _Limits = _REGISTERED_LIMITS,
     kernel: _Kernel = _REAL_KERNEL,
 ) -> _SupervisedChildResult:
-    """Run one fixed child under the reviewed kernel; not yet production-wired."""
+    """Run one fixed child with registered resources and signals already blocked."""
 
     expected_result_binding = _snapshot_child_result_binding(result_binding)
     _require_plan(plan)

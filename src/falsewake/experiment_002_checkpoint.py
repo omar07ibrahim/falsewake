@@ -1,9 +1,10 @@
 """In-memory checkpoint kernel for unregistered Experiment 002 probes.
 
-The source-bound run registration and canonical artifact publisher are absent.
-This module therefore accepts only a deliberately tiny tensor population,
-keeps an owned snapshot in memory, and verifies deterministic safetensors bytes
-without creating a file or issuing a reusable registered capability.
+This module intentionally accepts only a deliberately tiny synthetic tensor
+population.  The source-bound registered checkpoint and canonical artifact
+publisher are separate authorities and are never exposed through this kernel.
+It keeps an owned snapshot in memory and verifies deterministic safetensors
+bytes without creating a file or issuing a reusable registered capability.
 """
 
 from __future__ import annotations

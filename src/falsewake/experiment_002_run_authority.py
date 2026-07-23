@@ -1,11 +1,11 @@
 """Source-bound run-registration authority for Experiment 002.
 
-The canonical registration file is intentionally absent today.  This module is
-therefore a closed gate: it can issue an authority only after a later, separately
-committed ``configs/experiment-002-run.json`` passes every repository, source,
-and frozen-binding check below.  The verifier is deliberately standard-library
-only so callers can run it before importing any numerical or registered-data
-module.
+The canonical registration belongs only in a separate, single-file descendant
+commit of the final implementation.  This module remains a closed gate unless
+that committed ``configs/experiment-002-run.json`` passes every repository,
+source, and frozen-binding check below.  The verifier is deliberately
+standard-library only so callers can run it before importing any numerical or
+registered-data module.
 """
 
 from __future__ import annotations
@@ -507,8 +507,8 @@ def verify_and_issue_experiment_002_run_registration() -> VerifiedRunRegistratio
             )
     root = _repository_root()
 
-    # Deliberately precede Git, runtime, source, and data inspection.  The real
-    # repository currently stops here because this canonical file is absent.
+    # Deliberately precede Git, runtime, source, and data inspection.  A missing
+    # separately committed registration stops at this boundary.
     config_path = root / _RUN_CONFIG_PATH
     raw_config = _read_regular_file(config_path, maximum_bytes=_MAX_CONFIG_BYTES)
     document = _parse_registration(raw_config)
