@@ -4837,6 +4837,7 @@ def _collect_bounded_git_process(
     stdout_bytes = bytearray()
     stderr_bytes = bytearray()
     selector = selectors.DefaultSelector()
+    process_group_contained = False
     try:
         stdout_fd = stdout.fileno()
         stderr_fd = stderr.fileno()
@@ -4862,6 +4863,10 @@ def _collect_bounded_git_process(
             for key, _event_mask in events:
                 if key.data == "process":
                     selector.unregister(key.fd)
+                    # A descendant can retain a pipe writer after the leader exits.
+                    # Contain the group before waiting for the remaining pipe EOFs.
+                    _kill_git_process_group(process)
+                    process_group_contained = True
                     continue
                 if key.data == "stdout":
                     target = stdout_bytes
@@ -4887,7 +4892,8 @@ def _collect_bounded_git_process(
         remaining_seconds = deadline - time.monotonic()
         if remaining_seconds <= 0:
             raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)
-        _kill_git_process_group(process)
+        if not process_group_contained:
+            _kill_git_process_group(process)
         remaining_seconds = deadline - time.monotonic()
         if remaining_seconds <= 0:
             raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT_SECONDS)

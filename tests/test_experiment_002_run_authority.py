@@ -3669,10 +3669,26 @@ def test_bounded_git_drains_stdout_and_stderr_without_pipe_deadlock(
 ) -> None:
     executable = tmp_path / "fake-git-dual-stream"
     executable.write_text(
-        "#!/bin/sh\n"
-        "(/usr/bin/head -c 131072 /dev/zero) &\n"
-        "(/usr/bin/head -c 131072 /dev/zero >&2) &\n"
-        "wait\n",
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import threading\n"
+        "\n"
+        "payload = bytes(131072)\n"
+        "\n"
+        "def write_all(descriptor):\n"
+        "    remaining = memoryview(payload)\n"
+        "    while remaining:\n"
+        "        written = os.write(descriptor, remaining)\n"
+        "        remaining = remaining[written:]\n"
+        "\n"
+        "writers = (\n"
+        "    threading.Thread(target=write_all, args=(1,)),\n"
+        "    threading.Thread(target=write_all, args=(2,)),\n"
+        ")\n"
+        "for writer in writers:\n"
+        "    writer.start()\n"
+        "for writer in writers:\n"
+        "    writer.join()\n",
         encoding="ascii",
     )
     executable.chmod(0o755)
@@ -3696,19 +3712,22 @@ def test_bounded_git_kills_same_group_descendant_after_clean_leader_exit(
     executable = tmp_path / "fake-git-descendant"
     executable.write_text(
         "#!/bin/sh\n"
-        "/bin/sleep 60 </dev/null >/dev/null 2>&1 &\n"
+        "/bin/sleep 60 &\n"
         f"printf '%s\\n' \"$!\" > {os.fspath(descendant_pid_path)!r}\n"
         "exit 0\n",
         encoding="ascii",
     )
     executable.chmod(0o755)
     monkeypatch.setattr(shutil, "which", lambda _name, path: os.fspath(executable))
+    monkeypatch.setattr(authority, "_GIT_TIMEOUT_SECONDS", 0.5)
+    started = time.monotonic()
     completed = authority._git_process(
         tmp_path,
         ("ignored",),
         allowed_returncodes=(0,),
         maximum_stdout_bytes=1_024,
     )
+    assert time.monotonic() - started < 2.0
     assert completed.returncode == 0
     descendant_pid = int(descendant_pid_path.read_text(encoding="ascii"))
     deadline = time.monotonic() + 2.0
