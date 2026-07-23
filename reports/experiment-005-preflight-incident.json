@@ -1,0 +1,153 @@
+{
+  "attempt": {
+    "canonical_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-005-attempt",
+    "canonical_marker_present": false,
+    "optimizer_updates": 0,
+    "registered_attempt_consumed": false,
+    "registered_authority_issuer_invoked": false,
+    "registered_coordinator_invoked": false,
+    "registered_invocation_count": 0,
+    "registered_runner_invoked": false,
+    "validation_examples": 0
+  },
+  "experiment": "005",
+  "implementation": {
+    "commit": "04b634451d129faadadd921215123547e3467d65",
+    "production_sources": [
+      {
+        "path": "src/falsewake/experiment_005_coordinator.py",
+        "sha256": "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
+      },
+      {
+        "path": "src/falsewake/experiment_005_final_evidence.py",
+        "sha256": "1c99757fc9b78e612891a9d49e7dc40c2d0b90599a40927e4cd41dff781f355d"
+      },
+      {
+        "path": "src/falsewake/experiment_005_final_publication.py",
+        "sha256": "84f7aba57f8ec0c096e5f18a03a8118800f53a9cfe4910c554bea677a9f79f07"
+      },
+      {
+        "path": "src/falsewake/experiment_005_run_authority.py",
+        "sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e"
+      },
+      {
+        "path": "src/falsewake/experiment_005_runner.py",
+        "sha256": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336"
+      },
+      {
+        "path": "src/falsewake/experiment_005_seed_worker.py",
+        "sha256": "0840a62f0f4327eec7649d17ad334edfa6941d6146bff6fe50e2d693f0b80f96"
+      },
+      {
+        "path": "src/falsewake/experiment_005_supervisor.py",
+        "sha256": "7c8d58566c2b5e904ebf7f1e5fa1ab3b1c79c4387b38f296b08ef5ce7e312e71"
+      }
+    ],
+    "protocol_proof": {
+      "commit": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+      "path": "tests/test_experiment_005_protocol.py",
+      "sha256": "cf6d4ee2fcba31de37774b591571abb2d86998cc0f2a3e99a40abe1af4af5414"
+    },
+    "shared_authority": {
+      "path": "src/falsewake/experiment_002_run_authority.py",
+      "sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af"
+    }
+  },
+  "incident": "pre_registration_protocol_rejection",
+  "kind": "execution_protocol_preflight_incident",
+  "managed_outputs_absent": [
+    "configs/experiment-005-run.json",
+    "models/experiment-005-selected.safetensors",
+    "reports/experiment-005-seed-20260719-history.json",
+    "reports/experiment-005-seed-20260720-history.json",
+    "reports/experiment-005-seed-20260721-history.json",
+    "reports/experiment-005-selected-rerun-history.json",
+    "reports/experiment-005-training.json"
+  ],
+  "preflight_boundary": {
+    "commit": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+    "mode": "100644",
+    "path": "docs/experiment-005.md",
+    "sha256": "c9852a028f572e33b2379b98786f5c72e41ddae1300f03742ad977947a1dd600"
+  },
+  "preflight_evidence": {
+    "actual_route_matrix": {
+      "parent_routes": 15,
+      "status": "pass",
+      "wrapper_routes": 4
+    },
+    "experiment_002_regression_partition": {
+      "non_supervisor_passed": 1786,
+      "reason": "the_supervisor_suite_requires_a_fresh_single_thread_parent_process",
+      "status": "pass",
+      "supervisor_isolated_passed": 195
+    },
+    "experiment_003_regression": {
+      "passed": 289,
+      "status": "pass"
+    },
+    "experiment_004_regression": {
+      "passed": 311,
+      "status": "pass"
+    },
+    "experiment_005_targeted_tests": {
+      "passed": 324,
+      "status": "pass"
+    },
+    "facade_normalization": {
+      "candidate_normalized_sha256": "9778140580667e95e120a4a8472d8b79ffb7034c3886c208fc3fd3c4da966c86",
+      "candidate_path": "src/falsewake/experiment_005_run_authority.py",
+      "candidate_sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e",
+      "normalized_added_lines": 1,
+      "normalized_deleted_lines": 1,
+      "reference_path": "src/falsewake/experiment_004_run_authority.py",
+      "reference_sha256": "cacab13729f14bfdce10afa5b53b2a09116cf56abe21aee12ac9220a6ad2e5b5",
+      "status": "fail"
+    },
+    "full_registration_gate": {
+      "reason": "frozen_facade_normalization_cannot_express_the_truthful_profile_005_docstring",
+      "status": "not_run"
+    },
+    "quality_checks": {
+      "p5_and_protocol_ruff_format": "pass",
+      "repository_mypy": "pass",
+      "repository_ruff_check": "pass"
+    }
+  },
+  "protocol": {
+    "commit": "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072",
+    "mode": "100644",
+    "path": "configs/experiment-005-execution.json",
+    "sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d"
+  },
+  "recovery_requirements": [
+    "Preserve the Experiment 005 protocol, implementation, protocol proof, preflight boundary, and this incident as immutable evidence.",
+    "Do not create an Experiment 005 registration or invoke its authority issuer, coordinator, runner, permanent attempt marker, or managed outputs.",
+    "Use only a new Experiment 006 identifier and disjoint execution namespace for any recovery.",
+    "Prefer an exact semantic AST facade contract; if byte normalization is retained, add an explicit profile is ``006`` to profile is ``005`` substitution.",
+    "Freeze the corrected Experiment 006 protocol and pass its complete pre-registration gate before creating any registration."
+  ],
+  "schema_version": 1,
+  "status": "preflight_rejected",
+  "violations": [
+    {
+      "candidate_normalized_sha256": "9778140580667e95e120a4a8472d8b79ffb7034c3886c208fc3fd3c4da966c86",
+      "candidate_path": "src/falsewake/experiment_005_run_authority.py",
+      "candidate_sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e",
+      "code": "facade_normalization_recipe_cannot_express_truthful_profile_005",
+      "explanation": "The frozen recipe replaces profile ``005`` but the exact facade sentence contains profile is ``005``. The intervening is token prevents a match, so all twelve substitutions leave one truthful docstring line different from the immutable Experiment 004 reference.",
+      "missing_substitution": {
+        "candidate": "profile is ``005``",
+        "reference": "profile is ``004``"
+      },
+      "normalized_added_lines": 1,
+      "normalized_deleted_lines": 1,
+      "protocol_json_pointers": [
+        "/execution_delta/parity_contract/file_recipes/3",
+        "/execution_delta/parity_contract/normalization/ordered_literal_substitutions/7"
+      ],
+      "reference_path": "src/falsewake/experiment_004_run_authority.py",
+      "reference_sha256": "cacab13729f14bfdce10afa5b53b2a09116cf56abe21aee12ac9220a6ad2e5b5"
+    }
+  ]
+}
