@@ -1,0 +1,102 @@
+{
+  "attempt": {
+    "attempt_consumed": true,
+    "invocation_exit_code": 1,
+    "publication_attempted": false,
+    "registered_optimizer_updates": 0,
+    "registered_runner_invocations": 1,
+    "registered_seed_children_started": 0,
+    "registered_validation_examples": 0,
+    "retry_allowed": false,
+    "supervisor_staging_preparation_called": false,
+    "terminal": true,
+    "training_processes_started": 0
+  },
+  "diagnosis": {
+    "affected_implementation": {
+      "commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+      "coordinator": {
+        "path": "src/falsewake/experiment_003_coordinator.py",
+        "sha256": "f2b5ff3e8e874ddf408ba97475c69ca13875e7ac3a37c7462ba2637099a77d1a"
+      },
+      "run_authority_facade": {
+        "path": "src/falsewake/experiment_003_run_authority.py",
+        "sha256": "690ed90679928766a50219657ba467e0e0d39bf2763fa2b60128640fdf0938e3"
+      }
+    },
+    "classification": "confirmed_interface_contract_mismatch",
+    "expected_route": {
+      "argument_count": 1,
+      "module": "falsewake.experiment_003_run_authority",
+      "name": "_verified_state",
+      "positional_only_arguments": 0,
+      "positional_or_keyword_arguments": 1
+    },
+    "explanation": "The fixed Experiment 003 facade exposed _verified_state as one positional-only argument, while the independently frozen coordinator admission boundary required the same route to expose one positional-or-keyword argument. The capability was issued correctly, but the coordinator rejected the route identity before claiming any parent operation.",
+    "observed_route": {
+      "argument_count": 1,
+      "module": "falsewake.experiment_003_run_authority",
+      "name": "_verified_state",
+      "positional_only_arguments": 1,
+      "positional_or_keyword_arguments": 0
+    },
+    "published_scientific_result_admitted": false,
+    "test_gap": "The profile, facade, coordinator, and publication suites verified their local contracts independently but did not assert the live facade route signature against the coordinator admission contract."
+  },
+  "execution_protocol": {
+    "introduction_commit": "e47bd581675abe22b529de7bcc825d39e84a00cd",
+    "path": "configs/experiment-003-execution.json",
+    "sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
+  },
+  "experiment": "003",
+  "incident": "registered_admission_failure",
+  "managed_outputs": {
+    "artifacts": [],
+    "checkpoint_reusable": false,
+    "final_report_present": false,
+    "scratch_present_after_exit": false,
+    "staging_present_after_exit": false
+  },
+  "outcome": {
+    "artifacts": [],
+    "automatic_terminal_report_published": false,
+    "checkpoint_reusable": false,
+    "code": "parent_route_signature_mismatch",
+    "phase": "registered_admission",
+    "status": "execution_failure"
+  },
+  "registration": {
+    "head_commit": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+    "implementation_commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+    "path": "configs/experiment-003-run.json",
+    "registration_sha256": "941a4ec67d2adbe0149861a678fc19e46ac4e2188c126b64c4b9c54f01425b2c",
+    "source_bundle_sha256": "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+  },
+  "remediation": {
+    "next_experiment": "004",
+    "requirements": [
+      "Preserve the Experiment 003 protocol, registration, implementation, and incident bytes.",
+      "Keep the Experiment 002 scientific protocol, data, seeds, model, and gates unchanged.",
+      "Add a live facade-to-coordinator admission-contract regression without issuing a registered capability.",
+      "Use a new authority profile, execution namespace, publication namespace, and one-attempt registration."
+    ],
+    "reuse_experiment_003": false,
+    "scientific_protocol_change": false
+  },
+  "runtime_observation": {
+    "exit_code": 1,
+    "inner_exception_message": "registered parent route signature or identity is invalid",
+    "inner_exception_type": "falsewake.experiment_003_coordinator._RegisteredExperimentBoundaryError",
+    "kernel_release": "6.17.0-1017-aws",
+    "kernel_version_sha256": "a105fbab65fdc3ec8f3ae93a3f5c8e81f4a0cae7b6fd056363c2143b670c9bbb",
+    "outer_exception_message": "registered experiment admission failed closed",
+    "outer_exception_type": "falsewake.experiment_003_coordinator.Experiment003CoordinatorError",
+    "parent_call_chain": [
+      "run_registered_experiment",
+      "claim_parent_operations",
+      "require_function_identity"
+    ]
+  },
+  "schema_version": 1,
+  "scientific_protocol": "002"
+}
