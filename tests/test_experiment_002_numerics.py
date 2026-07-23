@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -16,7 +19,6 @@ from falsewake.experiment_002_rng import (
     uniform_integer,
     uniform_real,
 )
-from falsewake.features import log_mel_spectrogram
 
 CONFIG_PATH = Path("configs/experiment-002-numerics.json")
 PHASE_1_PATH = Path("configs/experiment-002-training.json")
@@ -30,8 +32,93 @@ class DrawIdentity(TypedDict):
     identity: bytes
 
 
+class FrontendProbe(TypedDict):
+    different_float32_values: int
+    legacy_shape: list[int]
+    legacy_sha256: str
+    maximum_absolute_difference: str
+    streaming_shape: list[int]
+    streaming_sha256: str
+    value_count: int
+    waveform_sha256: str
+
+
 def _config() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+
+
+def _frontend_probe(*, openblas_threads: int) -> FrontendProbe:
+    script = textwrap.dedent(
+        """
+        import hashlib
+        import json
+
+        import numpy as np
+
+        from falsewake.experiment_002_frontend import complete_log_mel_frames
+        from falsewake.features import log_mel_spectrogram
+
+        def sha256_float32(values):
+            little_endian = np.ascontiguousarray(values).astype("<f4", copy=False)
+            return hashlib.sha256(little_endian.tobytes(order="C")).hexdigest()
+
+        sample_index = np.arange(16_000, dtype=np.float64)
+        waveform = (
+            0.31 * np.sin(2.0 * np.pi * 731.0 * sample_index / 16_000.0)
+            + 0.17 * np.cos(2.0 * np.pi * 1_913.0 * sample_index / 16_000.0)
+        ).astype(np.float32)
+        streaming = complete_log_mel_frames(waveform)
+        legacy = log_mel_spectrogram(waveform)
+        difference = np.abs(
+            streaming.astype(np.float64) - legacy.astype(np.float64)
+        )
+        print(
+            json.dumps(
+                {
+                    "different_float32_values": int(
+                        np.count_nonzero(streaming != legacy)
+                    ),
+                    "legacy_shape": list(legacy.shape),
+                    "legacy_sha256": sha256_float32(legacy),
+                    "maximum_absolute_difference": np.max(
+                        difference
+                    ).item().hex(),
+                    "streaming_shape": list(streaming.shape),
+                    "streaming_sha256": sha256_float32(streaming),
+                    "value_count": int(streaming.size),
+                    "waveform_sha256": sha256_float32(waveform),
+                },
+                sort_keys=True,
+            )
+        )
+        """
+    )
+    environment = {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "MKL_DYNAMIC": "FALSE",
+        "MKL_NUM_THREADS": "1",
+        "NPY_DISABLE_CPU_FEATURES": "X86_V4",
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_CORETYPE": "Haswell",
+        "OPENBLAS_NUM_THREADS": str(openblas_threads),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONHASHSEED": "0",
+        "PYTHONNOUSERSITE": "1",
+        "TZ": "UTC",
+    }
+    completed = subprocess.run(
+        (sys.executable, "-I", "-B", "-W", "error", "-c", script),
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return cast(FrontendProbe, json.loads(completed.stdout))
 
 
 def _sha256_float32(values: np.ndarray[Any, Any]) -> str:
@@ -146,28 +233,53 @@ def test_streaming_frontend_is_the_only_experiment_002_feature_authority() -> No
         "not_an_experiment_002_feature_authority"
     )
 
-    sample_index = np.arange(16_000, dtype=np.float64)
-    waveform = (
-        0.31 * np.sin(2.0 * np.pi * 731.0 * sample_index / 16_000.0)
-        + 0.17 * np.cos(2.0 * np.pi * 1_913.0 * sample_index / 16_000.0)
-    ).astype(np.float32)
-    streaming = complete_log_mel_frames(waveform)
-    legacy = log_mel_spectrogram(waveform)
-    difference = np.abs(streaming.astype(np.float64) - legacy.astype(np.float64))
-
     probe = authority["legacy_batch_frontend"]["runtime_probe"]
-    assert streaming.shape == legacy.shape == (98, 40)
-    assert streaming.size == probe["value_count"] == 3_920
+    frozen_probe = _frontend_probe(openblas_threads=4)
+    registered_probe = _frontend_probe(openblas_threads=1)
+
     assert (
-        np.count_nonzero(streaming != legacy)
+        frozen_probe["streaming_shape"]
+        == frozen_probe["legacy_shape"]
+        == registered_probe["streaming_shape"]
+        == registered_probe["legacy_shape"]
+        == [98, 40]
+    )
+    assert frozen_probe["value_count"] == probe["value_count"] == 3_920
+    assert registered_probe["value_count"] == frozen_probe["value_count"]
+    assert (
+        frozen_probe["different_float32_values"]
         == (probe["different_float32_values"])
         == 72
     )
     assert (
-        np.max(difference).item().hex()
+        frozen_probe["maximum_absolute_difference"]
         == (probe["maximum_absolute_difference"])
         == "0x1.0000000000000p-19"
     )
+    assert registered_probe["different_float32_values"] == 77
+    assert (
+        registered_probe["maximum_absolute_difference"]
+        == frozen_probe["maximum_absolute_difference"]
+    )
+    assert (
+        registered_probe["waveform_sha256"]
+        == frozen_probe["waveform_sha256"]
+        == "3d5bf9a94940531e9165744c5892eef9c9aa2afa89c434fb3da514f16ffc82b0"
+    )
+    assert (
+        registered_probe["streaming_sha256"]
+        == frozen_probe["streaming_sha256"]
+        == "963e77d8c1e0cffdcea862f32447f8aeb47c78ede96d3d4059337b60b8aef443"
+    )
+    assert (
+        registered_probe["legacy_sha256"]
+        == "0be916f1b8b58434fa7394b86fec4bf914d7d790e2c09d34bb6bf21ebb97e057"
+    )
+    assert (
+        frozen_probe["legacy_sha256"]
+        == "55bebabfd55babac0cb46a9c308d0bec70a3146593bd477a1000893a41341bc8"
+    )
+    assert registered_probe["legacy_sha256"] != frozen_probe["legacy_sha256"]
 
 
 def test_registered_command_pipeline_matches_every_numeric_golden() -> None:

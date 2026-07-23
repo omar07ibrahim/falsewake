@@ -164,6 +164,12 @@ Experiment 002 feature-producing path, the chunk-invariant streaming frontend is
 the numeric authority; the legacy batched frontend remains only a geometry and
 single-frame equation reference. Validation, normalization-statistics collection,
 and quantization calibration are unaugmented and consume no augmentation RNG.
+The frozen legacy comparison was recorded on the NumPy wheel's x86-v3/Haswell
+path with four BLAS threads. Host-migration validation reproduces that diagnostic
+and the registered one-thread path in isolated processes: only the
+non-authoritative batched reference changes (72 to 77 differing float32 values),
+while the waveform, authoritative streaming bytes, and maximum absolute
+difference remain unchanged.
 
 Three registered seeds each train from scratch for 30 epochs on CPU `float32`.
 There are exactly 313 batches per epoch and 9,390 optimizer updates. AdamW, label
