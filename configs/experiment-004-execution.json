@@ -1,0 +1,965 @@
+{
+  "admission_contract": {
+    "failure_recovered": {
+      "classification": "confirmed_interface_contract_mismatch",
+      "expected_route": {
+        "argument_count": 1,
+        "keyword_only_arguments": 0,
+        "module": "falsewake.experiment_003_run_authority",
+        "name": "_verified_state",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 1
+      },
+      "incident": {
+        "commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+        "path": "reports/experiment-003-execution-incident.json",
+        "sha256": "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
+      },
+      "observed_route": {
+        "argument_count": 1,
+        "keyword_only_arguments": 0,
+        "module": "falsewake.experiment_003_run_authority",
+        "name": "_verified_state",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      }
+    },
+    "live_route_contract": {
+      "argument_count": 1,
+      "defaults": null,
+      "keyword_defaults": null,
+      "keyword_only_arguments": 0,
+      "module": "falsewake.experiment_004_run_authority",
+      "name": "_verified_state",
+      "positional_only_arguments": 1,
+      "positional_or_keyword_arguments": 0,
+      "variable_keyword_arguments": false,
+      "variable_positional_arguments": false
+    },
+    "parent_route_matrix": [
+      {
+        "binding": "_create_sealed_experiment_004_child_bundle_fd",
+        "module": "falsewake.experiment_004_run_authority",
+        "name": "_create_sealed_experiment_004_child_bundle_fd",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_required_child_bundle_seals",
+        "module": "falsewake.experiment_004_run_authority",
+        "name": "_required_child_bundle_seals",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_verified_state",
+        "module": "falsewake.experiment_004_run_authority",
+        "name": "_verified_state",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "build_completed_final_evidence",
+        "module": "falsewake.experiment_004_final_evidence",
+        "name": "build_completed_final_evidence",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "verify_completed_final_evidence",
+        "module": "falsewake.experiment_004_final_evidence",
+        "name": "verify_completed_final_evidence",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "build_execution_failure_evidence",
+        "module": "falsewake.experiment_004_final_publication",
+        "name": "build_execution_failure_evidence",
+        "positional_only_arguments": 3,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "publish_registered_final_evidence",
+        "module": "falsewake.experiment_004_final_publication",
+        "name": "publish_registered_final_evidence",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "verify_execution_failure_evidence",
+        "module": "falsewake.experiment_004_final_publication",
+        "name": "verify_execution_failure_evidence",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_begin_registered_supervisor_child",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "begin_registered_child",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_capture_registered_cpu_ids",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "_capture_registered_cpu_ids",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_cleanup_registered_experiment_output_roots",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "_cleanup_registered_experiment_output_roots",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_finish_registered_supervisor_child_failure",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "finish_registered_child_failure",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_finish_registered_supervisor_child_success",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "finish_registered_child_success",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_prepare_registered_experiment_staging",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "_prepare_registered_experiment_staging",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_require_registered_parent_quiescence",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "_require_registered_parent_quiescence",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      }
+    ],
+    "pre_registration_proof": {
+      "actual_cross_module_route_matrix_required": true,
+      "actual_modules_required": [
+        "falsewake.experiment_004_coordinator",
+        "falsewake.experiment_004_final_evidence",
+        "falsewake.experiment_004_final_publication",
+        "falsewake.experiment_004_run_authority",
+        "falsewake.experiment_004_runner",
+        "falsewake.experiment_004_seed_worker",
+        "falsewake.experiment_004_supervisor"
+      ],
+      "coordinator_claim_closure_invocation": "forbidden",
+      "coordinator_require_function_identity_calls_checked": true,
+      "function_code_objects_checked": true,
+      "isolated_process_required": true,
+      "method": "actual_module_objects_and_coordinator_AST_route_matrix",
+      "registered_authority_issuer_invocation": "forbidden",
+      "registered_coordinator_invocation": "forbidden",
+      "registered_runner_invocation": "forbidden"
+    },
+    "route_invariants": {
+      "defaults": null,
+      "exact_type": "types.FunctionType",
+      "keyword_defaults": null,
+      "keyword_only_arguments": 0,
+      "variable_keyword_arguments": false,
+      "variable_positional_arguments": false
+    },
+    "wrapper_route_matrix": [
+      {
+        "binding": "run_registered_experiment",
+        "module": "falsewake.experiment_004_coordinator",
+        "name": "run_registered_experiment",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_registered_child_input_snapshot",
+        "module": "falsewake.experiment_004_run_authority",
+        "name": "_registered_child_input_snapshot",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "run_registered_seed_process",
+        "module": "falsewake.experiment_004_seed_worker",
+        "name": "run_registered_seed_process",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_supervise_registered_child",
+        "module": "falsewake.experiment_004_supervisor",
+        "name": "_supervise_registered_child",
+        "positional_only_arguments": 4,
+        "positional_or_keyword_arguments": 0
+      }
+    ]
+  },
+  "attempt_contract": {
+    "attempt_consumption_boundary": "permanent_parent_marker_before_authority_or_coordinator_import",
+    "child_plan": {
+      "rerun": {
+        "ordinal": 3,
+        "role": "selected_seed_rerun",
+        "seed_source": "selected_training_seed"
+      },
+      "training": [
+        {
+          "ordinal": 0,
+          "role": "training_seed",
+          "seed": 20260719
+        },
+        {
+          "ordinal": 1,
+          "role": "training_seed",
+          "seed": 20260720
+        },
+        {
+          "ordinal": 2,
+          "role": "training_seed",
+          "seed": 20260721
+        }
+      ]
+    },
+    "failure_is_terminal": true,
+    "invoked_admission_failure_consumes_attempt": true,
+    "permanent_attempt_marker": {
+      "child_behavior": "never_inspect_create_modify_or_delete",
+      "claim_order": [
+        "classify_parent_or_sealed_child",
+        "claim_marker_exclusively",
+        "activate_registered_sys_path",
+        "import_run_authority",
+        "issue_registered_capability",
+        "import_coordinator",
+        "claim_parent_routes",
+        "prepare_staging",
+        "start_training_child"
+      ],
+      "claim_success_boundary": "successful_O_CREAT_O_EXCL_creation",
+      "claiming_role": "parent_bootstrap",
+      "creation_flags": [
+        "O_CLOEXEC",
+        "O_CREAT",
+        "O_EXCL",
+        "O_NOFOLLOW",
+        "O_WRONLY"
+      ],
+      "creation_mode": "0600",
+      "existing_marker": "reject_without_removal_or_reuse",
+      "final_mode": "0444",
+      "fsync": [
+        "marker_file",
+        "parent_directory"
+      ],
+      "marker_bytes": "falsewake-experiment-004-attempt-v1\n",
+      "parent_directory": "/home/ubuntu/gitcode/.t",
+      "path": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-attempt",
+      "persistence": "never_delete_on_success_or_failure",
+      "post_creation_failure": "terminal_and_marker_retained",
+      "preflight": "verify_absent_and_safe_without_creation",
+      "tests": "never_create_or_delete_the_canonical_marker"
+    },
+    "preflight_rejection_consumes_registered_invocation": false,
+    "process_local_issuance_latch_retained": true,
+    "registered_invocation_count": 1,
+    "retry_allowed": false,
+    "reuse_predecessor_checkpoint": false,
+    "staging_ownership": {
+      "mechanism": "fresh_exclusive_staging_root",
+      "stale_or_existing_namespace": "reject_without_removal_or_reuse"
+    }
+  },
+  "authority_profile": {
+    "capability_state_profile": "004",
+    "capability_type": "falsewake.experiment_002_run_authority.VerifiedRunRegistration",
+    "coordinator_profile_check_required": true,
+    "cross_profile_acceptance": "forbidden",
+    "cross_profile_rejections": [
+      "experiment_002_capability_at_experiment_003_boundary",
+      "experiment_002_capability_at_experiment_004_boundary",
+      "experiment_003_capability_at_experiment_002_boundary",
+      "experiment_003_capability_at_experiment_004_boundary",
+      "experiment_004_capability_at_experiment_002_boundary",
+      "experiment_004_capability_at_experiment_003_boundary"
+    ],
+    "facade": "src/falsewake/experiment_004_run_authority.py",
+    "issuer_caller_supplied_values": [],
+    "issuer_route": "verify_and_issue_experiment_004_run_registration",
+    "logical_authority": "004",
+    "process_issuance_latch": "shared_across_all_profiles",
+    "profile_binding_fields": [
+      "registration_experiment",
+      "run_config_path",
+      "runtime_fingerprint_domain",
+      "child_bundle_magic",
+      "source_bundle_domain",
+      "sealed_origin_prefix",
+      "sealed_child_memfd_target",
+      "child_bundle_memfd_name",
+      "activation_magic",
+      "activation_ticket_domain",
+      "issuer_route",
+      "sealed_child_issuer_route",
+      "runner_entrypoint",
+      "scratch_root"
+    ],
+    "profile_values": {
+      "activation_magic": "FW4ACTV1",
+      "activation_ticket_domain": "falsewake-exp004-activation-ticket-v1\u0000",
+      "child_bundle_magic": "FW4CHLD1",
+      "child_bundle_memfd_name": "falsewake-exp004-child-bundle",
+      "issuer_route": "verify_and_issue_experiment_004_run_registration",
+      "registration_experiment": "004",
+      "run_config_path": "configs/experiment-004-run.json",
+      "runner_entrypoint": "src/falsewake/experiment_004_runner.py",
+      "runtime_fingerprint_domain": "falsewake-exp004-runtime-v1\u0000",
+      "scratch_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-scratch",
+      "sealed_child_issuer_route": "_verify_and_issue_experiment_004_sealed_child_registration",
+      "sealed_child_memfd_target": "/memfd:falsewake-exp004-child-bundle (deleted)",
+      "sealed_origin_prefix": "falsewake-sealed://experiment-004/",
+      "source_bundle_domain": "falsewake-exp004-source-bundle-v1\u0000"
+    },
+    "publisher_profile_check_required": true,
+    "reverify_dispatch": "retained_capability_state_profile_only",
+    "sealed_child_issuer_route": "_verify_and_issue_experiment_004_sealed_child_registration",
+    "shared_engine": "src/falsewake/experiment_002_run_authority.py"
+  },
+  "evidence_contract": {
+    "failure_pairs": [
+      {
+        "code": "staging_prepare_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "cpu_affinity_capture_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_create_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_close_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "seed_selection_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "completed_evidence_rejected",
+        "phase": "completed_evidence"
+      },
+      {
+        "code": "pre_cleanup_quiescence_failed",
+        "phase": "parent_boundary"
+      }
+    ],
+    "outer_experiment": "004",
+    "predecessor_binding": {
+      "execution_protocol_json_pointer": "/predecessor",
+      "final_evidence": "exact_recursive_value_equality",
+      "final_publication": "exact_recursive_value_equality",
+      "run_config_json_pointer": "/frozen_bindings/predecessor"
+    },
+    "report_last": true,
+    "report_mode": "0444",
+    "scientific_protocol": "002",
+    "statuses": {
+      "execution_failure": {
+        "artifact_paths": [],
+        "checkpoint_reusable": false
+      },
+      "gate_failure": {
+        "artifact_paths": [
+          "reports/experiment-004-seed-20260719-history.json",
+          "reports/experiment-004-seed-20260720-history.json",
+          "reports/experiment-004-seed-20260721-history.json",
+          "reports/experiment-004-selected-rerun-history.json"
+        ],
+        "checkpoint_reusable": false
+      },
+      "pass": {
+        "artifact_paths": [
+          "reports/experiment-004-seed-20260719-history.json",
+          "reports/experiment-004-seed-20260720-history.json",
+          "reports/experiment-004-seed-20260721-history.json",
+          "reports/experiment-004-selected-rerun-history.json",
+          "models/experiment-004-selected.safetensors"
+        ],
+        "checkpoint_reusable": true
+      }
+    }
+  },
+  "execution_delta": {
+    "classification": "interface_contract_recovery",
+    "immutable_predecessor_sources": {
+      "experiment_002_scientific_modules": {
+        "document_path": "configs/experiment-003-execution.json",
+        "document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+        "json_pointer": "/scientific_inheritance/source_blobs"
+      },
+      "experiment_003_modules": [
+        {
+          "path": "src/falsewake/experiment_003_coordinator.py",
+          "sha256": "f2b5ff3e8e874ddf408ba97475c69ca13875e7ac3a37c7462ba2637099a77d1a"
+        },
+        {
+          "path": "src/falsewake/experiment_003_final_evidence.py",
+          "sha256": "6f0ebd8554e703886e63dc9d508ec83ab5a4ce3997b0f99714b441106216b9ad"
+        },
+        {
+          "path": "src/falsewake/experiment_003_final_publication.py",
+          "sha256": "af61f1425a936b51711f70b097c8b5399571e32d39511fdf7dc947270fec59bb"
+        },
+        {
+          "path": "src/falsewake/experiment_003_run_authority.py",
+          "sha256": "690ed90679928766a50219657ba467e0e0d39bf2763fa2b60128640fdf0938e3"
+        },
+        {
+          "path": "src/falsewake/experiment_003_runner.py",
+          "sha256": "6e9eb84027487b17e4a375fe04f8c704c11aa4d78458405900625d462fcd5a4d"
+        },
+        {
+          "path": "src/falsewake/experiment_003_seed_worker.py",
+          "sha256": "f9262a47d0bf2621ebb2837017b9947927980bee2c498171cabc34bd9ba800ad"
+        },
+        {
+          "path": "src/falsewake/experiment_003_supervisor.py",
+          "sha256": "aa33a0f852d3b43f3eff0ded09873aa60911008ba1d37fa3acf4b5d34ab501e3"
+        }
+      ]
+    },
+    "implementation_source_delta": {
+      "base_commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+      "name_status": [
+        {
+          "path": "src/falsewake/experiment_002_run_authority.py",
+          "status": "M"
+        },
+        {
+          "path": "src/falsewake/experiment_004_coordinator.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_final_evidence.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_final_publication.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_run_authority.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_runner.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_seed_worker.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_004_supervisor.py",
+          "status": "A"
+        }
+      ],
+      "other_src_falsewake_changes": "forbidden"
+    },
+    "parity_contract": {
+      "allowed_semantic_deltas": [
+        "coordinator_accepts_one_positional_only_verified_state_argument",
+        "runner_claims_the_permanent_attempt_marker_before_authority_or_coordinator_import",
+        "supervisor_binds_the_exact_experiment_004_runner_sha256",
+        "final_evidence_and_publication_bind_experiment_003_incident_and_experiment_004_namespaces",
+        "run_authority_facade_binds_profile_004"
+      ],
+      "candidate": "experiment_004",
+      "file_recipes": [
+        {
+          "candidate_path": "src/falsewake/experiment_004_coordinator.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate": {
+                  "positional_only_arguments": 1,
+                  "positional_or_keyword_arguments": 0
+                },
+                "kind": "replace_exact_AST_call_arguments_once",
+                "reference": {
+                  "positional_only_arguments": 0,
+                  "positional_or_keyword_arguments": 1
+                },
+                "target": "claim_parent_operations.require_function_identity[_verified_state]"
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_coordinator.py",
+          "reference_sha256": "f2b5ff3e8e874ddf408ba97475c69ca13875e7ac3a37c7462ba2637099a77d1a"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_final_evidence.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value_json_pointer": "/predecessor",
+                "kind": "replace_exact_predecessor_contract_region_once",
+                "reference_document_path": "configs/experiment-003-execution.json",
+                "reference_document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+                "reference_value_json_pointer": "/predecessor",
+                "targets": [
+                  "_PREDECESSOR_*",
+                  "_predecessor_document"
+                ]
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_final_evidence.py",
+          "reference_sha256": "6f0ebd8554e703886e63dc9d508ec83ab5a4ce3997b0f99714b441106216b9ad"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_final_publication.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value_json_pointer": "/predecessor",
+                "kind": "replace_exact_predecessor_contract_region_once",
+                "reference_document_path": "configs/experiment-003-execution.json",
+                "reference_document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+                "reference_value_json_pointer": "/predecessor",
+                "targets": [
+                  "_PREDECESSOR_*",
+                  "_PREDECESSOR_CANONICAL_JSON",
+                  "_predecessor_document"
+                ]
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_final_publication.py",
+          "reference_sha256": "af61f1425a936b51711f70b097c8b5399571e32d39511fdf7dc947270fec59bb"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_run_authority.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_run_authority.py",
+          "reference_sha256": "690ed90679928766a50219657ba467e0e0d39bf2763fa2b60128640fdf0938e3"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_runner.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "call_site": "main.parent_branch_immediately_before__run_registered_parent",
+                "kind": "remove_exact_attempt_marker_source_regions_once",
+                "symbols": [
+                  "_ATTEMPT_MARKER_BYTES",
+                  "_ATTEMPT_MARKER_CREATION_MODE",
+                  "_ATTEMPT_MARKER_DIRECTORY",
+                  "_ATTEMPT_MARKER_FINAL_MODE",
+                  "_ATTEMPT_MARKER_LEAF",
+                  "_ATTEMPT_MARKER_PATH",
+                  "_claim_permanent_parent_attempt"
+                ]
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_runner.py",
+          "reference_sha256": "6e9eb84027487b17e4a375fe04f8c704c11aa4d78458405900625d462fcd5a4d"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_seed_worker.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_seed_worker.py",
+          "reference_sha256": "f9262a47d0bf2621ebb2837017b9947927980bee2c498171cabc34bd9ba800ad"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_004_supervisor.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value": "one_exact_future_64_lowercase_hex_digest",
+                "kind": "replace_exact_assignment_once",
+                "reference_value": "6e9eb84027487b17e4a375fe04f8c704c11aa4d78458405900625d462fcd5a4d",
+                "target": "_RUNNER_SHA256"
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_003_supervisor.py",
+          "reference_sha256": "aa33a0f852d3b43f3eff0ded09873aa60911008ba1d37fa3acf4b5d34ab501e3"
+        }
+      ],
+      "normalization": {
+        "direction": "experiment_004_candidate_to_experiment_003_reference",
+        "encoding": "UTF-8",
+        "ordered_literal_substitutions": [
+          {
+            "candidate": "Experiment 004",
+            "reference": "Experiment 003"
+          },
+          {
+            "candidate": "Experiment004",
+            "reference": "Experiment003"
+          },
+          {
+            "candidate": "experiment_004",
+            "reference": "experiment_003"
+          },
+          {
+            "candidate": "experiment-004",
+            "reference": "experiment-003"
+          },
+          {
+            "candidate": "exp004",
+            "reference": "exp003"
+          },
+          {
+            "candidate": "\"004\"",
+            "reference": "\"003\""
+          },
+          {
+            "candidate": "FW4ACTV1",
+            "reference": "FW3ACTV1"
+          },
+          {
+            "candidate": "FW4CHLD1",
+            "reference": "FW3CHLD1"
+          }
+        ],
+        "supervisor_runner_sha256_assignment": {
+          "candidate_value": "one_exact_future_64_lowercase_hex_digest",
+          "normalize_to_reference_value": "6e9eb84027487b17e4a375fe04f8c704c11aa4d78458405900625d462fcd5a4d",
+          "target": "_RUNNER_SHA256"
+        }
+      },
+      "reference_commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+      "reference_profile": "experiment_003",
+      "unrestricted_textual_drift": "forbidden"
+    },
+    "permitted_existing_source_changes": [
+      {
+        "path": "src/falsewake/experiment_002_run_authority.py",
+        "reference_sha256": "1c19b920df0e75a401bbfcc95c36adfc550b24e77d5e13e5a711d61a0f45f315",
+        "scope": "add_one_fixed_profile_004_without_changing_profiles_002_or_003_or_scientific_execution_semantics"
+      }
+    ],
+    "production_additions": [
+      "src/falsewake/experiment_004_coordinator.py",
+      "src/falsewake/experiment_004_final_evidence.py",
+      "src/falsewake/experiment_004_final_publication.py",
+      "src/falsewake/experiment_004_run_authority.py",
+      "src/falsewake/experiment_004_runner.py",
+      "src/falsewake/experiment_004_seed_worker.py",
+      "src/falsewake/experiment_004_supervisor.py"
+    ],
+    "scientific_protocol_change": false,
+    "shared_authority_recipe": {
+      "added_symbols": [
+        "_EXPERIMENT_004_CHILD_BUNDLE_MAGIC",
+        "_EXPERIMENT_004_PROFILE",
+        "_EXPERIMENT_004_PROTOCOL_INTRODUCTION_COMMIT",
+        "_EXPERIMENT_004_PROTOCOL_PATH",
+        "_EXPERIMENT_004_PROTOCOL_SHA256",
+        "_EXPERIMENT_004_RUNTIME_FINGERPRINT_DOMAIN",
+        "_EXPERIMENT_004_RUN_CONFIG_PATH",
+        "_EXPERIMENT_004_SEALED_CHILD_MEMFD_TARGET",
+        "_EXPERIMENT_004_SEALED_ORIGIN_PREFIX",
+        "_EXPERIMENT_004_SOURCE_BUNDLE_DOMAIN",
+        "_create_sealed_experiment_004_child_bundle_fd",
+        "_parse_experiment_004_child_bundle",
+        "_require_experiment_004_implementation_history",
+        "_reverify_experiment_004_run_registration",
+        "_verify_and_issue_experiment_004_run_registration",
+        "_verify_and_issue_experiment_004_sealed_child_registration",
+        "_verify_experiment_004_run_registration"
+      ],
+      "baseline_path": "src/falsewake/experiment_002_run_authority.py",
+      "baseline_sha256": "1c19b920df0e75a401bbfcc95c36adfc550b24e77d5e13e5a711d61a0f45f315",
+      "modified_generic_dispatches": [
+        "_AUTHORITY_PROFILES",
+        "_expected_frozen_bindings",
+        "_require_authority_profile",
+        "_require_invocation_registration",
+        "_verify_committed_repository"
+      ],
+      "normalization_result": "removing_the_exact_profile_004_symbols_and_dispatch_arms_restores_the_baseline_bytes",
+      "predecessor_profile_behavior_change": "forbidden",
+      "protocol_binding_required": {
+        "introduction_commit_source": "git_commit_that_introduces_the_exact_protocol_blob",
+        "path": "configs/experiment-004-execution.json",
+        "sha256_source": "sha256_of_the_exact_committed_protocol_blob"
+      }
+    }
+  },
+  "experiment": "004",
+  "kind": "execution_only_interface_recovery",
+  "lifecycle": {
+    "attempt_limit": 1,
+    "execution_config_authorizes_registered_training": false,
+    "execution_protocol": {
+      "committed_blob_verification_required": true,
+      "introduction_commit_binding_required": true,
+      "introduction_commit_must_be_direct_child_of": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+      "introduction_commit_must_precede_implementation_commit": true,
+      "only_change": "A configs/experiment-004-execution.json",
+      "path": "configs/experiment-004-execution.json",
+      "required_mode": "100644",
+      "run_config_binding_path": "frozen_bindings.execution_protocol",
+      "run_config_sha256_binding_required": true
+    },
+    "implementation_commit_must_descend_from": "the_introduction_commit_of_lifecycle.execution_protocol",
+    "implementation_commit_must_exclude": [
+      "configs/experiment-004-run.json",
+      "models/experiment-004-selected.safetensors",
+      "reports/experiment-004-seed-20260719-history.json",
+      "reports/experiment-004-seed-20260720-history.json",
+      "reports/experiment-004-seed-20260721-history.json",
+      "reports/experiment-004-selected-rerun-history.json",
+      "reports/experiment-004-training.json"
+    ],
+    "implementation_commit_required_production_additions": "execution_delta.production_additions",
+    "pre_registration_observations": {
+      "registered_optimizer_updates": 0,
+      "registered_validation_examples": 0
+    },
+    "registration_commit": {
+      "execution_protocol_binding": "lifecycle.execution_protocol",
+      "only_change": "A configs/experiment-004-run.json",
+      "parent": "implementation_commit",
+      "required_mode": "100644"
+    },
+    "retry_policy": "any_terminal_attempt_requires_a_new_experiment_identifier",
+    "terminal_execution_failure": {
+      "artifacts": [],
+      "checkpoint_reusable": false
+    }
+  },
+  "namespace": {
+    "activation_thread_name": "falsewake-exp004-child-activation",
+    "attempt_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-attempt",
+    "authority_module": "falsewake.experiment_004_run_authority",
+    "child_bundle_memfd_name": "falsewake-exp004-child-bundle",
+    "child_control_fd": 3,
+    "child_source_bundle_fd": 7,
+    "coordinator_module": "falsewake.experiment_004_coordinator",
+    "final_evidence_module": "falsewake.experiment_004_final_evidence",
+    "final_publication_module": "falsewake.experiment_004_final_publication",
+    "launch_memfd_name": "falsewake-experiment-004-launch",
+    "managed_outputs": {
+      "histories": [
+        "reports/experiment-004-seed-20260719-history.json",
+        "reports/experiment-004-seed-20260720-history.json",
+        "reports/experiment-004-seed-20260721-history.json"
+      ],
+      "model": "models/experiment-004-selected.safetensors",
+      "report": "reports/experiment-004-training.json",
+      "selected_rerun_history": "reports/experiment-004-selected-rerun-history.json"
+    },
+    "required_sealed_sources": [
+      "src/falsewake/__init__.py",
+      "src/falsewake/experiment_002_process_guard.py",
+      "src/falsewake/experiment_002_run_authority.py",
+      "src/falsewake/experiment_004_coordinator.py",
+      "src/falsewake/experiment_004_run_authority.py"
+    ],
+    "run_config": "configs/experiment-004-run.json",
+    "runner": "src/falsewake/experiment_004_runner.py",
+    "scratch_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-scratch",
+    "sealed_child_memfd_target": "/memfd:falsewake-exp004-child-bundle (deleted)",
+    "seed_worker_module": "falsewake.experiment_004_seed_worker",
+    "staging_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-004-staging",
+    "supervisor_module": "falsewake.experiment_004_supervisor",
+    "temporary_publication_prefix": ".falsewake-exp004-publication-",
+    "transport": {
+      "activation_magic": "FW4ACTV1",
+      "activation_ticket_domain": "falsewake-exp004-activation-ticket-v1\u0000",
+      "authority_sealed_origin_prefix": "falsewake-sealed://experiment-004/",
+      "child_bundle_magic": "FW4CHLD1",
+      "inherited_child_result_envelope_domain": "falsewake-exp002-child-result-envelope-v1\u0000",
+      "inherited_history_domain": "falsewake-exp002-history-v1\u0000",
+      "inherited_model_tensor_domain": "falsewake-exp002-model-tensors-v1\u0000",
+      "inherited_process_guard_domain": "falsewake-exp002-process-guard-filter-v1\u0000",
+      "runner_sealed_origin_prefix": "falsewake-sealed://experiment-004",
+      "runtime_fingerprint_domain": "falsewake-exp004-runtime-v1\u0000",
+      "source_bundle_domain": "falsewake-exp004-source-bundle-v1\u0000"
+    }
+  },
+  "predecessor": {
+    "execution_protocol": {
+      "introduction_commit": "e47bd581675abe22b529de7bcc825d39e84a00cd",
+      "path": "configs/experiment-003-execution.json",
+      "sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a"
+    },
+    "experiment": "003",
+    "implementation": {
+      "commit": "4475461d5fd3e5b8969020003424c73bb10d3c9b",
+      "runtime_fingerprint_sha256": "c167d636026909879c952858c67c304ce5a1bbb981284242c3d6235efe205f8f",
+      "source_bundle_sha256": "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+    },
+    "incident": {
+      "commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+      "path": "reports/experiment-003-execution-incident.json",
+      "sha256": "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
+    },
+    "outcome": {
+      "automatic_terminal_report_published": false,
+      "checkpoint_reusable": false,
+      "code": "parent_route_signature_mismatch",
+      "phase": "registered_admission",
+      "status": "execution_failure"
+    },
+    "registration": {
+      "commit": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+      "path": "configs/experiment-003-run.json",
+      "sha256": "941a4ec67d2adbe0149861a678fc19e46ac4e2188c126b64c4b9c54f01425b2c",
+      "source_bundle_sha256": "28094defd76ba395a5b4eec477b6f0516686013df5995f24c3c126a35b09c0b6"
+    },
+    "reuse_forbidden": true,
+    "scientific_protocol": "002",
+    "terminal": true,
+    "topology": {
+      "incident_commit": "96f151d86ae060b402a0ef5d47de7ad8c1191c0a",
+      "incident_parent": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+      "outcome_report_path": "reports/experiment-003-training.json",
+      "outcome_report_present": false,
+      "registration_commit": "f7426fb038ae5dc0c24b5141d12d55323ac7c961",
+      "registration_parent": "4475461d5fd3e5b8969020003424c73bb10d3c9b"
+    }
+  },
+  "schema_version": 1,
+  "scientific_inheritance": {
+    "external_inputs": {
+      "archive_path": "/home/ubuntu/gitcode/.t/falsewake-data/speech_commands_v0.02.tar.gz",
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/manifest-v2-exact/speech-commands.jsonl",
+      "manifest_record_count": 105829,
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "pcm_cache_byte_count": 2995776948,
+      "pcm_cache_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/experiment-002-pcm-v1.cache",
+      "pcm_cache_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    },
+    "frozen_files": [
+      {
+        "path": "configs/experiment-002-training.json",
+        "sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+      },
+      {
+        "path": "configs/experiment-002-numerics.json",
+        "sha256": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9"
+      },
+      {
+        "path": "configs/experiment-002-trainer.json",
+        "sha256": "768720d031a1f2f6d0a36466fd9b4fa095a2f1b9a6fbbc382d4af5fc51514b48"
+      },
+      {
+        "byte_count": 320,
+        "path": "models/experiment-002-normalization.f32",
+        "sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e"
+      },
+      {
+        "path": "reports/experiment-002-normalization.json",
+        "sha256": "2b95565fec7dc956a4b1f667638b87e3df64cfaaca3026017942a8057c5187a8"
+      },
+      {
+        "path": "reports/experiment-002-pcm-cache.json",
+        "sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca"
+      },
+      {
+        "path": "reports/experiment-002-implementation-audit.json",
+        "sha256": "0b8033e7f407550d1c8576d31485e5bbcf825592de0d3b86f42ce98c1fca7116"
+      },
+      {
+        "path": "src/falsewake/causal_kws.py",
+        "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+      }
+    ],
+    "registered_training": {
+      "class_count": 12,
+      "epochs_per_seed": 30,
+      "parameter_tensor_count": 53,
+      "parameter_value_count": 23724,
+      "seeds": [
+        20260719,
+        20260720,
+        20260721
+      ],
+      "selected_seed_rerun_required": true,
+      "total_updates_per_seed": 9390,
+      "training_example_count_per_epoch": 40027,
+      "updates_per_epoch": 313,
+      "validation_example_count": 10583
+    },
+    "runtime": {
+      "numpy_version": "2.5.1",
+      "python_version": "3.12.3",
+      "safetensors_version": "0.8.0",
+      "torch_version": "2.13.0+cpu"
+    },
+    "source_policy": {
+      "baseline_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+      "immutable_scientific_source_blobs": {
+        "document_path": "configs/experiment-003-execution.json",
+        "document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+        "json_pointer": "/scientific_inheritance/source_blobs"
+      },
+      "predecessor_execution_protocol_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+      "scientific_protocol": "002",
+      "shared_authority_exception": "execution_delta.permitted_existing_source_changes"
+    }
+  },
+  "verification_gate": {
+    "cross_profile_rejection": [
+      "002_to_003",
+      "002_to_004",
+      "003_to_002",
+      "003_to_004",
+      "004_to_002",
+      "004_to_003"
+    ],
+    "external_attempt_marker_absent_before_registration": true,
+    "full_host_bound_suite_required": true,
+    "full_portable_suite_required": true,
+    "git_clean_required": true,
+    "github_actions_actionlint_required": true,
+    "live_cross_module_route_matrix_required": true,
+    "mypy_required": true,
+    "no_experiment_004_managed_outputs_before_registration": true,
+    "no_hidden_parent_claim_before_registration": true,
+    "no_registered_authority_issuer_before_registration": true,
+    "no_registered_coordinator_before_registration": true,
+    "no_registered_runner_before_registration": true,
+    "predecessor_source_hashes_required": true,
+    "ruff_format_required": true,
+    "ruff_required": true
+  }
+}
