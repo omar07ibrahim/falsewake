@@ -484,8 +484,8 @@ def test_predecessor_failure_and_incident_are_exact() -> None:
         predecessor["outcome"]["commit"],
         repair["repair_commit"],
     )
-    fields = repair_changes.rstrip(b"\x00").split(b"\x00")
-    assert tuple(zip(fields[::2], fields[1::2], strict=True)) == (
+    repair_fields = repair_changes.rstrip(b"\x00").split(b"\x00")
+    assert tuple(zip(repair_fields[::2], repair_fields[1::2], strict=True)) == (
         (b"M", b"README.md"),
         (b"M", b"docs/experiment-002.md"),
         (b"A", b"reports/experiment-002-execution-incident.json"),

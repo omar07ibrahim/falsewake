@@ -564,7 +564,7 @@ def test_surface_is_standard_library_only_fixed_and_defaultless() -> None:
             for cell in cast(tuple[object, ...], closure)
         }
     ) == sum(len(cast(tuple[object, ...], closure)) for closure in route_closures)
-    for index, route in enumerate(routes):
+    for index, route in enumerate(route_functions):
         parameters = tuple(inspect.signature(route).parameters.values())
         assert len(parameters) == (2 if index == 0 else 1)
         assert all(

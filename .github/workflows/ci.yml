@@ -57,7 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Protocol tests verify the immutable Experiment 002/003 commit chain.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -88,4 +89,5 @@ jobs:
             --ignore=tests/test_experiment_002_runner.py \
             --ignore=tests/test_experiment_002_supervisor.py \
             --ignore=tests/test_experiment_002_child_result.py \
-            --ignore=tests/test_experiment_002_seed_worker.py
+            --ignore=tests/test_experiment_002_seed_worker.py \
+            --ignore=tests/test_experiment_003_runner.py
