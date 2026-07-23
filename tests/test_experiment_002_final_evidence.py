@@ -1267,6 +1267,190 @@ def test_module_and_hash_route_rebinding_fail_issuer_integrity(
         final_evidence.snapshot_completed_publication(evidence)
 
 
+def test_json_encoder_replacement_cannot_forge_the_final_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = _selector()
+    original_encoder = json.JSONEncoder
+    forged_documents: list[object] = []
+
+    class ForgingJSONEncoder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._delegate = original_encoder(*args, **kwargs)
+
+        def encode(self, document: object) -> str:
+            if type(document) is dict and {
+                "artifacts",
+                "children",
+                "publication",
+                "status",
+            } <= set(cast(dict[str, object], document)):
+                forged_documents.append(document)
+                return '{"forged":true}'
+            return self._delegate.encode(document)
+
+    monkeypatch.setattr(json, "JSONEncoder", ForgingJSONEncoder)
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+    assert forged_documents == []
+
+
+def test_json_decoder_replacement_cannot_take_over_canonical_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = _selector()
+    original_decoder = json.JSONDecoder
+    forged_documents: list[dict[str, object]] = []
+
+    class ForgingJSONDecoder:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._delegate = original_decoder(*args, **kwargs)
+
+        def decode(self, text: str) -> Any:
+            document = self._delegate.decode(text)
+            if type(document) is dict and "epochs" in document and "seed" in document:
+                reordered = dict(
+                    reversed(tuple(cast(dict[str, object], document).items()))
+                )
+                forged_documents.append(reordered)
+                return reordered
+            return document
+
+    monkeypatch.setattr(json, "JSONDecoder", ForgingJSONDecoder)
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+    assert forged_documents == []
+
+
+@pytest.mark.parametrize(
+    ("class_name", "method_name"),
+    (("JSONEncoder", "encode"), ("JSONDecoder", "decode")),
+)
+def test_json_method_code_mutation_fails_issuer_integrity(
+    class_name: str,
+    method_name: str,
+) -> None:
+    selector = _selector()
+    json_class = cast(type[Any], getattr(json, class_name))
+    method = cast(FunctionType, getattr(json_class, method_name))
+
+    def forged_method(_instance: object, _value: object) -> object:
+        return {}
+
+    original_code = method.__code__
+    method.__code__ = forged_method.__code__
+    try:
+        with pytest.raises(
+            final_evidence.Experiment002FinalEvidenceError,
+            match="issuer integrity",
+        ):
+            final_evidence.build_completed_final_evidence(selector)
+    finally:
+        method.__code__ = original_code
+
+
+@pytest.mark.parametrize("class_name", ("JSONEncoder", "JSONDecoder"))
+def test_json_class_namespace_mutation_fails_issuer_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    class_name: str,
+) -> None:
+    selector = _selector()
+    json_class = cast(type[Any], getattr(json, class_name))
+    monkeypatch.setattr(
+        json_class,
+        "_persistent_evidence_forge",
+        object(),
+        raising=False,
+    )
+
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+
+
+@pytest.mark.parametrize(
+    ("class_name", "method_name"),
+    (("JSONEncoder", "encode"), ("JSONDecoder", "decode")),
+)
+def test_json_method_namespace_mutation_fails_issuer_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    class_name: str,
+    method_name: str,
+) -> None:
+    selector = _selector()
+    json_class = cast(type[Any], getattr(json, class_name))
+    method = cast(FunctionType, getattr(json_class, method_name))
+    monkeypatch.setattr(
+        method,
+        "_persistent_evidence_forge",
+        object(),
+        raising=False,
+    )
+
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+
+
+@pytest.mark.parametrize(
+    ("class_name", "method_name", "global_name"),
+    (
+        ("JSONEncoder", "encode", "encode_basestring_ascii"),
+        ("JSONDecoder", "__init__", "JSONObject"),
+    ),
+)
+def test_json_method_global_namespace_mutation_fails_issuer_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    class_name: str,
+    method_name: str,
+    global_name: str,
+) -> None:
+    selector = _selector()
+    json_class = cast(type[Any], getattr(json, class_name))
+    method = cast(FunctionType, getattr(json_class, method_name))
+    monkeypatch.setitem(method.__globals__, global_name, object())
+
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+
+
+@pytest.mark.parametrize(
+    ("class_name", "keyword_name", "replacement"),
+    (("JSONEncoder", "sort_keys", True), ("JSONDecoder", "strict", False)),
+)
+def test_json_method_keyword_default_mutation_fails_issuer_integrity(
+    monkeypatch: pytest.MonkeyPatch,
+    class_name: str,
+    keyword_name: str,
+    replacement: object,
+) -> None:
+    selector = _selector()
+    json_class = cast(type[Any], getattr(json, class_name))
+    initializer = cast(FunctionType, json_class.__init__)
+    keyword_defaults = initializer.__kwdefaults__
+    assert keyword_defaults is not None
+    monkeypatch.setitem(keyword_defaults, keyword_name, replacement)
+
+    with pytest.raises(
+        final_evidence.Experiment002FinalEvidenceError,
+        match="issuer integrity",
+    ):
+        final_evidence.build_completed_final_evidence(selector)
+
+
 def test_helper_global_and_function_code_mutation_fail_issuer_integrity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

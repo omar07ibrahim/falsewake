@@ -441,6 +441,29 @@ type _IssuedLedger = tuple[
     bytes,
     CompletedPublicationSnapshot,
 ]
+type _FunctionAuthority = tuple[
+    str,
+    FunctionType,
+    CodeType,
+    object,
+    object,
+    tuple[object, ...],
+    tuple[object, ...],
+]
+type _NamespaceItems = tuple[tuple[str, object], ...]
+type _JSONMethodAuthority = tuple[
+    _FunctionAuthority,
+    _NamespaceItems,
+    dict[str, Any],
+    _NamespaceItems,
+    _NamespaceItems | None,
+]
+type _JSONClassAuthority = tuple[
+    str,
+    type[Any],
+    _NamespaceItems,
+    tuple[_JSONMethodAuthority, ...],
+]
 
 
 type _BuildRoute = Callable[[object], FinalCompletedEvidence]
@@ -1549,6 +1572,8 @@ def _make_completed_evidence_routes() -> tuple[
     zip_values = zip
     object_new = object.__new__
     sha256_route = hashlib.sha256
+    json_encoder_type = json.JSONEncoder
+    json_decoder_type = json.JSONDecoder
     cast_route = cast
     bytes_type = bytes
     bool_type = bool
@@ -1839,15 +1864,7 @@ def _make_completed_evidence_routes() -> tuple[
 
     def capture_function_authority(
         name: str, function: FunctionType, /
-    ) -> tuple[
-        str,
-        FunctionType,
-        CodeType,
-        object,
-        object,
-        tuple[object, ...],
-        tuple[object, ...],
-    ]:
+    ) -> _FunctionAuthority:
         closure = function.__closure__
         cells: tuple[object, ...] = () if closure is None else make_tuple(closure)
         contents: list[object] = []
@@ -1865,6 +1882,41 @@ def _make_completed_evidence_routes() -> tuple[
             cells,
             make_tuple(contents),
         )
+
+    def capture_json_method_authority(
+        name: str, function: FunctionType, /
+    ) -> _JSONMethodAuthority:
+        keyword_defaults = function.__kwdefaults__
+        return (
+            capture_function_authority(name, function),
+            make_tuple(function.__dict__.items()),
+            function.__globals__,
+            make_tuple(function.__globals__.items()),
+            (
+                None
+                if keyword_defaults is None
+                else make_tuple(keyword_defaults.items())
+            ),
+        )
+
+    def capture_json_class_authority(
+        attribute_name: str, json_class: type[Any], /
+    ) -> _JSONClassAuthority:
+        class_items = make_tuple(json_class.__dict__.items())
+        methods = make_tuple(
+            capture_json_method_authority(
+                f"json.{attribute_name}.{name}",
+                cast_route(function_type, value),
+            )
+            for name, value in class_items
+            if exact_type(value) is function_type
+        )
+        return attribute_name, json_class, class_items, methods
+
+    json_class_authorities = (
+        capture_json_class_authority("JSONEncoder", json_encoder_type),
+        capture_json_class_authority("JSONDecoder", json_decoder_type),
+    )
 
     helper_functions = make_tuple(
         (name, value)
@@ -1913,6 +1965,8 @@ def _make_completed_evidence_routes() -> tuple[
     module_attribute_authorities = (
         (hashlib, "sha256", sha256_route),
         (json, "JSONDecodeError", json.JSONDecodeError),
+        (json, "JSONDecoder", json_decoder_type),
+        (json, "JSONEncoder", json_encoder_type),
         (json, "dumps", json.dumps),
         (json, "loads", json.loads),
         (math, "copysign", math.copysign),
@@ -1960,27 +2014,11 @@ def _make_completed_evidence_routes() -> tuple[
         (name, builtins.__dict__[name]) for name in builtin_names
     )
     route_function_authorities: tuple[
-        tuple[
-            str,
-            FunctionType,
-            CodeType,
-            object,
-            object,
-            tuple[object, ...],
-            tuple[object, ...],
-        ],
+        _FunctionAuthority,
         ...,
     ] = ()
     internal_function_authorities: tuple[
-        tuple[
-            str,
-            FunctionType,
-            CodeType,
-            object,
-            object,
-            tuple[object, ...],
-            tuple[object, ...],
-        ],
+        _FunctionAuthority,
         ...,
     ] = ()
     guard_authority_box: list[Any] = []
@@ -1989,15 +2027,7 @@ def _make_completed_evidence_routes() -> tuple[
         raise error_type("completed evidence issuer integrity check failed")
 
     def function_authority_matches(
-        authority: tuple[
-            str,
-            FunctionType,
-            CodeType,
-            object,
-            object,
-            tuple[object, ...],
-            tuple[object, ...],
-        ],
+        authority: _FunctionAuthority,
         *,
         require_global: bool,
     ) -> bool:
@@ -2054,6 +2084,62 @@ def _make_completed_evidence_routes() -> tuple[
         for module, name, expected in module_attribute_authorities:
             if get_attribute(module, name, missing) is not expected:
                 integrity_failure()
+        for (
+            attribute_name,
+            json_class,
+            class_items,
+            method_authorities,
+        ) in json_class_authorities:
+            if get_attribute(json, attribute_name, missing) is not json_class:
+                integrity_failure()
+            class_dictionary = json_class.__dict__
+            if length(class_dictionary) != length(class_items) or any_values(
+                class_dictionary.get(name, missing) is not expected
+                for name, expected in class_items
+            ):
+                integrity_failure()
+            for (
+                method_authority,
+                method_items,
+                method_globals,
+                method_global_items,
+                keyword_default_items,
+            ) in method_authorities:
+                method = method_authority[1]
+                method_dictionary = method.__dict__
+                if (
+                    not function_authority_matches(
+                        method_authority, require_global=False
+                    )
+                    or length(method_dictionary) != length(method_items)
+                    or any_values(
+                        method_dictionary.get(name, missing) is not expected
+                        for name, expected in method_items
+                    )
+                    or length(method_globals) != length(method_global_items)
+                    or any_values(
+                        method_globals.get(name, missing) is not expected
+                        for name, expected in method_global_items
+                    )
+                ):
+                    integrity_failure()
+                keyword_defaults = method.__kwdefaults__
+                if keyword_default_items is None:
+                    if keyword_defaults is not None:
+                        integrity_failure()
+                else:
+                    if exact_type(keyword_defaults) is not dict:
+                        integrity_failure()
+                    exact_keyword_defaults = cast_route(
+                        "dict[str, object]", keyword_defaults
+                    )
+                    if length(exact_keyword_defaults) != length(
+                        keyword_default_items
+                    ) or any_values(
+                        exact_keyword_defaults.get(name, missing) is not expected
+                        for name, expected in keyword_default_items
+                    ):
+                        integrity_failure()
         for name, expected in builtin_authorities:
             if (
                 module_globals.get(name, missing) is not missing
