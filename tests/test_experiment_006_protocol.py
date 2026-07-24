@@ -9,6 +9,7 @@ import inspect
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections import Counter
@@ -22,6 +23,17 @@ PROTOCOL_PARENT = "594e2c491c057394f18860c8362a51190460645f"
 PROTOCOL_SHA256 = "47ce6c6f11c3575944ef8c4ab1edcc0b42fdfa9bf1ede0318bfc5ea61fabf650"
 PROTOCOL_GIT_BLOB = "9c7e11de8a3c81b74e32d56e8a429791376ea179"
 PROTOCOL_BYTES = 129_719
+
+ADMISSION_COMMIT = "438651010c4ef1de4012a570f3211b1d27bb1e3a"
+ADMISSION_PARENT = "fe21f22feb4d258f291c4d8c8bfc9646f2618227"
+REGISTRATION_COMMIT = "b73ecb8be3871092aad431a6c497771296c67d60"
+REGISTRATION_PATH = "configs/experiment-006-run.json"
+REGISTRATION_SHA256 = "53101c6424db09da01e23af4dc5956a57aa8a7e41226113782d4da1d822ab0b8"
+REGISTRATION_BYTES = 14_811
+INCIDENT_COMMIT = "fd6b98e6122d2884800b359a61440e9b07832204"
+INCIDENT_PATH = "reports/experiment-006-execution-incident.json"
+INCIDENT_SHA256 = "c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d"
+INCIDENT_BYTES = 8_839
 
 P5_PROTOCOL_COMMIT = "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072"
 P5_PROTOCOL_PARENT = "462aeba306a0612fd6d64884e323d72db3569a89"
@@ -256,6 +268,62 @@ def _git(*arguments: str) -> bytes:
         timeout=30,
     )
     return completed.stdout
+
+
+def _stat_frame(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _path_snapshot(path: Path) -> tuple[tuple[int, ...], bytes] | None:
+    if not os.path.lexists(path):
+        return None
+    before = path.lstat()
+    assert stat.S_ISREG(before.st_mode)
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    named = path.lstat()
+    frame = _stat_frame(before)
+    assert _stat_frame(opened) == frame
+    assert _stat_frame(after) == frame
+    assert _stat_frame(named) == frame
+    payload = b"".join(chunks)
+    assert len(payload) == frame[6]
+    return frame, payload
+
+
+def _assert_terminal_p6_marker(snapshot: tuple[tuple[int, ...], bytes] | None) -> None:
+    if snapshot is None:
+        return
+    frame, payload = snapshot
+    assert stat.S_IMODE(frame[2]) == 0o444
+    assert frame[3] == 1
+    assert payload == b"falsewake-experiment-006-attempt-v1\n"
+    assert _sha256(payload) == (
+        "11cb9ce51db5b5153d3839ac1edad1cd63ae582009417abfea6a8562e319bfbe"
+    )
 
 
 def _protocol() -> dict[str, Any]:
@@ -1561,6 +1629,10 @@ def test_coordinator_ast_claims_all_fifteen_parent_routes_without_invocation() -
 
 def test_live_15_plus_4_routes_bindings_and_all_20_cross_directions() -> None:
     document = _protocol()
+    assert not os.path.lexists(P4_MARKER)
+    assert not os.path.lexists(P5_MARKER)
+    marker_before = _path_snapshot(P6_MARKER)
+    _assert_terminal_p6_marker(marker_before)
     admission = document["admission_contract"]
     assert len(admission["parent_route_matrix"]) == 15
     assert len(admission["wrapper_route_matrix"]) == 4
@@ -1584,6 +1656,7 @@ import importlib
 import inspect
 import json
 import os
+import stat
 import sys
 import weakref
 from pathlib import Path
@@ -1591,8 +1664,30 @@ from types import FunctionType
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, {str(ROOT / "src")!r})
-markers = {json.dumps([str(P4_MARKER), str(P5_MARKER), str(P6_MARKER)])}
-assert all(not os.path.lexists(path) for path in markers)
+p4_marker = {str(P4_MARKER)!r}
+p5_marker = {str(P5_MARKER)!r}
+p6_marker = {str(P6_MARKER)!r}
+assert not os.path.lexists(p4_marker)
+assert not os.path.lexists(p5_marker)
+
+def marker_state(path):
+    if not os.path.lexists(path):
+        return None
+    observed = os.lstat(path)
+    assert stat.S_ISREG(observed.st_mode)
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_nlink,
+        observed.st_uid,
+        observed.st_gid,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+p6_marker_before = marker_state(p6_marker)
 route_spec = json.loads({json.dumps(routes, sort_keys=True)!r})
 required_modules = json.loads({json.dumps(required_modules)!r})
 modules = {{name: importlib.import_module(name) for name in required_modules}}
@@ -1702,7 +1797,9 @@ for source in profiles:
             + target.registration_experiment
         )
 
-assert all(not os.path.lexists(path) for path in markers)
+assert not os.path.lexists(p4_marker)
+assert not os.path.lexists(p5_marker)
+assert marker_state(p6_marker) == p6_marker_before
 print(
     json.dumps(
         {{
@@ -1753,6 +1850,11 @@ print(
     assert tuple(observed["profile_fields"]) == PROFILE_FIELDS
     assert observed["profile_values"] == profile_values
     assert tuple(observed["directions"]) == CROSS_PROFILE_DIRECTIONS
+    assert not os.path.lexists(P4_MARKER)
+    assert not os.path.lexists(P5_MARKER)
+    marker_after = _path_snapshot(P6_MARKER)
+    _assert_terminal_p6_marker(marker_after)
+    assert marker_after == marker_before
 
 
 def _history_trace_contract(document: dict[str, Any]) -> dict[str, Any]:
@@ -3096,9 +3198,14 @@ def test_prefreeze_mutation_execution_replays_all_26_operators_in_memory() -> No
         P5_MARKER,
         P6_MARKER,
         *(ROOT / item for item in P6_MANAGED_OUTPUTS),
+        ROOT / INCIDENT_PATH,
     )
-    filesystem_before = tuple(os.path.lexists(path) for path in paths)
-    assert filesystem_before == (False,) * len(paths)
+    filesystem_before = tuple(_path_snapshot(path) for path in paths)
+    assert filesystem_before[0] is None
+    assert filesystem_before[1] is None
+    _assert_terminal_p6_marker(filesystem_before[2])
+    assert filesystem_before[3] is not None
+    assert filesystem_before[-1] is not None
 
     baseline_fixture: dict[str, Any] = {
         "document": copy.deepcopy(document),
@@ -3160,7 +3267,7 @@ def test_prefreeze_mutation_execution_replays_all_26_operators_in_memory() -> No
         frozenset(name for name in sys.modules if name.startswith("falsewake"))
         == loaded_before
     )
-    assert tuple(os.path.lexists(path) for path in paths) == filesystem_before
+    assert tuple(_path_snapshot(path) for path in paths) == filesystem_before
 
 
 def test_prefreeze_witness_is_exactly_ten_positive_and_26_negative_cases() -> None:
@@ -3248,7 +3355,7 @@ def test_prefreeze_witness_is_exactly_ten_positive_and_26_negative_cases() -> No
     assert summary["production_module_imports"] == 0
 
 
-def test_namespaces_registration_outputs_and_all_three_markers_remain_absent() -> None:
+def test_namespaces_and_historical_pre_registration_boundary_are_exact() -> None:
     document = _protocol()
     namespace = document["namespace"]
     assert namespace["attempt_marker"] == str(P6_MARKER)
@@ -3299,24 +3406,21 @@ def test_namespaces_registration_outputs_and_all_three_markers_remain_absent() -
         "registered_runner_invocations": 0,
         "registered_validation_examples": 0,
     }
-    for path in (*P4_MANAGED_OUTPUTS, *P5_MANAGED_OUTPUTS, *P6_MANAGED_OUTPUTS):
-        assert not os.path.lexists(ROOT / path)
-    assert not os.path.lexists(P4_MARKER)
-    assert not os.path.lexists(P5_MARKER)
-    assert not os.path.lexists(P6_MARKER)
-
+    assert _git("rev-list", "--parents", "-n", "1", ADMISSION_COMMIT) == (
+        f"{ADMISSION_COMMIT} {ADMISSION_PARENT}\n".encode("ascii")
+    )
     assert not _git(
         "log",
         "--format=",
         "--name-only",
-        f"{P5_INCIDENT_COMMIT}..HEAD",
+        f"{P5_INCIDENT_COMMIT}..{ADMISSION_COMMIT}",
         "--",
         *P4_MANAGED_OUTPUTS,
         *P5_MANAGED_OUTPUTS,
         *P6_MANAGED_OUTPUTS,
     )
-    for path in P6_MANAGED_OUTPUTS:
-        assert not _git("ls-tree", "HEAD", "--", path)
+    for path in (*P4_MANAGED_OUTPUTS, *P5_MANAGED_OUTPUTS, *P6_MANAGED_OUTPUTS):
+        assert not _git("ls-tree", ADMISSION_COMMIT, "--", path)
 
     for path in document["execution_delta"]["production_additions"]:
         assert not _git("ls-tree", PROTOCOL_COMMIT, "--", path)
@@ -3331,3 +3435,100 @@ def test_namespaces_registration_outputs_and_all_three_markers_remain_absent() -
         "--",
         "configs/experiment-006-run.json",
     )
+
+
+def test_registration_and_terminal_incident_topology_are_exact() -> None:
+    registration_payload = (ROOT / REGISTRATION_PATH).read_bytes()
+    registration = _strict_json(registration_payload)
+    assert len(registration_payload) == REGISTRATION_BYTES
+    assert _sha256(registration_payload) == REGISTRATION_SHA256
+    assert _canonical(registration) == registration_payload
+    assert registration["implementation_commit"] == ADMISSION_COMMIT
+
+    assert _git("rev-list", "--parents", "-n", "1", REGISTRATION_COMMIT) == (
+        f"{REGISTRATION_COMMIT} {ADMISSION_COMMIT}\n".encode("ascii")
+    )
+    assert (
+        _git(
+            "diff-tree",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "-z",
+            ADMISSION_COMMIT,
+            REGISTRATION_COMMIT,
+        )
+        == b"A\0" + REGISTRATION_PATH.encode("ascii") + b"\0"
+    )
+    registration_entry = _git(
+        "ls-tree",
+        REGISTRATION_COMMIT,
+        "--",
+        REGISTRATION_PATH,
+    )
+    assert registration_entry.startswith(b"100644 blob ")
+    assert registration_entry.endswith(
+        b"\t" + REGISTRATION_PATH.encode("ascii") + b"\n"
+    )
+    assert (
+        _git("show", f"{REGISTRATION_COMMIT}:{REGISTRATION_PATH}")
+        == registration_payload
+    )
+
+    incident_payload = (ROOT / INCIDENT_PATH).read_bytes()
+    incident = _strict_json(incident_payload)
+    assert len(incident_payload) == INCIDENT_BYTES
+    assert _sha256(incident_payload) == INCIDENT_SHA256
+    assert _canonical(incident) == incident_payload
+    assert incident["experiment"] == "006"
+    assert incident["incident"] == "registered_terminal_authority_failure"
+    assert incident["outcome"]["automatic_terminal_report_published"] is False
+    assert incident["diagnosis"]["root_cause_status"] == (
+        "undetermined_from_retained_evidence"
+    )
+
+    assert _git("rev-list", "--parents", "-n", "1", INCIDENT_COMMIT) == (
+        f"{INCIDENT_COMMIT} {REGISTRATION_COMMIT}\n".encode("ascii")
+    )
+    assert (
+        _git(
+            "diff-tree",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "-z",
+            REGISTRATION_COMMIT,
+            INCIDENT_COMMIT,
+        )
+        == b"A\0" + INCIDENT_PATH.encode("ascii") + b"\0"
+    )
+    incident_entry = _git("ls-tree", INCIDENT_COMMIT, "--", INCIDENT_PATH)
+    assert incident_entry.startswith(b"100644 blob ")
+    assert incident_entry.endswith(b"\t" + INCIDENT_PATH.encode("ascii") + b"\n")
+    assert _git("show", f"{INCIDENT_COMMIT}:{INCIDENT_PATH}") == incident_payload
+
+    assert _git("ls-tree", INCIDENT_COMMIT, "--", REGISTRATION_PATH)
+    for path in P6_MANAGED_OUTPUTS[1:]:
+        assert not _git("ls-tree", INCIDENT_COMMIT, "--", path)
+
+
+def test_terminal_outputs_and_external_marker_state_are_truthful() -> None:
+    for path in (*P4_MANAGED_OUTPUTS, *P5_MANAGED_OUTPUTS):
+        assert not os.path.lexists(ROOT / path)
+    assert not os.path.lexists(P4_MARKER)
+    assert not os.path.lexists(P5_MARKER)
+
+    assert os.path.isfile(ROOT / REGISTRATION_PATH)
+    assert os.path.isfile(ROOT / INCIDENT_PATH)
+    for path in P6_MANAGED_OUTPUTS[1:]:
+        assert not os.path.lexists(ROOT / path)
+
+    marker_before = _path_snapshot(P6_MARKER)
+    _assert_terminal_p6_marker(marker_before)
+    marker_after = _path_snapshot(P6_MARKER)
+    _assert_terminal_p6_marker(marker_after)
+    assert marker_after == marker_before

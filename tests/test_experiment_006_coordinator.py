@@ -18,6 +18,43 @@ PROTOCOL_SHA256 = "47ce6c6f11c3575944ef8c4ab1edcc0b42fdfa9bf1ede0318bfc5ea61fabf
 REFERENCE_SHA256 = "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
 
 
+def _marker_snapshot() -> tuple[bool, tuple[int, ...] | None, bytes | None]:
+    def stat_frame(value: os.stat_result) -> tuple[int, ...]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_nlink,
+            value.st_uid,
+            value.st_gid,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    try:
+        named = os.lstat(ATTEMPT_MARKER)
+    except FileNotFoundError:
+        assert not os.path.lexists(ATTEMPT_MARKER)
+        return False, None, None
+
+    expected_frame = stat_frame(named)
+    descriptor = os.open(
+        ATTEMPT_MARKER,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        assert stat_frame(os.fstat(descriptor)) == expected_frame
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1 << 16):
+            chunks.append(chunk)
+        assert stat_frame(os.fstat(descriptor)) == expected_frame
+    finally:
+        os.close(descriptor)
+    assert stat_frame(os.lstat(ATTEMPT_MARKER)) == expected_frame
+    return True, expected_frame, b"".join(chunks)
+
+
 def _protocol() -> dict[str, Any]:
     document = json.loads(PROTOCOL_PATH.read_text(encoding="ascii"))
     assert type(document) is dict
@@ -236,7 +273,7 @@ def test_coordinator_ast_claims_every_frozen_parent_route_signature() -> None:
 
 
 def test_all_frozen_routes_have_live_exact_functions_in_an_isolated_process() -> None:
-    assert not os.path.lexists(ATTEMPT_MARKER)
+    marker_before = _marker_snapshot()
     document = _protocol()
     admission = document["admission_contract"]
     routes = [
@@ -253,10 +290,51 @@ import os
 import sys
 from types import FunctionType
 
+def stat_frame(value):
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_uid,
+        value.st_gid,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+def marker_snapshot(path):
+    try:
+        named = os.lstat(path)
+    except FileNotFoundError:
+        assert not os.path.lexists(path)
+        return False, None, None
+    expected_frame = stat_frame(named)
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        assert stat_frame(os.fstat(descriptor)) == expected_frame
+        chunks = []
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        assert stat_frame(os.fstat(descriptor)) == expected_frame
+    finally:
+        os.close(descriptor)
+    assert stat_frame(os.lstat(path)) == expected_frame
+    return True, expected_frame, b"".join(chunks)
+
 sys.dont_write_bytecode = True
 sys.path.insert(0, {str(ROOT / "src")!r})
 marker = {str(ATTEMPT_MARKER)!r}
-assert not os.path.lexists(marker)
+marker_before = marker_snapshot(marker)
+assert marker_before == {marker_before!r}
 route_spec = json.loads({json.dumps(routes, sort_keys=True)!r})
 required_modules = json.loads({json.dumps(required_modules)!r})
 modules = {{name: importlib.import_module(name) for name in required_modules}}
@@ -281,7 +359,7 @@ for expected in route_spec:
             "variable_keyword_arguments": bool(code.co_flags & inspect.CO_VARKEYWORDS),
         }}
     )
-assert not os.path.lexists(marker)
+assert marker_snapshot(marker) == marker_before
 print(json.dumps(observed, sort_keys=True))
 """
     environment = os.environ.copy()
@@ -309,4 +387,4 @@ print(json.dumps(observed, sort_keys=True))
         for route in routes
     ]
     assert observed == expected
-    assert not os.path.lexists(ATTEMPT_MARKER)
+    assert _marker_snapshot() == marker_before
