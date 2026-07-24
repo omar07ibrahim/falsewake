@@ -1,0 +1,179 @@
+{
+  "attempt": {
+    "canonical_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-attempt",
+    "exit_code": 1,
+    "marker": {
+      "byte_count": 36,
+      "bytes_ascii": "falsewake-experiment-006-attempt-v1\n",
+      "mode": "0444",
+      "mtime_utc": "2026-07-24T01:48:08.576998118Z",
+      "path": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-attempt",
+      "sha256": "11cb9ce51db5b5153d3839ac1edad1cd63ae582009417abfea6a8562e319bfbe"
+    },
+    "registered_attempt_consumed": true,
+    "registered_authority_issuer_invoked": true,
+    "registered_coordinator_invoked": true,
+    "registered_invocation_count": 1,
+    "registered_runner_invoked": true,
+    "retry_allowed": false,
+    "terminal": true
+  },
+  "diagnosis": {
+    "confirmed": [
+      "The exact capability class passed the final verifier's type check.",
+      "The capability was accepted during coordinator admission before the execution helper was entered.",
+      "After the exact-type check, at least one compound provenance condition failed: missing state, missing guard, prior failed flag, issuer-marker or process mismatch, or guard-state mismatch.",
+      "The final-authority wrapper did not preserve any earlier primary stored in the coordinator; the retained traceback cannot establish whether such a primary existed."
+    ],
+    "excluded": [
+      {
+        "classification": "independent_fully_loaded_engine_module_instance",
+        "reason": "A separately loaded engine would own a distinct VerifiedRunRegistration class and would have raised TypeError at the exact-class check before the observed provenance error."
+      }
+    ],
+    "leading_hypothesis": {
+      "classification": "plausible_observer_interference_not_proven",
+      "mechanism": "A concurrent ordinary Git status can create and remove .git/index.lock, changing the .git directory mtime and ctime while the authority requires that complete stat frame to remain unchanged during raw worktree inventory. An overlapping reverification failure would poison the capability, after which the final check emits the observed provenance error.",
+      "observer_command": "git status --short",
+      "post_exit_mechanism_check": {
+        "classification": "mechanism_reproduced_without_registered_routes",
+        "git_directory_metadata_changed": true,
+        "git_index_metadata_changed": false,
+        "strace_events": [
+          "openat .git/index read-only",
+          "openat .git/index.lock with O_CREAT|O_EXCL",
+          "unlink .git/index.lock"
+        ]
+      },
+      "reverification_overlap_established": false
+    },
+    "root_cause_status": "undetermined_from_retained_evidence",
+    "traceback_limitation": "The coordinator may have retained an earlier primary internally; its final-authority error path does not include that value. The retained traceback cannot establish whether a distinct first exception existed."
+  },
+  "execution_protocol": {
+    "byte_count": 129719,
+    "commit": "4adf524f9a3007d5382a851b3419e697d80ceeef",
+    "mode": "100644",
+    "path": "configs/experiment-006-execution.json",
+    "sha256": "47ce6c6f11c3575944ef8c4ab1edcc0b42fdfa9bf1ede0318bfc5ea61fabf650"
+  },
+  "experiment": "006",
+  "incident": "registered_terminal_authority_failure",
+  "kind": "registered_execution_incident",
+  "managed_state_after_exit": {
+    "canonical_managed_outputs": {
+      "configs/experiment-006-run.json": "present",
+      "models/experiment-006-selected.safetensors": "absent",
+      "reports/experiment-006-seed-20260719-history.json": "absent",
+      "reports/experiment-006-seed-20260720-history.json": "absent",
+      "reports/experiment-006-seed-20260721-history.json": "absent",
+      "reports/experiment-006-selected-rerun-history.json": "absent",
+      "reports/experiment-006-training.json": "absent"
+    },
+    "caveat": "The coordinator performs cleanup before its final authority check, so post-exit absence does not establish how far the hidden primary execution progressed.",
+    "optimizer_updates": "not_established_from_retained_evidence",
+    "publication_temporaries": "absent",
+    "repository_worktree": "clean",
+    "scratch_root": "absent",
+    "seed_children_started": "not_established_from_retained_evidence",
+    "staging_root": "absent",
+    "training_processes_started": "not_established_from_retained_evidence",
+    "validation_examples": "not_established_from_retained_evidence"
+  },
+  "observer_activity": {
+    "classification": "plausible_interference_not_proven",
+    "command": "git status --short",
+    "conducted_by": "automation_live_monitor",
+    "executed_while_parent_observed_alive": true,
+    "observed_at_approximately_utc": "2026-07-24T01:48:31Z",
+    "reverification_overlap_established": false
+  },
+  "outcome": {
+    "automatic_terminal_report_published": false,
+    "checkpoint_reusable": false,
+    "code": "final_registration_capability_rejected_after_prior_state_change",
+    "phase": "registered_final_authority_verification",
+    "published_artifacts": [],
+    "scientific_result_available": false,
+    "status": "execution_failure",
+    "terminal": true
+  },
+  "record_provenance": {
+    "automatic_record": false,
+    "incident_commit_binding": "intentionally_absent_to_avoid_self_reference",
+    "kind": "manual_post_exit_reconstruction",
+    "raw_stderr_bytes_retained": false,
+    "raw_stderr_sha256": "unavailable",
+    "sources": [
+      "observed launch-session traceback and exit code",
+      "canonical marker bytes and stat metadata",
+      "post-exit filesystem and Git topology observations",
+      "committed registration, protocol, and production source",
+      "post-exit non-registered Git metadata mechanism check"
+    ]
+  },
+  "registration": {
+    "byte_count": 14811,
+    "commit": "b73ecb8be3871092aad431a6c497771296c67d60",
+    "git_blob": "02e087bbbbeeab87904a3ef5c5fd9bd7acc2985b",
+    "implementation_commit": "438651010c4ef1de4012a570f3211b1d27bb1e3a",
+    "mode": "100644",
+    "parent": "438651010c4ef1de4012a570f3211b1d27bb1e3a",
+    "path": "configs/experiment-006-run.json",
+    "runtime_fingerprint_sha256": "da1b542e1b6fe8adb6ba56d7060e35e06e39c85dacdf3c35474e404126bff5ea",
+    "sha256": "53101c6424db09da01e23af4dc5956a57aa8a7e41226113782d4da1d822ab0b8",
+    "source_bundle_sha256": "8150d34fa0db80efd073e78c740d0291051dadbafac3eda81cc3534d7c604e95"
+  },
+  "runtime_observation": {
+    "exception_chain": [
+      {
+        "frames": [
+          "experiment_006_coordinator.py:4389 _run_registered_experiment_once",
+          "experiment_006_coordinator.py:4042 call_checked",
+          "experiment_006_coordinator.py:3840 _call_registered_experiment_operation",
+          "experiment_006_coordinator.py:5344 registration_frame",
+          "experiment_006_run_authority.py:50 verify_verified_run_registration",
+          "experiment_002_run_authority.py:1018 _verify_experiment_006_run_registration",
+          "experiment_002_run_authority.py:1116 _require_verified_registration_profile",
+          "experiment_002_run_authority.py:1685 _verified_state"
+        ],
+        "message": "run-registration capability was not issued by this verifier",
+        "type": "falsewake.experiment_002_run_authority.Experiment002RunAuthorityError"
+      },
+      {
+        "frames": [
+          "experiment_006_runner.py:1524 <module>",
+          "experiment_006_runner.py:1520 main",
+          "experiment_006_runner.py:961 _run_registered_parent",
+          "experiment_006_runner.py:955 _run_coordinator",
+          "experiment_006_coordinator.py:6122 run_registered_experiment",
+          "experiment_006_coordinator.py:4399 _run_registered_experiment_once"
+        ],
+        "message": "registered experiment final authority failed closed",
+        "type": "falsewake.experiment_006_coordinator.Experiment006CoordinatorError"
+      }
+    ],
+    "final_registration_frame_verification_reached": true,
+    "initial_coordinator_admission_succeeded": true,
+    "original_primary_exception_available": false,
+    "stdout_observed": "empty",
+    "terminal_traceback_observed": true
+  },
+  "schema_version": 1,
+  "scientific_protocol": "002",
+  "terminal_disposition": {
+    "checkpoint_reuse_allowed": false,
+    "experiment_006_retry_allowed": false,
+    "further_recovery_profile_planned": false,
+    "next_action": "preserve the incident, end the recovery series, and continue portfolio work outside this execution lineage"
+  },
+  "timing": {
+    "elapsed_seconds_at_alive_observation": 23,
+    "exact_exit_time": "not_established",
+    "first_post_exit_observation_utc": "2026-07-24T01:49:02Z",
+    "marker_mtime_utc": "2026-07-24T01:48:08.576998118Z",
+    "parent_alive_observation_utc": "2026-07-24T01:48:31Z",
+    "terminal_time_lower_bound_exclusive_utc": "2026-07-24T01:48:31Z",
+    "terminal_time_upper_bound_inclusive_utc": "2026-07-24T01:49:02Z"
+  }
+}
