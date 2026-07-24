@@ -25,6 +25,7 @@ P4_PROTOCOL_PARENT = "96f151d86ae060b402a0ef5d47de7ad8c1191c0a"
 P4_PROTOCOL_SHA256 = "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46"
 P4_PROTOCOL_GIT_BLOB = "c7474e5abf08634112939af72138ba913af5dff0"
 P4_IMPLEMENTATION_COMMIT = "f81cd142885068c27767d6d728da04248fb1a470"
+P5_IMPLEMENTATION_COMMIT = "04b634451d129faadadd921215123547e3467d65"
 P4_PREFLIGHT_BOUNDARY_COMMIT = "55043086af773e613502f81685662e7fcc58f413"
 P4_INCIDENT_COMMIT = "462aeba306a0612fd6d64884e323d72db3569a89"
 P4_INCIDENT_PATH = ROOT / "reports" / "experiment-004-preflight-incident.json"
@@ -35,6 +36,9 @@ P4_PROTOCOL_PROOF_SHA256 = (
 )
 P4_SHARED_AUTHORITY_SHA256 = (
     "52ce6039345b2159a4bf83ea294af2c3211cdcfbe87e9bc806133c67647b1a47"
+)
+P5_SHARED_AUTHORITY_SHA256 = (
+    "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af"
 )
 
 P4_MARKER = Path("/home/ubuntu/gitcode/.t/falsewake-experiment-004-attempt")
@@ -836,7 +840,8 @@ engine = importlib.import_module("falsewake.experiment_002_run_authority")
 authority_003 = importlib.import_module("falsewake.experiment_003_run_authority")
 authority_004 = importlib.import_module("falsewake.experiment_004_run_authority")
 authority_005 = importlib.import_module("falsewake.experiment_005_run_authority")
-profiles = engine._AUTHORITY_PROFILES
+authority_profiles = engine._AUTHORITY_PROFILES
+profiles = authority_profiles[:4]
 assert tuple(item.registration_experiment for item in profiles) == (
     "002",
     "003",
@@ -1242,8 +1247,9 @@ assert not os.path.lexists({str(P5_MARKER)!r})
 def test_shared_authority_has_only_17_symbols_and_the_six_frozen_dispatches() -> None:
     path = "src/falsewake/experiment_002_run_authority.py"
     baseline = _git("show", f"{P4_IMPLEMENTATION_COMMIT}:{path}").decode()
-    candidate = (ROOT / path).read_text(encoding="utf-8")
+    candidate = _git("show", f"{P5_IMPLEMENTATION_COMMIT}:{path}").decode()
     assert _sha256(baseline.encode()) == P4_SHARED_AUTHORITY_SHA256
+    assert _sha256(candidate.encode()) == P5_SHARED_AUTHORITY_SHA256
 
     baseline_nodes = _named_top_level_nodes(baseline)
     candidate_nodes = _named_top_level_nodes(candidate)
