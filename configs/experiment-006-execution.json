@@ -1,0 +1,3224 @@
+{
+  "admission_contract": {
+    "facade_semantic_contract": {
+      "ast_projection": {
+        "docstrings": "remove_only_leading_module_and_function_docstring_nodes",
+        "encoding": "UTF-8",
+        "kind": "semantic_ast_v1",
+        "location_metadata": "excluded",
+        "parser": {
+          "feature_version": "3.12",
+          "type_comments": true
+        },
+        "serialization": "canonical_sorted_ascii_json",
+        "statement_order": "preserved"
+      },
+      "docstring_truth": {
+        "admission_required": true,
+        "allowed_profile_claims": [
+          "006"
+        ],
+        "comparison": "exact_ast_get_docstring_clean_false_codepoint_equality",
+        "exact_docstrings": {
+          "_create_sealed_experiment_006_child_bundle_fd": "Create the fixed profile-006 sealed child source-bundle descriptor.",
+          "_registered_child_input_snapshot": "Return retained child inputs only for a sealed profile-006 capability.",
+          "_required_child_bundle_seals": "Return the shared kernel's exact required memfd seal mask.",
+          "_verified_state": "Return shared retained state only when its exact profile is ``006``.",
+          "_verify_and_issue_experiment_006_sealed_child_registration": "Mint a profile-006 capability from the fixed sealed child bundle.",
+          "module": "Fixed-profile Experiment 006 facade over the shared run authority.\n\nThe capability type, process-local registry, issuance latch, and verification\nengine live only in :mod:`falsewake.experiment_002_run_authority`.  This module\ndoes not accept a profile, path, digest, or namespace from its callers.  Every\nroute below binds the retained capability to profile ``006`` before delegating.\n",
+          "reverify_verified_run_registration": "Reverify an exact profile-006 capability from its retained state.",
+          "verify_and_issue_experiment_006_run_registration": "Verify the fixed registration and mint the one profile-006 capability.",
+          "verify_verified_run_registration": "Fully verify an exact profile-006 capability."
+        },
+        "required_claim_scopes": [
+          "module",
+          "verify_and_issue_experiment_006_run_registration",
+          "_verify_and_issue_experiment_006_sealed_child_registration",
+          "verify_verified_run_registration",
+          "reverify_verified_run_registration",
+          "_registered_child_input_snapshot",
+          "_create_sealed_experiment_006_child_bundle_fd",
+          "_verified_state",
+          "_required_child_bundle_seals"
+        ],
+        "semantic_projection_excludes_docstrings": true,
+        "stale_profile_claims_forbidden": [
+          "002",
+          "003",
+          "004",
+          "005"
+        ],
+        "unexpected_docstring_scopes": "forbidden",
+        "wording_otherwise_unrestricted": false
+      },
+      "exact_aliases": {
+        "Experiment006RunAuthorityError": "_engine.Experiment002RunAuthorityError",
+        "VerifiedRunRegistration": "_engine.VerifiedRunRegistration",
+        "_MAX_CHILD_BUNDLE_BYTES": "_engine._MAX_CHILD_BUNDLE_BYTES",
+        "_RegisteredChildInputSnapshot": "_engine._RegisteredChildInputSnapshot",
+        "_SEALED_CHILD_BUNDLE_FD": "_engine._SEALED_CHILD_BUNDLE_FD",
+        "_SEALED_CHILD_MEMFD_TARGET": "_engine._EXPERIMENT_006_SEALED_CHILD_MEMFD_TARGET",
+        "_VerifiedState": "_engine._VerifiedState"
+      },
+      "exact_imports": [
+        {
+          "kind": "ImportFrom",
+          "level": 0,
+          "module": "__future__",
+          "names": [
+            {
+              "asname": null,
+              "name": "annotations"
+            }
+          ]
+        },
+        {
+          "kind": "ImportFrom",
+          "level": 0,
+          "module": "falsewake",
+          "names": [
+            {
+              "asname": "_engine",
+              "name": "experiment_002_run_authority"
+            }
+          ]
+        }
+      ],
+      "exact_public_exports": [
+        "Experiment006RunAuthorityError",
+        "VerifiedRunRegistration",
+        "reverify_verified_run_registration",
+        "verify_and_issue_experiment_006_run_registration",
+        "verify_verified_run_registration"
+      ],
+      "exact_route_order": [
+        "verify_and_issue_experiment_006_run_registration",
+        "_verify_and_issue_experiment_006_sealed_child_registration",
+        "verify_verified_run_registration",
+        "reverify_verified_run_registration",
+        "_registered_child_input_snapshot",
+        "_create_sealed_experiment_006_child_bundle_fd",
+        "_verified_state",
+        "_required_child_bundle_seals"
+      ],
+      "route_function_contract": {
+        "applies_to": "every_entry_in_routes",
+        "ast_node_kind": "FunctionDef",
+        "body_forbidden_ast_nodes": [
+          "Await",
+          "Yield",
+          "YieldFrom"
+        ],
+        "code_flags": {
+          "CO_ASYNC_GENERATOR": false,
+          "CO_COROUTINE": false,
+          "CO_GENERATOR": false
+        }
+      },
+      "routes": [
+        {
+          "decorators": [],
+          "name": "verify_and_issue_experiment_006_run_registration",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [],
+            "positional_or_keyword": [],
+            "return_annotation": "VerifiedRunRegistration",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._verify_and_issue_experiment_006_run_registration",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": []
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "_verify_and_issue_experiment_006_sealed_child_registration",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [],
+            "positional_or_keyword": [],
+            "return_annotation": "VerifiedRunRegistration",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._verify_and_issue_experiment_006_sealed_child_registration",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": []
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "verify_verified_run_registration",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [],
+            "positional_or_keyword": [
+              {
+                "annotation": "VerifiedRunRegistration",
+                "name": "registration"
+              }
+            ],
+            "return_annotation": "None",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._verify_experiment_006_run_registration",
+              "keyword_arguments": [],
+              "kind": "expression_direct_call",
+              "positional_arguments": [
+                "registration"
+              ]
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "reverify_verified_run_registration",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [],
+            "positional_or_keyword": [
+              {
+                "annotation": "VerifiedRunRegistration",
+                "name": "registration"
+              }
+            ],
+            "return_annotation": "None",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._reverify_experiment_006_run_registration",
+              "keyword_arguments": [],
+              "kind": "expression_direct_call",
+              "positional_arguments": [
+                "registration"
+              ]
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "_registered_child_input_snapshot",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [
+              {
+                "annotation": "VerifiedRunRegistration",
+                "name": "registration"
+              }
+            ],
+            "positional_or_keyword": [],
+            "return_annotation": "_RegisteredChildInputSnapshot",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._require_verified_registration_profile",
+              "keyword_arguments": [],
+              "kind": "expression_direct_call",
+              "positional_arguments": [
+                "registration",
+                "_engine._EXPERIMENT_006_PROFILE"
+              ]
+            },
+            {
+              "callee": "_engine._registered_child_input_snapshot",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": [
+                "registration"
+              ]
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "_create_sealed_experiment_006_child_bundle_fd",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [
+              {
+                "annotation": "VerifiedRunRegistration",
+                "name": "registration"
+              }
+            ],
+            "positional_or_keyword": [],
+            "return_annotation": "int",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._create_sealed_experiment_006_child_bundle_fd",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": [
+                "registration"
+              ]
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "_verified_state",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [
+              {
+                "annotation": "VerifiedRunRegistration",
+                "name": "registration"
+              }
+            ],
+            "positional_or_keyword": [],
+            "return_annotation": "_VerifiedState",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._require_verified_registration_profile",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": [
+                "registration",
+                "_engine._EXPERIMENT_006_PROFILE"
+              ]
+            }
+          ]
+        },
+        {
+          "decorators": [],
+          "name": "_required_child_bundle_seals",
+          "node_kind": "FunctionDef",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": null,
+            "keyword_only": [],
+            "positional_only": [],
+            "positional_or_keyword": [],
+            "return_annotation": "int",
+            "variable_keyword": null,
+            "variable_positional": null
+          },
+          "statements": [
+            {
+              "callee": "_engine._required_child_bundle_seals",
+              "keyword_arguments": [],
+              "kind": "return_direct_call",
+              "positional_arguments": []
+            }
+          ]
+        }
+      ],
+      "top_level_policy": {
+        "dynamic_getattr": "forbidden",
+        "exception_wrappers": "forbidden",
+        "extra_assignments": "forbidden",
+        "extra_classes": "forbidden",
+        "extra_executable_statements": "forbidden",
+        "extra_functions": "forbidden",
+        "star_imports": "forbidden"
+      }
+    },
+    "failure_recovered": {
+      "classification": "confirmed_pre_registration_protocol_contract_unsatisfiable",
+      "corrected_contract": {
+        "facade_docstrings": "exact_per_scope_ast_get_docstring_clean_false_manifest",
+        "facade_function_kind": "synchronous_nongenerator_FunctionDef_only",
+        "facade_global_byte_parity": "forbidden",
+        "facade_semantic_contract": "admission_contract.facade_semantic_contract",
+        "facade_semantic_contract_kind": "semantic_ast_v1",
+        "separate_docstring_truth_gate": true,
+        "shared_authority_generic_dispatches": [
+          "_AUTHORITY_PROFILES",
+          "_expected_frozen_bindings",
+          "_frozen_file_bindings",
+          "_require_authority_profile",
+          "_require_invocation_registration",
+          "_verify_committed_repository"
+        ],
+        "shared_authority_positive_profile_006_semantics": "execution_delta.shared_authority_recipe.positive_semantic_contract"
+      },
+      "incident": {
+        "byte_count": 6612,
+        "commit": "594e2c491c057394f18860c8362a51190460645f",
+        "mode": "100644",
+        "parent": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+        "path": "reports/experiment-005-preflight-incident.json",
+        "sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d"
+      },
+      "violations": [
+        "facade_normalization_recipe_cannot_express_truthful_profile_005"
+      ]
+    },
+    "live_route_contract": {
+      "argument_count": 1,
+      "ast_node_kind": "FunctionDef",
+      "body_forbidden_ast_nodes": [
+        "Await",
+        "Yield",
+        "YieldFrom"
+      ],
+      "code_flags": {
+        "CO_ASYNC_GENERATOR": false,
+        "CO_COROUTINE": false,
+        "CO_GENERATOR": false
+      },
+      "defaults": null,
+      "keyword_defaults": null,
+      "keyword_only_arguments": 0,
+      "module": "falsewake.experiment_006_run_authority",
+      "name": "_verified_state",
+      "positional_only_arguments": 1,
+      "positional_or_keyword_arguments": 0,
+      "variable_keyword_arguments": false,
+      "variable_positional_arguments": false
+    },
+    "parent_route_matrix": [
+      {
+        "binding": "_create_sealed_experiment_006_child_bundle_fd",
+        "module": "falsewake.experiment_006_run_authority",
+        "name": "_create_sealed_experiment_006_child_bundle_fd",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_required_child_bundle_seals",
+        "module": "falsewake.experiment_006_run_authority",
+        "name": "_required_child_bundle_seals",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_verified_state",
+        "module": "falsewake.experiment_006_run_authority",
+        "name": "_verified_state",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "build_completed_final_evidence",
+        "module": "falsewake.experiment_006_final_evidence",
+        "name": "build_completed_final_evidence",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "verify_completed_final_evidence",
+        "module": "falsewake.experiment_006_final_evidence",
+        "name": "verify_completed_final_evidence",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "build_execution_failure_evidence",
+        "module": "falsewake.experiment_006_final_publication",
+        "name": "build_execution_failure_evidence",
+        "positional_only_arguments": 3,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "publish_registered_final_evidence",
+        "module": "falsewake.experiment_006_final_publication",
+        "name": "publish_registered_final_evidence",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "verify_execution_failure_evidence",
+        "module": "falsewake.experiment_006_final_publication",
+        "name": "verify_execution_failure_evidence",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_begin_registered_supervisor_child",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "begin_registered_child",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_capture_registered_cpu_ids",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "_capture_registered_cpu_ids",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_cleanup_registered_experiment_output_roots",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "_cleanup_registered_experiment_output_roots",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_finish_registered_supervisor_child_failure",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "finish_registered_child_failure",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_finish_registered_supervisor_child_success",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "finish_registered_child_success",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_prepare_registered_experiment_staging",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "_prepare_registered_experiment_staging",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_require_registered_parent_quiescence",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "_require_registered_parent_quiescence",
+        "positional_only_arguments": 0,
+        "positional_or_keyword_arguments": 0
+      }
+    ],
+    "pre_registration_proof": {
+      "actual_cross_module_route_matrix_required": true,
+      "actual_modules_required": [
+        "falsewake.experiment_006_coordinator",
+        "falsewake.experiment_006_final_evidence",
+        "falsewake.experiment_006_final_publication",
+        "falsewake.experiment_006_run_authority",
+        "falsewake.experiment_006_runner",
+        "falsewake.experiment_006_seed_worker",
+        "falsewake.experiment_006_supervisor"
+      ],
+      "coordinator_claim_closure_invocation": "forbidden",
+      "coordinator_require_function_identity_calls_checked": true,
+      "function_ast_node_kinds_checked": true,
+      "function_code_objects_checked": true,
+      "function_coroutine_and_generator_flags_checked": true,
+      "isolated_process_required": true,
+      "method": "actual_module_objects_and_coordinator_AST_route_matrix",
+      "registered_authority_issuer_invocation": "forbidden",
+      "registered_coordinator_invocation": "forbidden",
+      "registered_runner_invocation": "forbidden"
+    },
+    "route_invariants": {
+      "ast_node_kind": "FunctionDef",
+      "body_forbidden_ast_nodes": [
+        "Await",
+        "Yield",
+        "YieldFrom"
+      ],
+      "code_flags": {
+        "CO_ASYNC_GENERATOR": false,
+        "CO_COROUTINE": false,
+        "CO_GENERATOR": false
+      },
+      "defaults": null,
+      "exact_type": "types.FunctionType",
+      "keyword_defaults": null,
+      "keyword_only_arguments": 0,
+      "variable_keyword_arguments": false,
+      "variable_positional_arguments": false
+    },
+    "wrapper_route_matrix": [
+      {
+        "binding": "run_registered_experiment",
+        "module": "falsewake.experiment_006_coordinator",
+        "name": "run_registered_experiment",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_registered_child_input_snapshot",
+        "module": "falsewake.experiment_006_run_authority",
+        "name": "_registered_child_input_snapshot",
+        "positional_only_arguments": 1,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "run_registered_seed_process",
+        "module": "falsewake.experiment_006_seed_worker",
+        "name": "run_registered_seed_process",
+        "positional_only_arguments": 2,
+        "positional_or_keyword_arguments": 0
+      },
+      {
+        "binding": "_supervise_registered_child",
+        "module": "falsewake.experiment_006_supervisor",
+        "name": "_supervise_registered_child",
+        "positional_only_arguments": 4,
+        "positional_or_keyword_arguments": 0
+      }
+    ]
+  },
+  "attempt_contract": {
+    "attempt_consumption_boundary": "permanent_parent_marker_before_authority_or_coordinator_import",
+    "child_plan": {
+      "rerun": {
+        "ordinal": 3,
+        "role": "selected_seed_rerun",
+        "seed_source": "selected_training_seed"
+      },
+      "training": [
+        {
+          "ordinal": 0,
+          "role": "training_seed",
+          "seed": 20260719
+        },
+        {
+          "ordinal": 1,
+          "role": "training_seed",
+          "seed": 20260720
+        },
+        {
+          "ordinal": 2,
+          "role": "training_seed",
+          "seed": 20260721
+        }
+      ]
+    },
+    "failure_is_terminal": true,
+    "invoked_admission_failure_consumes_attempt": true,
+    "permanent_attempt_marker": {
+      "child_behavior": "never_inspect_create_modify_or_delete",
+      "claim_order": [
+        "classify_parent_or_sealed_child",
+        "claim_marker_exclusively",
+        "activate_registered_sys_path",
+        "import_run_authority",
+        "issue_registered_capability",
+        "import_coordinator",
+        "claim_parent_routes",
+        "prepare_staging",
+        "start_training_child"
+      ],
+      "claim_success_boundary": "successful_O_CREAT_O_EXCL_creation",
+      "claiming_role": "parent_bootstrap",
+      "creation_flags": [
+        "O_CLOEXEC",
+        "O_CREAT",
+        "O_EXCL",
+        "O_NOFOLLOW",
+        "O_WRONLY"
+      ],
+      "creation_mode": "0600",
+      "existing_marker": "reject_without_removal_or_reuse",
+      "final_mode": "0444",
+      "fsync": [
+        "marker_file",
+        "parent_directory"
+      ],
+      "marker_bytes": "falsewake-experiment-006-attempt-v1\n",
+      "parent_directory": "/home/ubuntu/gitcode/.t",
+      "path": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-attempt",
+      "persistence": "never_delete_on_success_or_failure",
+      "post_creation_failure": "terminal_and_marker_retained",
+      "preflight": "verify_absent_and_safe_without_creation",
+      "tests": "never_create_or_delete_the_canonical_marker"
+    },
+    "preflight_rejection_consumes_registered_invocation": false,
+    "process_local_issuance_latch_retained": true,
+    "registered_invocation_count": 1,
+    "retry_allowed": false,
+    "reuse_predecessor_checkpoint": false,
+    "staging_ownership": {
+      "mechanism": "fresh_exclusive_staging_root",
+      "stale_or_existing_namespace": "reject_without_removal_or_reuse"
+    }
+  },
+  "authority_profile": {
+    "capability_state_profile": "006",
+    "capability_type": "falsewake.experiment_002_run_authority.VerifiedRunRegistration",
+    "coordinator_profile_check_required": true,
+    "cross_profile_acceptance": "forbidden",
+    "cross_profile_rejections": [
+      "experiment_002_capability_at_experiment_003_boundary",
+      "experiment_002_capability_at_experiment_004_boundary",
+      "experiment_002_capability_at_experiment_005_boundary",
+      "experiment_002_capability_at_experiment_006_boundary",
+      "experiment_003_capability_at_experiment_002_boundary",
+      "experiment_003_capability_at_experiment_004_boundary",
+      "experiment_003_capability_at_experiment_005_boundary",
+      "experiment_003_capability_at_experiment_006_boundary",
+      "experiment_004_capability_at_experiment_002_boundary",
+      "experiment_004_capability_at_experiment_003_boundary",
+      "experiment_004_capability_at_experiment_005_boundary",
+      "experiment_004_capability_at_experiment_006_boundary",
+      "experiment_005_capability_at_experiment_002_boundary",
+      "experiment_005_capability_at_experiment_003_boundary",
+      "experiment_005_capability_at_experiment_004_boundary",
+      "experiment_005_capability_at_experiment_006_boundary",
+      "experiment_006_capability_at_experiment_002_boundary",
+      "experiment_006_capability_at_experiment_003_boundary",
+      "experiment_006_capability_at_experiment_004_boundary",
+      "experiment_006_capability_at_experiment_005_boundary"
+    ],
+    "facade": "src/falsewake/experiment_006_run_authority.py",
+    "issuer_caller_supplied_values": [],
+    "issuer_route": "verify_and_issue_experiment_006_run_registration",
+    "logical_authority": "006",
+    "process_issuance_latch": "shared_across_all_profiles",
+    "profile_binding_fields": [
+      "registration_experiment",
+      "run_config_path",
+      "runtime_fingerprint_domain",
+      "child_bundle_magic",
+      "source_bundle_domain",
+      "sealed_origin_prefix",
+      "sealed_child_memfd_target",
+      "child_bundle_memfd_name",
+      "activation_magic",
+      "activation_ticket_domain",
+      "issuer_route",
+      "sealed_child_issuer_route",
+      "runner_entrypoint",
+      "scratch_root"
+    ],
+    "profile_values": {
+      "activation_magic": "FW6ACTV1",
+      "activation_ticket_domain": "falsewake-exp006-activation-ticket-v1\u0000",
+      "child_bundle_magic": "FW6CHLD1",
+      "child_bundle_memfd_name": "falsewake-exp006-child-bundle",
+      "issuer_route": "verify_and_issue_experiment_006_run_registration",
+      "registration_experiment": "006",
+      "run_config_path": "configs/experiment-006-run.json",
+      "runner_entrypoint": "src/falsewake/experiment_006_runner.py",
+      "runtime_fingerprint_domain": "falsewake-exp006-runtime-v1\u0000",
+      "scratch_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-scratch",
+      "sealed_child_issuer_route": "_verify_and_issue_experiment_006_sealed_child_registration",
+      "sealed_child_memfd_target": "/memfd:falsewake-exp006-child-bundle (deleted)",
+      "sealed_origin_prefix": "falsewake-sealed://experiment-006/",
+      "source_bundle_domain": "falsewake-exp006-source-bundle-v1\u0000"
+    },
+    "publisher_profile_check_required": true,
+    "reverify_dispatch": "retained_capability_state_profile_only",
+    "sealed_child_issuer_route": "_verify_and_issue_experiment_006_sealed_child_registration",
+    "shared_engine": "src/falsewake/experiment_002_run_authority.py"
+  },
+  "evidence_contract": {
+    "failure_pairs": [
+      {
+        "code": "staging_prepare_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "cpu_affinity_capture_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_create_failed",
+        "phase": "parent_setup"
+      },
+      {
+        "code": "source_bundle_close_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "seed_selection_failed",
+        "phase": "registered_execution"
+      },
+      {
+        "code": "completed_evidence_rejected",
+        "phase": "completed_evidence"
+      },
+      {
+        "code": "pre_cleanup_quiescence_failed",
+        "phase": "parent_boundary"
+      }
+    ],
+    "outer_experiment": "006",
+    "predecessor_binding": {
+      "execution_protocol_json_pointer": "/predecessor",
+      "final_evidence": "exact_recursive_value_equality",
+      "final_publication": "exact_recursive_value_equality",
+      "run_config_json_pointer": "/frozen_bindings/predecessor"
+    },
+    "report_last": true,
+    "report_mode": "0444",
+    "scientific_protocol": "002",
+    "statuses": {
+      "execution_failure": {
+        "artifact_paths": [],
+        "checkpoint_reusable": false
+      },
+      "gate_failure": {
+        "artifact_paths": [
+          "reports/experiment-006-seed-20260719-history.json",
+          "reports/experiment-006-seed-20260720-history.json",
+          "reports/experiment-006-seed-20260721-history.json",
+          "reports/experiment-006-selected-rerun-history.json"
+        ],
+        "checkpoint_reusable": false
+      },
+      "pass": {
+        "artifact_paths": [
+          "reports/experiment-006-seed-20260719-history.json",
+          "reports/experiment-006-seed-20260720-history.json",
+          "reports/experiment-006-seed-20260721-history.json",
+          "reports/experiment-006-selected-rerun-history.json",
+          "models/experiment-006-selected.safetensors"
+        ],
+        "checkpoint_reusable": true
+      }
+    }
+  },
+  "execution_delta": {
+    "classification": "preflight_protocol_contract_recovery",
+    "immutable_predecessor_sources": {
+      "experiment_002_scientific_modules": {
+        "document_path": "configs/experiment-003-execution.json",
+        "document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+        "json_pointer": "/scientific_inheritance/source_blobs"
+      },
+      "experiment_003_modules": {
+        "document_path": "configs/experiment-004-execution.json",
+        "document_sha256": "aba6c1eca84ad33c7751e4768a8ef630ba2c063720fd29938dd1b69abf945a46",
+        "json_pointer": "/execution_delta/immutable_predecessor_sources/experiment_003_modules"
+      },
+      "experiment_004_modules": [
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_coordinator.py",
+          "sha256": "6e4df88440c361376ce51a3574a16bbec79ecbc6ff4dd1fcf0cf8be86eac1daa"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_final_evidence.py",
+          "sha256": "5fcff993e434c36d73c5e9b4f6d1e5954e8a54f2ce9fc17450ea615c5a4df5af"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_final_publication.py",
+          "sha256": "b862490f15e88819e815cfe6d7769ff125e21e59cdde4642a4a700e5f2eaad16"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_run_authority.py",
+          "sha256": "cacab13729f14bfdce10afa5b53b2a09116cf56abe21aee12ac9220a6ad2e5b5"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_runner.py",
+          "sha256": "76f19ec33c10955fa50d26b8d35d56aeb15d712b72b22a17e88933f46d24accf"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_seed_worker.py",
+          "sha256": "40cc3f0681006b03eac03f4747c60feb7a0ab42c102772afd6b90ef809929361"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_004_supervisor.py",
+          "sha256": "750371018aefd8dc3cdbffff20a60c3785680992b05d6246f052f37609a6c8c9"
+        }
+      ],
+      "experiment_005_modules": [
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_coordinator.py",
+          "sha256": "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_final_evidence.py",
+          "sha256": "1c99757fc9b78e612891a9d49e7dc40c2d0b90599a40927e4cd41dff781f355d"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_final_publication.py",
+          "sha256": "84f7aba57f8ec0c096e5f18a03a8118800f53a9cfe4910c554bea677a9f79f07"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_run_authority.py",
+          "sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_runner.py",
+          "sha256": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_seed_worker.py",
+          "sha256": "0840a62f0f4327eec7649d17ad334edfa6941d6146bff6fe50e2d693f0b80f96"
+        },
+        {
+          "mode": "100644",
+          "path": "src/falsewake/experiment_005_supervisor.py",
+          "sha256": "7c8d58566c2b5e904ebf7f1e5fa1ab3b1c79c4387b38f296b08ef5ce7e312e71"
+        }
+      ]
+    },
+    "implementation_source_delta": {
+      "base_commit": "594e2c491c057394f18860c8362a51190460645f",
+      "name_status": [
+        {
+          "path": "src/falsewake/experiment_002_run_authority.py",
+          "status": "M"
+        },
+        {
+          "path": "src/falsewake/experiment_006_coordinator.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_final_evidence.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_final_publication.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_run_authority.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_runner.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_seed_worker.py",
+          "status": "A"
+        },
+        {
+          "path": "src/falsewake/experiment_006_supervisor.py",
+          "status": "A"
+        }
+      ],
+      "other_src_falsewake_changes": "forbidden"
+    },
+    "parity_contract": {
+      "allowed_semantic_deltas": [
+        "all_experiment_006_execution_namespaces_are_disjoint_from_experiment_005",
+        "final_evidence_and_publication_bind_the_exact_experiment_005_preflight_rejection",
+        "run_authority_facade_is_governed_only_by_the_explicit_semantic_ast_v1_and_docstring_truth_contracts",
+        "shared_authority_adds_only_the_fixed_profile_006_and_its_history_checks",
+        "supervisor_binds_the_exact_experiment_006_runner_sha256",
+        "the_experiment_005_permanent_attempt_marker_algorithm_is_retained_in_the_experiment_006_namespace"
+      ],
+      "candidate": "experiment_006",
+      "facade_global_literal_normalization": "forbidden",
+      "facade_semantic_contract": "admission_contract.facade_semantic_contract",
+      "file_recipes": [
+        {
+          "candidate_path": "src/falsewake/experiment_006_coordinator.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_coordinator.py",
+          "reference_sha256": "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_final_evidence.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value_json_pointer": "/predecessor",
+                "kind": "replace_exact_predecessor_contract_region_once",
+                "reference_document_path": "configs/experiment-005-execution.json",
+                "reference_document_sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d",
+                "reference_value_json_pointer": "/predecessor",
+                "targets": [
+                  "_PREDECESSOR_*",
+                  "_predecessor_document"
+                ]
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_final_evidence.py",
+          "reference_sha256": "1c99757fc9b78e612891a9d49e7dc40c2d0b90599a40927e4cd41dff781f355d"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_final_publication.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value_json_pointer": "/predecessor",
+                "kind": "replace_exact_predecessor_contract_region_once",
+                "reference_document_path": "configs/experiment-005-execution.json",
+                "reference_document_sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d",
+                "reference_value_json_pointer": "/predecessor",
+                "targets": [
+                  "_PREDECESSOR_*",
+                  "_PREDECESSOR_CANONICAL_JSON",
+                  "_predecessor_document"
+                ]
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_final_publication.py",
+          "reference_sha256": "84f7aba57f8ec0c096e5f18a03a8118800f53a9cfe4910c554bea677a9f79f07"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_run_authority.py",
+          "normalization": null,
+          "reference_path": null,
+          "reference_sha256": null,
+          "semantic_contract": "admission_contract.facade_semantic_contract"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_runner.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_runner.py",
+          "reference_sha256": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_seed_worker.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_seed_worker.py",
+          "reference_sha256": "0840a62f0f4327eec7649d17ad334edfa6941d6146bff6fe50e2d693f0b80f96"
+        },
+        {
+          "candidate_path": "src/falsewake/experiment_006_supervisor.py",
+          "normalization": {
+            "global_literals": "parity_contract.normalization.ordered_literal_substitutions",
+            "post_normalization_edits": [
+              {
+                "candidate_value": "one_exact_future_64_lowercase_hex_digest",
+                "kind": "replace_exact_assignment_once",
+                "reference_value": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336",
+                "target": "_RUNNER_SHA256"
+              }
+            ],
+            "result": "byte_identical_to_reference"
+          },
+          "reference_path": "src/falsewake/experiment_005_supervisor.py",
+          "reference_sha256": "7c8d58566c2b5e904ebf7f1e5fa1ab3b1c79c4387b38f296b08ef5ce7e312e71"
+        }
+      ],
+      "normalization": {
+        "applies_to_facade": false,
+        "direction": "experiment_006_candidate_to_experiment_005_reference",
+        "encoding": "UTF-8",
+        "ordered_literal_substitutions": [
+          {
+            "candidate": "Experiment 006",
+            "reference": "Experiment 005"
+          },
+          {
+            "candidate": "Experiment006",
+            "reference": "Experiment005"
+          },
+          {
+            "candidate": "experiment_006",
+            "reference": "experiment_005"
+          },
+          {
+            "candidate": "experiment-006",
+            "reference": "experiment-005"
+          },
+          {
+            "candidate": "exp006",
+            "reference": "exp005"
+          },
+          {
+            "candidate": "\"006\"",
+            "reference": "\"005\""
+          },
+          {
+            "candidate": "profile-006",
+            "reference": "profile-005"
+          },
+          {
+            "candidate": "profile ``006``",
+            "reference": "profile ``005``"
+          },
+          {
+            "candidate": "profile is ``006``",
+            "reference": "profile is ``005``"
+          },
+          {
+            "candidate": "_EXPERIMENT_006_PROFILE",
+            "reference": "_EXPERIMENT_005_PROFILE"
+          },
+          {
+            "candidate": "_EXPERIMENT_006_SEALED_CHILD_MEMFD_TARGET",
+            "reference": "_EXPERIMENT_005_SEALED_CHILD_MEMFD_TARGET"
+          },
+          {
+            "candidate": "FW6ACTV1",
+            "reference": "FW5ACTV1"
+          },
+          {
+            "candidate": "FW6CHLD1",
+            "reference": "FW5CHLD1"
+          }
+        ],
+        "scope": [
+          "src/falsewake/experiment_006_coordinator.py",
+          "src/falsewake/experiment_006_final_evidence.py",
+          "src/falsewake/experiment_006_final_publication.py",
+          "src/falsewake/experiment_006_runner.py",
+          "src/falsewake/experiment_006_seed_worker.py",
+          "src/falsewake/experiment_006_supervisor.py"
+        ],
+        "supervisor_runner_sha256_assignment": {
+          "candidate_value": "one_exact_future_64_lowercase_hex_digest",
+          "normalize_to_reference_value": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336",
+          "target": "_RUNNER_SHA256"
+        },
+        "unmatched_experiment_006_execution_literals": "forbidden"
+      },
+      "reference_commit": "04b634451d129faadadd921215123547e3467d65",
+      "reference_profile": "experiment_005",
+      "unrestricted_textual_drift": "forbidden_outside_the_facade_semantic_contract"
+    },
+    "permitted_existing_source_changes": [
+      {
+        "path": "src/falsewake/experiment_002_run_authority.py",
+        "reference_sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af",
+        "scope": "add_one_fixed_profile_006_without_changing_profiles_002_003_004_or_005_or_scientific_execution_semantics"
+      }
+    ],
+    "production_additions": [
+      "src/falsewake/experiment_006_coordinator.py",
+      "src/falsewake/experiment_006_final_evidence.py",
+      "src/falsewake/experiment_006_final_publication.py",
+      "src/falsewake/experiment_006_run_authority.py",
+      "src/falsewake/experiment_006_runner.py",
+      "src/falsewake/experiment_006_seed_worker.py",
+      "src/falsewake/experiment_006_supervisor.py"
+    ],
+    "scientific_protocol_change": false,
+    "shared_authority_recipe": {
+      "added_symbols": [
+        "_EXPERIMENT_006_CHILD_BUNDLE_MAGIC",
+        "_EXPERIMENT_006_PROFILE",
+        "_EXPERIMENT_006_PROTOCOL_INTRODUCTION_COMMIT",
+        "_EXPERIMENT_006_PROTOCOL_PATH",
+        "_EXPERIMENT_006_PROTOCOL_SHA256",
+        "_EXPERIMENT_006_RUNTIME_FINGERPRINT_DOMAIN",
+        "_EXPERIMENT_006_RUN_CONFIG_PATH",
+        "_EXPERIMENT_006_SEALED_CHILD_MEMFD_TARGET",
+        "_EXPERIMENT_006_SEALED_ORIGIN_PREFIX",
+        "_EXPERIMENT_006_SOURCE_BUNDLE_DOMAIN",
+        "_create_sealed_experiment_006_child_bundle_fd",
+        "_parse_experiment_006_child_bundle",
+        "_require_experiment_006_implementation_history",
+        "_reverify_experiment_006_run_registration",
+        "_verify_and_issue_experiment_006_run_registration",
+        "_verify_and_issue_experiment_006_sealed_child_registration",
+        "_verify_experiment_006_run_registration"
+      ],
+      "baseline_commit": "04b634451d129faadadd921215123547e3467d65",
+      "baseline_mode": "100644",
+      "baseline_path": "src/falsewake/experiment_002_run_authority.py",
+      "baseline_sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af",
+      "frozen_file_binding_contract": {
+        "bind_exactly": [
+          "the_post_freeze_experiment_006_execution_protocol",
+          "the_experiment_005_execution_protocol",
+          "the_terminal_experiment_005_preflight_incident"
+        ],
+        "experiment_005_outcome_report": "absent_and_must_not_be_fabricated",
+        "experiment_005_registration": "absent_and_must_not_be_fabricated"
+      },
+      "modified_generic_dispatches": [
+        "_AUTHORITY_PROFILES",
+        "_expected_frozen_bindings",
+        "_frozen_file_bindings",
+        "_require_authority_profile",
+        "_require_invocation_registration",
+        "_verify_committed_repository"
+      ],
+      "normalization_result": "removing_only_the_declared_profile_006_ast_and_token_spans_restores_the_exact_experiment_005_baseline_bytes_and_semantic_ast",
+      "positive_semantic_contract": {
+        "closure": {
+          "empty_or_pass_only_function_bodies": "forbidden",
+          "exact_added_symbol_set": "shared_authority_recipe.added_symbols",
+          "exact_changed_existing_node_set": "shared_authority_recipe.modified_generic_dispatches",
+          "extra_profile_006_branches": "forbidden",
+          "extra_profile_006_top_level_symbols": "forbidden",
+          "no_op_profile_006_branches": "forbidden"
+        },
+        "constant_assignment_count": 10,
+        "constant_assignments": [
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_CHILD_BUNDLE_MAGIC",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "bytes",
+              "utf8_hex": "46573643484c4431"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_PROFILE",
+            "node_kind": "AnnAssign",
+            "value": {
+              "callee": "_AuthorityProfile",
+              "keyword_arguments": [
+                {
+                  "expression": "\"006\"",
+                  "name": "registration_experiment"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_RUN_CONFIG_PATH",
+                  "name": "run_config_path"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_RUNTIME_FINGERPRINT_DOMAIN",
+                  "name": "runtime_fingerprint_domain"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_CHILD_BUNDLE_MAGIC",
+                  "name": "child_bundle_magic"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_SOURCE_BUNDLE_DOMAIN",
+                  "name": "source_bundle_domain"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_SEALED_ORIGIN_PREFIX",
+                  "name": "sealed_origin_prefix"
+                },
+                {
+                  "expression": "_EXPERIMENT_006_SEALED_CHILD_MEMFD_TARGET",
+                  "name": "sealed_child_memfd_target"
+                },
+                {
+                  "expression": "\"falsewake-exp006-child-bundle\"",
+                  "name": "child_bundle_memfd_name"
+                },
+                {
+                  "expression": "b\"FW6ACTV1\"",
+                  "name": "activation_magic"
+                },
+                {
+                  "expression": "b\"falsewake-exp006-activation-ticket-v1\\x00\"",
+                  "name": "activation_ticket_domain"
+                },
+                {
+                  "expression": "\"verify_and_issue_experiment_006_run_registration\"",
+                  "name": "issuer_route"
+                },
+                {
+                  "expression": "\"_verify_and_issue_experiment_006_sealed_child_registration\"",
+                  "name": "sealed_child_issuer_route"
+                },
+                {
+                  "expression": "\"src/falsewake/experiment_006_runner.py\"",
+                  "name": "runner_entrypoint"
+                },
+                {
+                  "expression": "\"/home/ubuntu/gitcode/.t/falsewake-experiment-006-scratch\"",
+                  "name": "scratch_root"
+                }
+              ],
+              "kind": "exact_keyword_call",
+              "positional_arguments": []
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_PROTOCOL_INTRODUCTION_COMMIT",
+            "node_kind": "AnnAssign",
+            "value": {
+              "format": "40_lowercase_hex",
+              "kind": "post_freeze_literal",
+              "source": "the_commit_that_introduces_the_exact_committed_lifecycle.execution_protocol_blob"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_PROTOCOL_PATH",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "str",
+              "value": "configs/experiment-006-execution.json"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_PROTOCOL_SHA256",
+            "node_kind": "AnnAssign",
+            "value": {
+              "format": "64_lowercase_hex",
+              "kind": "post_freeze_literal",
+              "source": "sha256_of_the_exact_committed_lifecycle.execution_protocol_blob"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_RUNTIME_FINGERPRINT_DOMAIN",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "bytes",
+              "utf8_hex": "66616c736577616b652d6578703030362d72756e74696d652d763100"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_RUN_CONFIG_PATH",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "str",
+              "value": "configs/experiment-006-run.json"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_SEALED_CHILD_MEMFD_TARGET",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "str",
+              "value": "/memfd:falsewake-exp006-child-bundle (deleted)"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_SEALED_ORIGIN_PREFIX",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "str",
+              "value": "falsewake-sealed://experiment-006/"
+            }
+          },
+          {
+            "annotation": "Final",
+            "name": "_EXPERIMENT_006_SOURCE_BUNDLE_DOMAIN",
+            "node_kind": "AnnAssign",
+            "value": {
+              "literal_kind": "bytes",
+              "utf8_hex": "66616c736577616b652d6578703030362d736f757263652d62756e646c652d763100"
+            }
+          }
+        ],
+        "function_contracts": [
+          {
+            "name": "_create_sealed_experiment_006_child_bundle_fd",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [
+                {
+                  "annotation": "VerifiedRunRegistration",
+                  "name": "registration"
+                }
+              ],
+              "positional_or_keyword": [],
+              "return_annotation": "int",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_create_sealed_child_bundle_fd_for_profile",
+                "keyword_arguments": [],
+                "kind": "return_direct_call",
+                "positional_arguments": [
+                  "registration",
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_parse_experiment_006_child_bundle",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [],
+              "positional_or_keyword": [
+                {
+                  "annotation": "bytes",
+                  "name": "payload"
+                }
+              ],
+              "return_annotation": "_ChildBundleFrame",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_parse_child_bundle_for_profile",
+                "keyword_arguments": [],
+                "kind": "return_direct_call",
+                "positional_arguments": [
+                  "payload",
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_reverify_experiment_006_run_registration",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [],
+              "positional_or_keyword": [
+                {
+                  "annotation": "VerifiedRunRegistration",
+                  "name": "registration"
+                }
+              ],
+              "return_annotation": "None",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_require_verified_registration_profile",
+                "keyword_arguments": [],
+                "kind": "expression_direct_call",
+                "positional_arguments": [
+                  "registration",
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              },
+              {
+                "callee": "reverify_verified_run_registration",
+                "keyword_arguments": [],
+                "kind": "expression_direct_call",
+                "positional_arguments": [
+                  "registration"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_verify_and_issue_experiment_006_run_registration",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [],
+              "positional_or_keyword": [],
+              "return_annotation": "VerifiedRunRegistration",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_verify_and_issue_parent_run_registration",
+                "keyword_arguments": [],
+                "kind": "return_direct_call",
+                "positional_arguments": [
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_verify_and_issue_experiment_006_sealed_child_registration",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [],
+              "positional_or_keyword": [],
+              "return_annotation": "VerifiedRunRegistration",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_verify_and_issue_sealed_child_registration",
+                "keyword_arguments": [],
+                "kind": "return_direct_call",
+                "positional_arguments": [
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_verify_experiment_006_run_registration",
+            "node_kind": "FunctionDef",
+            "signature": {
+              "defaults": null,
+              "keyword_defaults": null,
+              "keyword_only": [],
+              "positional_only": [],
+              "positional_or_keyword": [
+                {
+                  "annotation": "VerifiedRunRegistration",
+                  "name": "registration"
+                }
+              ],
+              "return_annotation": "None",
+              "variable_keyword": null,
+              "variable_positional": null
+            },
+            "statements": [
+              {
+                "callee": "_require_authority_process",
+                "keyword_arguments": [],
+                "kind": "expression_direct_call",
+                "positional_arguments": []
+              },
+              {
+                "callee": "_require_verified_registration_profile",
+                "keyword_arguments": [],
+                "kind": "expression_direct_call",
+                "positional_arguments": [
+                  "registration",
+                  "_EXPERIMENT_006_PROFILE"
+                ]
+              },
+              {
+                "callee": "reverify_verified_run_registration",
+                "keyword_arguments": [],
+                "kind": "expression_direct_call",
+                "positional_arguments": [
+                  "registration"
+                ]
+              }
+            ]
+          }
+        ],
+        "function_docstring_truth": {
+          "admission_required": true,
+          "comparison": "exact_ast_get_docstring_clean_false_codepoint_equality",
+          "exact_docstrings": {
+            "_create_sealed_experiment_006_child_bundle_fd": "Return the fixed Experiment 006 sealed source-bundle descriptor.",
+            "_parse_experiment_006_child_bundle": null,
+            "_require_experiment_006_implementation_history": null,
+            "_reverify_experiment_006_run_registration": "Reverify a capability only if its retained profile is Experiment 006.",
+            "_verify_and_issue_experiment_006_run_registration": "Verify and issue the fixed Experiment 006 parent capability.",
+            "_verify_and_issue_experiment_006_sealed_child_registration": "Verify fixed Experiment 006 sealed-child state and mint its capability.",
+            "_verify_experiment_006_run_registration": "Reverify only a retained Experiment 006 capability."
+          },
+          "semantic_projection_excludes_docstrings": true,
+          "stale_profile_claims_forbidden": [
+            "002",
+            "003",
+            "004",
+            "005"
+          ],
+          "unexpected_docstring_scopes": "forbidden",
+          "wording_otherwise_unrestricted": false
+        },
+        "function_execution_invariants": {
+          "body_forbidden_ast_nodes": [
+            "Await",
+            "Yield",
+            "YieldFrom"
+          ],
+          "code_flags": {
+            "CO_ASYNC_GENERATOR": false,
+            "CO_COROUTINE": false,
+            "CO_GENERATOR": false
+          },
+          "decorators": [],
+          "docstrings": "excluded_from_semantic_projection",
+          "node_kind": "FunctionDef"
+        },
+        "generic_dispatch_insertion_count": 6,
+        "generic_dispatch_insertions": [
+          {
+            "anchor": "tuple_tail_immediately_after__EXPERIMENT_005_PROFILE",
+            "cardinality": 1,
+            "inserted_ast": {
+              "context": "Load",
+              "id": "_EXPERIMENT_006_PROFILE",
+              "kind": "Name"
+            },
+            "target": "_AUTHORITY_PROFILES"
+          },
+          {
+            "anchor": "new_elif_immediately_after_the__EXPERIMENT_005_PROFILE_branch",
+            "cardinality": 1,
+            "inserted_ast": {
+              "condition": "profile is _EXPERIMENT_006_PROFILE",
+              "mutations": [
+                {
+                  "key": "execution_protocol",
+                  "value": {
+                    "introduction_commit": "_EXPERIMENT_006_PROTOCOL_INTRODUCTION_COMMIT",
+                    "path": "_EXPERIMENT_006_PROTOCOL_PATH",
+                    "sha256": "_EXPERIMENT_006_PROTOCOL_SHA256"
+                  }
+                },
+                {
+                  "key": "predecessor",
+                  "value_json_pointer": "/predecessor"
+                }
+              ],
+              "return": "bindings"
+            },
+            "target": "_expected_frozen_bindings"
+          },
+          {
+            "anchor": "new_profile_branch_immediately_before_the_existing__EXPERIMENT_005_PROFILE_branch",
+            "cardinality": 1,
+            "inserted_ast": {
+              "condition": "profile is _EXPERIMENT_006_PROFILE",
+              "return_tuple_extension": [
+                [
+                  "execution_protocol.path",
+                  "execution_protocol.sha256"
+                ],
+                [
+                  "predecessor.execution_protocol.path",
+                  "predecessor.execution_protocol.sha256"
+                ],
+                [
+                  "predecessor.incident.path",
+                  "predecessor.incident.sha256"
+                ]
+              ]
+            },
+            "target": "_frozen_file_bindings"
+          },
+          {
+            "anchor": "new_elif_immediately_after_the__EXPERIMENT_005_PROFILE_identity_branch_and_before_else",
+            "cardinality": 1,
+            "inserted_ast": {
+              "condition": "profile is _EXPERIMENT_006_PROFILE",
+              "expected_tuple_json_pointer": "/authority_profile/profile_values",
+              "field_order_json_pointer": "/authority_profile/profile_binding_fields"
+            },
+            "target": "_require_authority_profile"
+          },
+          {
+            "anchor": "tuple_tail_immediately_after__EXPERIMENT_005_PROFILE_in_the_fixed_runner_profile_membership_test",
+            "cardinality": 1,
+            "inserted_ast": {
+              "context": "Load",
+              "id": "_EXPERIMENT_006_PROFILE",
+              "kind": "Name",
+              "retained_checks": [
+                "argv == (profile.runner_entrypoint,)",
+                "environment.TMPDIR == profile.scratch_root"
+              ]
+            },
+            "target": "_require_invocation_registration"
+          },
+          {
+            "anchor": "new_elif_immediately_after_the__EXPERIMENT_005_PROFILE_history_branch",
+            "cardinality": 1,
+            "inserted_ast": {
+              "callee": "_require_experiment_006_implementation_history",
+              "condition": "profile is _EXPERIMENT_006_PROFILE",
+              "keyword_arguments": {
+                "implementation_commit": "document.implementation_commit"
+              },
+              "positional_arguments": [
+                "root"
+              ]
+            },
+            "target": "_verify_committed_repository"
+          }
+        ],
+        "history_behavior": {
+          "ast_closure": {
+            "allowed_external_effect_call_targets": [
+              "_committed_blob",
+              "_git",
+              "_git_process",
+              "_require_experiment_005_implementation_history"
+            ],
+            "allowed_pure_call_targets": [
+              "Experiment002RunAuthorityError",
+              "bytes.join",
+              "hash.hexdigest",
+              "hashlib.sha256",
+              "len",
+              "str.encode",
+              "tuple"
+            ],
+            "allowed_statement_kinds": [
+              "Assign",
+              "Expr",
+              "For",
+              "If",
+              "Raise"
+            ],
+            "assignment_targets": "local_Name_nodes_only",
+            "attribute_assignment": "forbidden",
+            "calls_not_mapped_to_an_exact_primitive_trace_or_pure_allowlist_entry": "forbidden",
+            "delete_statements": "forbidden",
+            "global_statements": "forbidden",
+            "imports": "forbidden",
+            "nonlocal_statements": "forbidden",
+            "subscript_assignment": "forbidden",
+            "terminal_control_flow": "fall_through_to_implicit_return_None_only",
+            "unexpected_ast_statement_kinds": "forbidden"
+          },
+          "fake_git_trace_contract": {
+            "clean_trace_outcome": {
+              "exception": null,
+              "return_value": null,
+              "status": "pass"
+            },
+            "event_cardinality": 13,
+            "event_multiset": "exactly_required_events_once_each",
+            "event_order": "exactly_required_events_array_order",
+            "fault_injection": {
+              "for_each_required_event": "remove_or_change_the_expected_result",
+              "required_outcome": "raise_Experiment002RunAuthorityError_before_success",
+              "success_after_fault": "forbidden"
+            },
+            "forbidden_events": [
+              "canonical_attempt_marker_stat",
+              "canonical_attempt_marker_open",
+              "canonical_attempt_marker_read",
+              "canonical_attempt_marker_write",
+              "canonical_attempt_marker_unlink"
+            ],
+            "instrumentation": {
+              "aggregate_event_expansion": "exactly_primitive_call_expansions_in_array_order",
+              "intercepted_call_targets": [
+                "_committed_blob",
+                "_git",
+                "_git_process",
+                "_require_experiment_005_implementation_history"
+              ],
+              "kind": "strict_identity_spy_trace_adapter_v1",
+              "manual_event_emission": "forbidden",
+              "operation_expansions": {
+                "exact_direct_call": {
+                  "primitive_calls": [
+                    {
+                      "arguments": "event.positional_arguments",
+                      "callee": "_require_experiment_005_implementation_history",
+                      "keyword_arguments": "event.keyword_arguments",
+                      "result": null
+                    }
+                  ]
+                },
+                "git_committed_blob": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        "event.treeish",
+                        "event.path"
+                      ],
+                      "callee": "_committed_blob",
+                      "keyword_arguments": {
+                        "maximum_bytes": "event.maximum_bytes"
+                      },
+                      "result_checks": [
+                        "mode == event.expected_mode",
+                        "sha256(payload) == event.expected_sha256"
+                      ]
+                    }
+                  ]
+                },
+                "git_diff_name_status": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"diff\"",
+                        "\"--no-ext-diff\"",
+                        "\"--no-textconv\"",
+                        "\"--name-status\"",
+                        "\"-z\"",
+                        "event.from",
+                        "event.to",
+                        "\"--\"",
+                        "event.pathspec"
+                      ],
+                      "callee": "_git",
+                      "result": "exact_NUL_framed_name_status_from_event.expected_json_pointer"
+                    }
+                  ]
+                },
+                "git_diff_tree_name_status": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"diff-tree\"",
+                        "\"--no-ext-diff\"",
+                        "\"--no-textconv\"",
+                        "\"--no-commit-id\"",
+                        "\"--name-status\"",
+                        "\"-r\"",
+                        "\"-z\"",
+                        "event.from",
+                        "event.to"
+                      ],
+                      "callee": "_git",
+                      "result": "exact_NUL_framed_name_status_from_event.expected"
+                    }
+                  ]
+                },
+                "git_exact_commit_chain": {
+                  "iteration": "for_each_event.expected_chain_row_in_array_order",
+                  "primitive_calls_per_row": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"rev-list\"",
+                        "\"--parents\"",
+                        "\"-n\"",
+                        "\"1\"",
+                        "row.commit"
+                      ],
+                      "callee": "_git",
+                      "result": "ascii(row.commit + space + row.parent + newline)"
+                    },
+                    {
+                      "arguments": [
+                        "root",
+                        "\"diff-tree\"",
+                        "\"--no-ext-diff\"",
+                        "\"--no-textconv\"",
+                        "\"--no-commit-id\"",
+                        "\"--name-status\"",
+                        "\"-r\"",
+                        "\"-z\"",
+                        "row.parent",
+                        "row.commit"
+                      ],
+                      "callee": "_git",
+                      "result": "exact_NUL_framed_single_row_name_status(row.only_change)"
+                    }
+                  ]
+                },
+                "git_exact_committed_blobs": {
+                  "iteration": "for_each_event.expected_blobs_row_in_array_order",
+                  "primitive_calls_per_row": [
+                    {
+                      "arguments": [
+                        "root",
+                        "row.treeish_or_event.treeish",
+                        "row.path"
+                      ],
+                      "callee": "_committed_blob",
+                      "keyword_arguments": {
+                        "maximum_bytes": "row.maximum_bytes"
+                      },
+                      "result_checks": [
+                        "mode == row.mode",
+                        "sha256(payload) == row.sha256",
+                        "byte_count == row.byte_count_when_present"
+                      ]
+                    }
+                  ]
+                },
+                "git_exact_path_modes": {
+                  "iteration": "for_each_event.paths_row_in_array_order",
+                  "primitive_calls_per_row": [
+                    {
+                      "arguments": [
+                        "root",
+                        "event.treeish",
+                        "row"
+                      ],
+                      "callee": "_committed_blob",
+                      "keyword_arguments": {
+                        "maximum_bytes": "_MAX_SOURCE_FILE_BYTES"
+                      },
+                      "result_checks": [
+                        "mode == event.expected_mode"
+                      ]
+                    }
+                  ]
+                },
+                "git_history_paths_absent": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"log\"",
+                        "\"--format=\"",
+                        "\"--name-only\"",
+                        "event.from_exclusive + \"..\" + event.to_inclusive",
+                        "\"--\"",
+                        "*flatten(event.path_groups.paths_or_json_pointer_in_group_and_array_order)"
+                      ],
+                      "callee": "_git",
+                      "result": "bytes.fromhex(event.expected_bytes_hex)"
+                    }
+                  ]
+                },
+                "git_merge_base_is_ancestor": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        [
+                          "\"merge-base\"",
+                          "\"--is-ancestor\"",
+                          "event.ancestor",
+                          "event.descendant"
+                        ]
+                      ],
+                      "callee": "_git_process",
+                      "keyword_arguments": {
+                        "allowed_returncodes": [
+                          0,
+                          1
+                        ]
+                      },
+                      "result": "returncode == 0 iff event.expected"
+                    }
+                  ]
+                },
+                "git_paths_absent": {
+                  "iteration": "Cartesian_product_event.treeish_or_treeishes_then_flattened_paths_in_declared_order",
+                  "primitive_calls_per_row": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"ls-tree\"",
+                        "\"-z\"",
+                        "row.treeish",
+                        "\"--\"",
+                        "row.path"
+                      ],
+                      "callee": "_git",
+                      "result": "b\"\""
+                    }
+                  ]
+                },
+                "git_rev_list_parents": {
+                  "primitive_calls": [
+                    {
+                      "arguments": [
+                        "root",
+                        "\"rev-list\"",
+                        "\"--parents\"",
+                        "\"-n\"",
+                        "\"1\"",
+                        "event.expected[0]"
+                      ],
+                      "callee": "_git",
+                      "result": "ascii(event.expected[0] + space + event.expected[1] + newline)"
+                    }
+                  ]
+                }
+              },
+              "spy_installation": "replace_each_exact_module_global_call_target_by_identity_before_call_and_restore_after_call",
+              "unmapped_intercepted_calls": "forbidden"
+            },
+            "primitive_call_cardinality": 70,
+            "required_events": [
+              {
+                "expected": [
+                  "$P6_PROTOCOL_COMMIT",
+                  "594e2c491c057394f18860c8362a51190460645f"
+                ],
+                "id": "p6_protocol_direct_parent",
+                "operation": "git_rev_list_parents"
+              },
+              {
+                "expected": [
+                  {
+                    "path": "configs/experiment-006-execution.json",
+                    "status": "A"
+                  }
+                ],
+                "from": "594e2c491c057394f18860c8362a51190460645f",
+                "id": "p6_protocol_config_only_delta",
+                "operation": "git_diff_tree_name_status",
+                "to": "$P6_PROTOCOL_COMMIT"
+              },
+              {
+                "expected_mode": "100644",
+                "expected_sha256": "$P6_PROTOCOL_SHA256",
+                "id": "p6_protocol_blob",
+                "maximum_bytes": "_MAX_CONFIG_BYTES",
+                "operation": "git_committed_blob",
+                "path": "configs/experiment-006-execution.json",
+                "treeish": "$P6_PROTOCOL_COMMIT"
+              },
+              {
+                "ancestor": "$P6_PROTOCOL_COMMIT",
+                "descendant": "$P6_ADMISSION_COMMIT",
+                "expected": true,
+                "id": "p6_protocol_ancestry",
+                "operation": "git_merge_base_is_ancestor"
+              },
+              {
+                "expected_json_pointer": "/execution_delta/implementation_source_delta/name_status",
+                "from": "594e2c491c057394f18860c8362a51190460645f",
+                "id": "p6_exact_source_delta",
+                "operation": "git_diff_name_status",
+                "pathspec": "src/falsewake",
+                "to": "$P6_ADMISSION_COMMIT"
+              },
+              {
+                "callee": "_require_experiment_005_implementation_history",
+                "id": "recursive_p5_history",
+                "keyword_arguments": {
+                  "implementation_commit": "04b634451d129faadadd921215123547e3467d65"
+                },
+                "operation": "exact_direct_call",
+                "positional_arguments": [
+                  "root"
+                ]
+              },
+              {
+                "expected_chain": [
+                  {
+                    "commit": "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072",
+                    "only_change": "A configs/experiment-005-execution.json",
+                    "parent": "462aeba306a0612fd6d64884e323d72db3569a89"
+                  },
+                  {
+                    "commit": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+                    "only_change": "A tests/test_experiment_005_protocol.py",
+                    "parent": "04b634451d129faadadd921215123547e3467d65"
+                  },
+                  {
+                    "commit": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+                    "only_change": "A docs/experiment-005.md",
+                    "parent": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74"
+                  },
+                  {
+                    "commit": "594e2c491c057394f18860c8362a51190460645f",
+                    "only_change": "A reports/experiment-005-preflight-incident.json",
+                    "parent": "9ae549ccd477b13b9531f7c44d854d34549fd9c3"
+                  }
+                ],
+                "id": "p5_protocol_proof_boundary_incident_topology",
+                "operation": "git_exact_commit_chain"
+              },
+              {
+                "expected_blobs": [
+                  {
+                    "maximum_bytes": "_MAX_CONFIG_BYTES",
+                    "mode": "100644",
+                    "path": "configs/experiment-005-execution.json",
+                    "sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d",
+                    "treeish": "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "tests/test_experiment_005_protocol.py",
+                    "sha256": "cf6d4ee2fcba31de37774b591571abb2d86998cc0f2a3e99a40abe1af4af5414",
+                    "treeish": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "docs/experiment-005.md",
+                    "sha256": "c9852a028f572e33b2379b98786f5c72e41ddae1300f03742ad977947a1dd600",
+                    "treeish": "9ae549ccd477b13b9531f7c44d854d34549fd9c3"
+                  },
+                  {
+                    "byte_count": 6612,
+                    "maximum_bytes": "_MAX_CONFIG_BYTES",
+                    "mode": "100644",
+                    "path": "reports/experiment-005-preflight-incident.json",
+                    "sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d",
+                    "treeish": "594e2c491c057394f18860c8362a51190460645f"
+                  }
+                ],
+                "id": "p5_protocol_proof_doc_incident_blobs",
+                "operation": "git_exact_committed_blobs"
+              },
+              {
+                "expected_blobs": [
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_002_run_authority.py",
+                    "sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_coordinator.py",
+                    "sha256": "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_final_evidence.py",
+                    "sha256": "1c99757fc9b78e612891a9d49e7dc40c2d0b90599a40927e4cd41dff781f355d"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_final_publication.py",
+                    "sha256": "84f7aba57f8ec0c096e5f18a03a8118800f53a9cfe4910c554bea677a9f79f07"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_run_authority.py",
+                    "sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_runner.py",
+                    "sha256": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_seed_worker.py",
+                    "sha256": "0840a62f0f4327eec7649d17ad334edfa6941d6146bff6fe50e2d693f0b80f96"
+                  },
+                  {
+                    "maximum_bytes": "_MAX_SOURCE_FILE_BYTES",
+                    "mode": "100644",
+                    "path": "src/falsewake/experiment_005_supervisor.py",
+                    "sha256": "7c8d58566c2b5e904ebf7f1e5fa1ab3b1c79c4387b38f296b08ef5ce7e312e71"
+                  }
+                ],
+                "id": "p5_shared_and_seven_production_blobs",
+                "operation": "git_exact_committed_blobs",
+                "treeish": "04b634451d129faadadd921215123547e3467d65"
+              },
+              {
+                "id": "p4_p5_all_managed_output_absence",
+                "operation": "git_paths_absent",
+                "path_groups": [
+                  {
+                    "id": "experiment_004",
+                    "paths": [
+                      "configs/experiment-004-run.json",
+                      "models/experiment-004-selected.safetensors",
+                      "reports/experiment-004-seed-20260719-history.json",
+                      "reports/experiment-004-seed-20260720-history.json",
+                      "reports/experiment-004-seed-20260721-history.json",
+                      "reports/experiment-004-selected-rerun-history.json",
+                      "reports/experiment-004-training.json"
+                    ]
+                  },
+                  {
+                    "id": "experiment_005",
+                    "paths_json_pointer": "/predecessor/managed_outputs_absent"
+                  }
+                ],
+                "treeishes": [
+                  "594e2c491c057394f18860c8362a51190460645f",
+                  "$P6_ADMISSION_COMMIT"
+                ]
+              },
+              {
+                "id": "p6_registration_and_managed_output_absence",
+                "operation": "git_paths_absent",
+                "paths_json_pointer": "/lifecycle/admission_commit/must_exclude",
+                "treeish": "$P6_ADMISSION_COMMIT"
+              },
+              {
+                "expected_mode": "100644",
+                "id": "p6_shared_and_seven_source_modes",
+                "operation": "git_exact_path_modes",
+                "paths": [
+                  "src/falsewake/experiment_002_run_authority.py",
+                  "src/falsewake/experiment_006_coordinator.py",
+                  "src/falsewake/experiment_006_final_evidence.py",
+                  "src/falsewake/experiment_006_final_publication.py",
+                  "src/falsewake/experiment_006_run_authority.py",
+                  "src/falsewake/experiment_006_runner.py",
+                  "src/falsewake/experiment_006_seed_worker.py",
+                  "src/falsewake/experiment_006_supervisor.py"
+                ],
+                "treeish": "$P6_ADMISSION_COMMIT"
+              },
+              {
+                "expected_bytes_hex": "",
+                "from_exclusive": "594e2c491c057394f18860c8362a51190460645f",
+                "id": "p4_p5_p6_transient_managed_path_history_absence",
+                "operation": "git_history_paths_absent",
+                "path_groups": [
+                  {
+                    "id": "experiment_004",
+                    "paths": [
+                      "configs/experiment-004-run.json",
+                      "models/experiment-004-selected.safetensors",
+                      "reports/experiment-004-seed-20260719-history.json",
+                      "reports/experiment-004-seed-20260720-history.json",
+                      "reports/experiment-004-seed-20260721-history.json",
+                      "reports/experiment-004-selected-rerun-history.json",
+                      "reports/experiment-004-training.json"
+                    ]
+                  },
+                  {
+                    "id": "experiment_005",
+                    "paths_json_pointer": "/predecessor/managed_outputs_absent"
+                  },
+                  {
+                    "id": "experiment_006",
+                    "paths_json_pointer": "/lifecycle/admission_commit/must_exclude"
+                  }
+                ],
+                "to_inclusive": "$P6_ADMISSION_COMMIT"
+              }
+            ],
+            "symbolic_values": {
+              "$P6_ADMISSION_COMMIT": "the_lifecycle.admission_commit",
+              "$P6_PROTOCOL_COMMIT": "_EXPERIMENT_006_PROTOCOL_INTRODUCTION_COMMIT",
+              "$P6_PROTOCOL_SHA256": "_EXPERIMENT_006_PROTOCOL_SHA256"
+            },
+            "unexpected_filesystem_events": "forbidden",
+            "unexpected_git_events": "forbidden",
+            "unexpected_process_events": "forbidden"
+          },
+          "name": "_require_experiment_006_implementation_history",
+          "node_kind": "FunctionDef",
+          "return_annotation": "None",
+          "signature": {
+            "defaults": null,
+            "keyword_defaults": [
+              null
+            ],
+            "keyword_only": [
+              {
+                "annotation": "str",
+                "name": "implementation_commit"
+              }
+            ],
+            "positional_only": [],
+            "positional_or_keyword": [
+              {
+                "annotation": "Path",
+                "name": "root"
+              }
+            ],
+            "variable_keyword": null,
+            "variable_positional": null
+          }
+        },
+        "kind": "closed_profile_006_semantic_ast_and_fake_git_trace_v1",
+        "semantic_projection": {
+          "docstrings": "remove_only_leading_function_docstring_nodes",
+          "kind": "semantic_ast_v1",
+          "location_metadata": "excluded",
+          "parser_feature_version": "3.12",
+          "statement_order": "preserved"
+        }
+      },
+      "predecessor_profile_behavior_change": "forbidden_for_profiles_002_003_004_and_005",
+      "protocol_binding_required": {
+        "introduction_commit_source": "resolve_after_freeze_from_the_git_commit_that_introduces_the_exact_protocol_blob",
+        "introduction_commit_value_in_this_document": "intentionally_absent_to_avoid_self_reference",
+        "path": "configs/experiment-006-execution.json",
+        "sha256_source": "resolve_after_freeze_from_sha256_of_the_exact_committed_protocol_blob",
+        "sha256_value_in_this_document": "intentionally_absent_to_avoid_self_reference"
+      },
+      "restoration_contract": {
+        "added_top_level_symbols": "exactly_shared_authority_recipe.added_symbols",
+        "arbitrary_extra_logic_inside_allowed_dispatch": "forbidden",
+        "ast_after_removal": "byte_and_semantic_ast_identical_to_baseline",
+        "changed_existing_top_level_nodes": "exactly_shared_authority_recipe.modified_generic_dispatches",
+        "removal_mechanism": "delete_only_declared_profile_006_ast_and_token_spans",
+        "sequence_matcher_whole_block_replacement": "forbidden",
+        "unchanged_top_level_source_segments": "byte_identical_to_baseline"
+      }
+    }
+  },
+  "experiment": "006",
+  "kind": "execution_only_preflight_protocol_recovery",
+  "lifecycle": {
+    "admission_commit": {
+      "commit_value_in_protocol": "intentionally_absent_to_avoid_future_self_reference",
+      "definition": "the_final_clean_commit_containing_production_protocol_proof_tests_and_required_docs",
+      "git_clean_required": true,
+      "must_descend_from": "the_introduction_commit_of_lifecycle.execution_protocol",
+      "must_exclude": [
+        "configs/experiment-006-run.json",
+        "models/experiment-006-selected.safetensors",
+        "reports/experiment-006-seed-20260719-history.json",
+        "reports/experiment-006-seed-20260720-history.json",
+        "reports/experiment-006-seed-20260721-history.json",
+        "reports/experiment-006-selected-rerun-history.json",
+        "reports/experiment-006-training.json"
+      ],
+      "must_include_production_additions": "execution_delta.production_additions",
+      "must_include_protocol_proof": true,
+      "source_delta": "execution_delta.implementation_source_delta"
+    },
+    "attempt_limit": 1,
+    "execution_config_authorizes_registered_training": false,
+    "execution_protocol": {
+      "committed_blob_verification_required": true,
+      "introduction_commit_binding_required": true,
+      "introduction_commit_must_be_direct_child_of": "594e2c491c057394f18860c8362a51190460645f",
+      "introduction_commit_must_precede_admission_commit": true,
+      "only_change": "A configs/experiment-006-execution.json",
+      "own_commit_value_in_document": "forbidden_self_reference",
+      "own_sha256_value_in_document": "forbidden_self_reference",
+      "path": "configs/experiment-006-execution.json",
+      "required_mode": "100644",
+      "run_config_binding_path": "frozen_bindings.execution_protocol",
+      "run_config_sha256_binding_required": true
+    },
+    "freeze_tree_requirements": {
+      "experiment_006_managed_outputs_absent": true,
+      "experiment_006_marker_absent": true,
+      "experiment_006_production_modules_absent": true,
+      "experiment_006_registration_absent": true,
+      "shared_authority_profile_006_absent": true
+    },
+    "pre_registration_observations": {
+      "registered_authority_issuer_invocations": 0,
+      "registered_coordinator_invocations": 0,
+      "registered_invocation_count": 0,
+      "registered_optimizer_updates": 0,
+      "registered_runner_invocations": 0,
+      "registered_validation_examples": 0
+    },
+    "registration_commit": {
+      "execution_protocol_binding": "lifecycle.execution_protocol",
+      "full_verification_gate_must_pass_before_creation": true,
+      "only_change": "A configs/experiment-006-run.json",
+      "own_commit_value_in_run_config": "forbidden_self_reference",
+      "own_sha256_value_in_run_config": "forbidden_self_reference",
+      "parent": "admission_commit",
+      "required_mode": "100644"
+    },
+    "registration_config_authorizes_registered_training": true,
+    "retry_policy": "any_preflight_rejection_or_terminal_attempt_requires_a_new_experiment_identifier",
+    "self_reference_exclusions": [
+      "protocol_own_commit",
+      "protocol_own_sha256",
+      "future_admission_commit",
+      "future_registration_commit",
+      "future_source_sha256_values",
+      "future_runner_sha256",
+      "future_source_bundle_sha256",
+      "future_incident_own_identity"
+    ],
+    "terminal_execution_failure": {
+      "artifacts": [],
+      "checkpoint_reusable": false
+    }
+  },
+  "namespace": {
+    "activation_thread_name": "falsewake-exp006-child-activation",
+    "attempt_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-attempt",
+    "authority_module": "falsewake.experiment_006_run_authority",
+    "child_bundle_memfd_name": "falsewake-exp006-child-bundle",
+    "child_control_fd": 3,
+    "child_source_bundle_fd": 7,
+    "coordinator_module": "falsewake.experiment_006_coordinator",
+    "final_evidence_module": "falsewake.experiment_006_final_evidence",
+    "final_publication_module": "falsewake.experiment_006_final_publication",
+    "launch_memfd_name": "falsewake-experiment-006-launch",
+    "managed_outputs": {
+      "histories": [
+        "reports/experiment-006-seed-20260719-history.json",
+        "reports/experiment-006-seed-20260720-history.json",
+        "reports/experiment-006-seed-20260721-history.json"
+      ],
+      "model": "models/experiment-006-selected.safetensors",
+      "report": "reports/experiment-006-training.json",
+      "selected_rerun_history": "reports/experiment-006-selected-rerun-history.json"
+    },
+    "required_sealed_sources": [
+      "src/falsewake/__init__.py",
+      "src/falsewake/experiment_002_process_guard.py",
+      "src/falsewake/experiment_002_run_authority.py",
+      "src/falsewake/experiment_006_coordinator.py",
+      "src/falsewake/experiment_006_run_authority.py"
+    ],
+    "run_config": "configs/experiment-006-run.json",
+    "runner": "src/falsewake/experiment_006_runner.py",
+    "scratch_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-scratch",
+    "sealed_child_memfd_target": "/memfd:falsewake-exp006-child-bundle (deleted)",
+    "seed_worker_module": "falsewake.experiment_006_seed_worker",
+    "staging_root": "/home/ubuntu/gitcode/.t/falsewake-experiment-006-staging",
+    "supervisor_module": "falsewake.experiment_006_supervisor",
+    "temporary_publication_prefix": ".falsewake-exp006-publication-",
+    "transport": {
+      "activation_magic": "FW6ACTV1",
+      "activation_ticket_domain": "falsewake-exp006-activation-ticket-v1\u0000",
+      "authority_sealed_origin_prefix": "falsewake-sealed://experiment-006/",
+      "child_bundle_magic": "FW6CHLD1",
+      "inherited_child_result_envelope_domain": "falsewake-exp002-child-result-envelope-v1\u0000",
+      "inherited_history_domain": "falsewake-exp002-history-v1\u0000",
+      "inherited_model_tensor_domain": "falsewake-exp002-model-tensors-v1\u0000",
+      "inherited_process_guard_domain": "falsewake-exp002-process-guard-filter-v1\u0000",
+      "runner_sealed_origin_prefix": "falsewake-sealed://experiment-006",
+      "runtime_fingerprint_domain": "falsewake-exp006-runtime-v1\u0000",
+      "source_bundle_domain": "falsewake-exp006-source-bundle-v1\u0000"
+    }
+  },
+  "predecessor": {
+    "attempt": {
+      "canonical_marker": "/home/ubuntu/gitcode/.t/falsewake-experiment-005-attempt",
+      "canonical_marker_present": false,
+      "optimizer_updates": 0,
+      "registered_attempt_consumed": false,
+      "registered_authority_issuer_invoked": false,
+      "registered_coordinator_invoked": false,
+      "registered_invocation_count": 0,
+      "registered_runner_invoked": false,
+      "validation_examples": 0
+    },
+    "execution_protocol": {
+      "introduction_commit": "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072",
+      "mode": "100644",
+      "path": "configs/experiment-005-execution.json",
+      "sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d"
+    },
+    "experiment": "005",
+    "implementation": {
+      "commit": "04b634451d129faadadd921215123547e3467d65",
+      "production_sources": [
+        {
+          "path": "src/falsewake/experiment_005_coordinator.py",
+          "sha256": "4ad78de14ce12acdb63b4e103dd920ce878d7e60a06fa1c5893027d17401f812"
+        },
+        {
+          "path": "src/falsewake/experiment_005_final_evidence.py",
+          "sha256": "1c99757fc9b78e612891a9d49e7dc40c2d0b90599a40927e4cd41dff781f355d"
+        },
+        {
+          "path": "src/falsewake/experiment_005_final_publication.py",
+          "sha256": "84f7aba57f8ec0c096e5f18a03a8118800f53a9cfe4910c554bea677a9f79f07"
+        },
+        {
+          "path": "src/falsewake/experiment_005_run_authority.py",
+          "sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e"
+        },
+        {
+          "path": "src/falsewake/experiment_005_runner.py",
+          "sha256": "eeafface36baaabba5e1479750674884a069b41ccaeeb9dee9ccbc4b179a5336"
+        },
+        {
+          "path": "src/falsewake/experiment_005_seed_worker.py",
+          "sha256": "0840a62f0f4327eec7649d17ad334edfa6941d6146bff6fe50e2d693f0b80f96"
+        },
+        {
+          "path": "src/falsewake/experiment_005_supervisor.py",
+          "sha256": "7c8d58566c2b5e904ebf7f1e5fa1ab3b1c79c4387b38f296b08ef5ce7e312e71"
+        }
+      ],
+      "protocol_proof": {
+        "commit": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+        "path": "tests/test_experiment_005_protocol.py",
+        "sha256": "cf6d4ee2fcba31de37774b591571abb2d86998cc0f2a3e99a40abe1af4af5414"
+      },
+      "shared_authority": {
+        "path": "src/falsewake/experiment_002_run_authority.py",
+        "sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af"
+      }
+    },
+    "incident": {
+      "byte_count": 6612,
+      "commit": "594e2c491c057394f18860c8362a51190460645f",
+      "mode": "100644",
+      "parent": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+      "path": "reports/experiment-005-preflight-incident.json",
+      "sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d"
+    },
+    "managed_outputs_absent": [
+      "configs/experiment-005-run.json",
+      "models/experiment-005-selected.safetensors",
+      "reports/experiment-005-seed-20260719-history.json",
+      "reports/experiment-005-seed-20260720-history.json",
+      "reports/experiment-005-seed-20260721-history.json",
+      "reports/experiment-005-selected-rerun-history.json",
+      "reports/experiment-005-training.json"
+    ],
+    "outcome": {
+      "automatic_terminal_report_published": false,
+      "checkpoint_reusable": false,
+      "code": "facade_normalization_recipe_cannot_express_truthful_profile_005",
+      "phase": "pre_registration_protocol_preflight",
+      "reason": "frozen_facade_normalization_cannot_express_the_truthful_profile_005_docstring",
+      "status": "preflight_rejected"
+    },
+    "preflight_boundary": {
+      "commit": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+      "mode": "100644",
+      "parent": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+      "path": "docs/experiment-005.md",
+      "sha256": "c9852a028f572e33b2379b98786f5c72e41ddae1300f03742ad977947a1dd600"
+    },
+    "preflight_evidence": {
+      "facade_candidate_normalized_sha256": "9778140580667e95e120a4a8472d8b79ffb7034c3886c208fc3fd3c4da966c86",
+      "facade_candidate_sha256": "87d18e901b4b814ce31c7c17b60b6aa54f837edc84ad3bb5ee1af386df006f5e",
+      "facade_reference_sha256": "cacab13729f14bfdce10afa5b53b2a09116cf56abe21aee12ac9220a6ad2e5b5",
+      "normalized_added_lines": 1,
+      "normalized_deleted_lines": 1,
+      "registration_gate": "not_run"
+    },
+    "registration": {
+      "path": "configs/experiment-005-run.json",
+      "present": false
+    },
+    "reuse_forbidden": true,
+    "scientific_protocol": "002",
+    "terminal": true,
+    "topology": {
+      "implementation_commit": "04b634451d129faadadd921215123547e3467d65",
+      "implementation_commit_is_ancestor_of_incident": true,
+      "incident_commit": "594e2c491c057394f18860c8362a51190460645f",
+      "incident_parent": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+      "outcome_report_path": "reports/experiment-005-training.json",
+      "outcome_report_present": false,
+      "preflight_boundary_commit": "9ae549ccd477b13b9531f7c44d854d34549fd9c3",
+      "preflight_boundary_parent": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+      "protocol_commit": "0b6bf2cac2d4f6a04d6ced596bf8f835660eb072",
+      "protocol_parent": "462aeba306a0612fd6d64884e323d72db3569a89",
+      "protocol_proof_commit": "1e20d6cf210a2d4a59cfc737a14eaccfc94a5b74",
+      "protocol_proof_parent": "04b634451d129faadadd921215123547e3467d65",
+      "registration_path": "configs/experiment-005-run.json",
+      "registration_present": false
+    }
+  },
+  "prefreeze_satisfiability": {
+    "checklist": [
+      {
+        "contract_pointer": "/admission_contract/facade_semantic_contract",
+        "expected": "pass",
+        "id": "facade_positive_ast_fixture",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/admission_contract/facade_semantic_contract/docstring_truth",
+        "expected": "pass",
+        "id": "truthful_profile_006_docstrings",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/admission_contract/parent_route_matrix",
+        "expected": {
+          "parent_routes": 15,
+          "wrapper_routes": 4
+        },
+        "id": "route_matrix_cardinality_and_identity",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/execution_delta/shared_authority_recipe/restoration_contract",
+        "expected": "exact_p5_baseline_bytes_and_semantic_ast",
+        "id": "shared_authority_inverse_restoration",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/execution_delta/shared_authority_recipe/positive_semantic_contract",
+        "expected": {
+          "added_symbols": 17,
+          "constant_assignments": 10,
+          "generic_dispatch_insertions": 6,
+          "history_fake_git_events": 13,
+          "history_primitive_calls": 70,
+          "simple_function_contracts": 6
+        },
+        "id": "shared_authority_positive_profile_006_semantics",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/namespace",
+        "expected": "all_p6_execution_namespaces_disjoint_with_only_exp002_scientific_domains_inherited",
+        "id": "namespace_collision_scan",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/predecessor",
+        "expected": "exact_terminal_p5_preflight_rejection",
+        "id": "predecessor_recursive_value_and_git_bindings",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/lifecycle",
+        "expected": "acyclic_symbolic_topology",
+        "id": "topology_and_self_reference_audit",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/authority_profile/cross_profile_rejections",
+        "expected": 20,
+        "id": "all_directed_cross_profile_rejections",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      },
+      {
+        "contract_pointer": "/prefreeze_satisfiability/mutation_operators",
+        "expected": {
+          "bijection_with_negative_mutation_ids": true,
+          "operator_count": 26
+        },
+        "id": "negative_mutation_operator_bijection",
+        "observed": "pass",
+        "status_before_protocol_commit": "pass"
+      }
+    ],
+    "claim_status": "pass",
+    "execution_scope": {
+      "canonical_marker_access": "forbidden",
+      "coordinator_invocation": "forbidden",
+      "filesystem_mutation": "forbidden",
+      "issuer_invocation": "forbidden",
+      "kind": "in_memory_non_importing_contract_evaluation",
+      "registered_runner_invocation": "forbidden"
+    },
+    "kind": "machine_checkable_synthetic_contract_v1",
+    "mutation_execution": {
+      "application": "deep_copy_fixture_then_apply_exactly_one_operator",
+      "config_fixture": "this_exact_protocol_document_including_observed_result_fields",
+      "operator_lookup": "mutation_operators[negative_mutations[].id]",
+      "source_fixtures": {
+        "facade": "synthesize_the_exact_admission_contract.facade_semantic_contract",
+        "shared_added_functions": "synthesize_execution_delta.shared_authority_recipe.positive_semantic_contract"
+      },
+      "unexpected_mutations": "forbidden",
+      "validator_outcome": "the_mutated_fixture_must_match_negative_mutations[].expected"
+    },
+    "mutation_operators": {
+      "arbitrary_logic_added_inside_allowed_dispatch": {
+        "from": "forbidden",
+        "operator": "json_replace",
+        "path": "/execution_delta/shared_authority_recipe/restoration_contract/arbitrary_extra_logic_inside_allowed_dispatch",
+        "to": "allowed"
+      },
+      "docstring_claim_changed_to_005": {
+        "fixture": "facade",
+        "from": "Return shared retained state only when its exact profile is ``006``.",
+        "operator": "replace_exact_function_docstring",
+        "preserves_semantic_ast_v1": true,
+        "scope": "_verified_state",
+        "to": "Return shared retained state only when its exact profile is ``005``."
+      },
+      "docstring_negated_or_alternate_stale_claim": {
+        "fixture": "facade",
+        "from": "Verify the fixed registration and mint the one profile-006 capability.",
+        "operator": "replace_exact_function_docstring",
+        "preserves_semantic_ast_v1": true,
+        "scope": "verify_and_issue_experiment_006_run_registration",
+        "to": "Not profile-006; this actually issues profile 005."
+      },
+      "facade_default_added": {
+        "from": null,
+        "operator": "json_replace",
+        "path": "/admission_contract/facade_semantic_contract/routes/6/signature/defaults",
+        "to": [
+          "None"
+        ]
+      },
+      "facade_function_changed_to_async_def": {
+        "fixture": "facade",
+        "from": "FunctionDef",
+        "function": "_verified_state",
+        "operator": "replace_ast_node_kind",
+        "to": "AsyncFunctionDef"
+      },
+      "facade_wrapper_or_extra_statement_added": {
+        "from": "forbidden",
+        "operator": "json_replace",
+        "path": "/admission_contract/facade_semantic_contract/top_level_policy/extra_executable_statements",
+        "to": "allowed"
+      },
+      "facade_yield_generator_body_added": {
+        "fixture": "facade",
+        "from": {
+          "kind": "Return"
+        },
+        "function": "_verified_state",
+        "operator": "replace_ast_statement_kind",
+        "to": {
+          "kind": "Expr",
+          "value": {
+            "kind": "Yield",
+            "value": "the_original_return_value"
+          }
+        }
+      },
+      "frozen_file_bindings_dispatch_omitted": {
+        "operator": "json_remove_array_value",
+        "path": "/execution_delta/shared_authority_recipe/modified_generic_dispatches",
+        "value": "_frozen_file_bindings"
+      },
+      "protocol_or_witness_digest_self_reference_added": {
+        "operations": [
+          {
+            "operator": "json_remove_array_value",
+            "path": "/lifecycle/self_reference_exclusions",
+            "value": "protocol_own_sha256"
+          },
+          {
+            "operator": "json_add",
+            "path": "/prefreeze_satisfiability/result_digest/sha256",
+            "value_generator": {
+              "count": 64,
+              "kind": "repeat_ascii",
+              "value": "0"
+            }
+          }
+        ],
+        "operator": "json_composite"
+      },
+      "registration_parent_changed_to_early_production_commit": {
+        "from": "admission_commit",
+        "operator": "json_replace",
+        "path": "/lifecycle/registration_commit/parent",
+        "to": "early_production_commit"
+      },
+      "seventh_generic_dispatch_changed": {
+        "operator": "json_append",
+        "path": "/execution_delta/shared_authority_recipe/modified_generic_dispatches",
+        "value": "_seventh_generic_dispatch"
+      },
+      "shared_added_function_docstring_changed_to_005": {
+        "fixture": "shared_added_functions",
+        "from": "Verify and issue the fixed Experiment 006 parent capability.",
+        "operator": "replace_exact_function_docstring",
+        "preserves_semantic_ast_v1": true,
+        "scope": "_verify_and_issue_experiment_006_run_registration",
+        "to": "Verify and issue the fixed Experiment 005 parent capability."
+      },
+      "shared_expected_frozen_bindings_wrong_predecessor": {
+        "from": "/predecessor",
+        "operator": "json_replace",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/generic_dispatch_insertions/1/inserted_ast/mutations/1/value_json_pointer",
+        "to": "/predecessor/topology"
+      },
+      "shared_history_fault_result_swallowed_then_success": {
+        "fixture": "fake_git_trace",
+        "match": {
+          "id": "p6_protocol_blob"
+        },
+        "operator": "replace_event_result_then_force_success",
+        "replacement_result": {
+          "mode": "100755",
+          "sha256": "$P6_PROTOCOL_SHA256"
+        },
+        "trace_outcome": {
+          "exception": null,
+          "return_value": null,
+          "status": "pass"
+        }
+      },
+      "shared_history_global_state_mutation_added": {
+        "fixture": "shared_added_functions",
+        "function": "_require_experiment_006_implementation_history",
+        "operator": "append_ast_statements",
+        "statements": [
+          {
+            "kind": "Global",
+            "names": [
+              "_ISSUANCE_LATCH"
+            ]
+          },
+          {
+            "kind": "Assign",
+            "target": "_ISSUANCE_LATCH",
+            "value": true
+          }
+        ]
+      },
+      "shared_history_recursive_p5_commit_changed": {
+        "from": "04b634451d129faadadd921215123547e3467d65",
+        "operator": "json_replace",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events/5/keyword_arguments/implementation_commit",
+        "to": "$WRONG_PREDECESSOR_IMPLEMENTATION_COMMIT"
+      },
+      "shared_history_required_event_duplicated": {
+        "match": {
+          "id": "p6_protocol_blob"
+        },
+        "operator": "json_duplicate_first_matching_array_item_after_itself",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events"
+      },
+      "shared_history_required_event_omitted": {
+        "match": {
+          "id": "p6_protocol_blob"
+        },
+        "operator": "json_remove_first_matching_array_item",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events"
+      },
+      "shared_history_required_events_adjacent_swap": {
+        "first_index": 0,
+        "operator": "json_swap_array_items",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events",
+        "second_index": 1
+      },
+      "shared_history_transient_managed_path_scan_omitted": {
+        "match": {
+          "id": "p4_p5_p6_transient_managed_path_history_absence"
+        },
+        "operator": "json_remove_first_matching_array_item",
+        "path": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events"
+      },
+      "shared_history_unconditional_raise_after_clean_trace": {
+        "fixture": "shared_added_functions",
+        "function": "_require_experiment_006_implementation_history",
+        "operator": "append_ast_statement",
+        "statement": {
+          "exception": "Experiment002RunAuthorityError(\"forced rejection\")",
+          "kind": "Raise"
+        }
+      },
+      "shared_history_unexpected_git_event_added": {
+        "fixture": "shared_added_functions",
+        "function": "_require_experiment_006_implementation_history",
+        "operator": "append_ast_statement",
+        "statement": {
+          "callee": "_git",
+          "kind": "ExprDirectCall",
+          "positional_arguments": [
+            "root",
+            "\"status\"",
+            "\"--porcelain\""
+          ]
+        }
+      },
+      "shared_history_unmapped_call_added": {
+        "fixture": "shared_added_functions",
+        "function": "_require_experiment_006_implementation_history",
+        "operator": "append_ast_statement",
+        "statement": {
+          "callee": "setattr",
+          "kind": "ExprDirectCall",
+          "positional_arguments": [
+            "hashlib",
+            "\"sha256\"",
+            "hashlib.sha256"
+          ]
+        }
+      },
+      "shared_profile_006_function_replaced_with_noop": {
+        "fixture": "shared_added_functions",
+        "function": "_create_sealed_experiment_006_child_bundle_fd",
+        "operator": "replace_function_body",
+        "statements": [
+          {
+            "kind": "Pass"
+          }
+        ]
+      },
+      "verified_state_positional_only_changed_to_positional_or_keyword": {
+        "from": "/admission_contract/facade_semantic_contract/routes/6/signature/positional_only/0",
+        "operator": "json_move",
+        "to": "/admission_contract/facade_semantic_contract/routes/6/signature/positional_or_keyword/0"
+      },
+      "verified_state_profile_changed_to_005": {
+        "from": "_engine._EXPERIMENT_006_PROFILE",
+        "operator": "json_replace",
+        "path": "/admission_contract/facade_semantic_contract/routes/6/statements/0/positional_arguments/1",
+        "to": "_engine._EXPERIMENT_005_PROFILE"
+      }
+    },
+    "negative_mutations": [
+      {
+        "expected": "reject",
+        "id": "verified_state_positional_only_changed_to_positional_or_keyword",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/routes/6/signature"
+      },
+      {
+        "expected": "reject",
+        "id": "verified_state_profile_changed_to_005",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/routes/6/statements/0/positional_arguments/1"
+      },
+      {
+        "expected": "reject",
+        "id": "facade_default_added",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/routes/6/signature/defaults"
+      },
+      {
+        "expected": "reject",
+        "id": "facade_wrapper_or_extra_statement_added",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/top_level_policy"
+      },
+      {
+        "expected": "reject",
+        "id": "facade_function_changed_to_async_def",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/routes/6/node_kind"
+      },
+      {
+        "expected": "reject",
+        "id": "facade_yield_generator_body_added",
+        "observed": "reject",
+        "target": "/admission_contract/facade_semantic_contract/route_function_contract"
+      },
+      {
+        "expected": "semantic_ast_pass_and_docstring_truth_reject",
+        "id": "docstring_claim_changed_to_005",
+        "observed": "semantic_ast_pass_and_docstring_truth_reject",
+        "target": "/admission_contract/facade_semantic_contract/docstring_truth"
+      },
+      {
+        "expected": "semantic_ast_pass_and_docstring_truth_reject",
+        "id": "docstring_negated_or_alternate_stale_claim",
+        "observed": "semantic_ast_pass_and_docstring_truth_reject",
+        "target": "/admission_contract/facade_semantic_contract/docstring_truth/exact_docstrings"
+      },
+      {
+        "expected": "reject",
+        "id": "frozen_file_bindings_dispatch_omitted",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/modified_generic_dispatches"
+      },
+      {
+        "expected": "reject",
+        "id": "arbitrary_logic_added_inside_allowed_dispatch",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/restoration_contract"
+      },
+      {
+        "expected": "reject",
+        "id": "seventh_generic_dispatch_changed",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/modified_generic_dispatches"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_profile_006_function_replaced_with_noop",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/function_contracts/0/statements"
+      },
+      {
+        "expected": "semantic_ast_pass_and_docstring_truth_reject",
+        "id": "shared_added_function_docstring_changed_to_005",
+        "observed": "semantic_ast_pass_and_docstring_truth_reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/function_docstring_truth/exact_docstrings"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_expected_frozen_bindings_wrong_predecessor",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/generic_dispatch_insertions/1/inserted_ast/mutations/1/value_json_pointer"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_required_event_omitted",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_required_events_adjacent_swap",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/event_order"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_required_event_duplicated",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/event_multiset"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_fault_result_swallowed_then_success",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/fault_injection"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_transient_managed_path_scan_omitted",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events/12"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_recursive_p5_commit_changed",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/required_events/5/keyword_arguments/implementation_commit"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_unexpected_git_event_added",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/unexpected_git_events"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_unconditional_raise_after_clean_trace",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/fake_git_trace_contract/clean_trace_outcome"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_global_state_mutation_added",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/ast_closure/global_statements"
+      },
+      {
+        "expected": "reject",
+        "id": "shared_history_unmapped_call_added",
+        "observed": "reject",
+        "target": "/execution_delta/shared_authority_recipe/positive_semantic_contract/history_behavior/ast_closure/calls_not_mapped_to_an_exact_primitive_trace_or_pure_allowlist_entry"
+      },
+      {
+        "expected": "reject",
+        "id": "protocol_or_witness_digest_self_reference_added",
+        "observed": "reject",
+        "target": "/lifecycle/self_reference_exclusions"
+      },
+      {
+        "expected": "reject",
+        "id": "registration_parent_changed_to_early_production_commit",
+        "observed": "reject",
+        "target": "/lifecycle/registration_commit/parent"
+      }
+    ],
+    "positive_fixture": {
+      "checklist_count": 10,
+      "cross_profile_direction_count": 20,
+      "facade_contract_pointer": "/admission_contract/facade_semantic_contract",
+      "facade_docstring_scope_count": 9,
+      "negative_mutation_count": 26,
+      "negative_mutation_operator_count": 26,
+      "p5_incident_sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d",
+      "p5_shared_authority_baseline_sha256": "937ad120dd5828cb4029cc1382df2a0a7c06aef14c1d37bfdb848d93993416af",
+      "parent_route_count": 15,
+      "shared_authority_added_symbol_count": 17,
+      "shared_authority_constant_assignment_count": 10,
+      "shared_authority_function_docstring_scope_count": 7,
+      "shared_authority_history_event_count": 13,
+      "shared_authority_history_primitive_call_count": 70,
+      "shared_authority_modified_dispatch_count": 6,
+      "shared_authority_simple_function_count": 6,
+      "symbolic_commit_dag": [
+        "experiment_005_incident",
+        "experiment_006_protocol_freeze",
+        "experiment_006_admission",
+        "experiment_006_registration"
+      ],
+      "wrapper_route_count": 4
+    },
+    "result_digest": {
+      "field_included_in_hashed_projection": false,
+      "status": "intentionally_absent_to_avoid_self_reference"
+    },
+    "validation_summary": {
+      "base_commit": "594e2c491c057394f18860c8362a51190460645f",
+      "canonical_marker_accesses": 0,
+      "coordinator_invocations": 0,
+      "issuer_invocations": 0,
+      "mode": "in_memory_non_importing_contract_evaluation",
+      "phase_1": {
+        "assertion_count": 80,
+        "id": "canonical_committed_bindings_lifecycle",
+        "status": "pass"
+      },
+      "phase_2": {
+        "assertion_count": 268,
+        "id": "semantic_trace_and_negative_mutations",
+        "negative_mutation_count": 26,
+        "per_event_fault_case_count": 26,
+        "primitive_trace_call_count": 70,
+        "status": "pass"
+      },
+      "production_module_imports": 0,
+      "registered_runner_invocations": 0,
+      "status": "pass",
+      "total_assertion_count": 348
+    },
+    "witness_storage": "self_contained_in_this_config_so_the_protocol_freeze_remains_config_only"
+  },
+  "schema_version": 2,
+  "scientific_inheritance": {
+    "external_inputs": {
+      "archive_path": "/home/ubuntu/gitcode/.t/falsewake-data/speech_commands_v0.02.tar.gz",
+      "archive_sha256": "af14739ee7dc311471de98f5f9d2c9191b18aedfe957f4a6ff791c709868ff58",
+      "manifest_inventory_sha256": "c9596927b6de1aa9bb8174bea25f613ebb7bab9e671304c525961b66e0812c5c",
+      "manifest_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/manifest-v2-exact/speech-commands.jsonl",
+      "manifest_record_count": 105829,
+      "manifest_sha256": "d28e6993101bd6bc452033bcb7355b25e3b84ab5c51a1458cc097dc93c60f78b",
+      "pcm_cache_byte_count": 2995776948,
+      "pcm_cache_path": "/home/ubuntu/gitcode/.t/falsewake-artifacts/experiment-002-pcm-v1.cache",
+      "pcm_cache_sha256": "b56270a4b99d235c62c162545b139a79b7cf3dc157259a3bbf5678d8a451f653",
+      "train_command_inventory_sha256": "74c0e622b3b30df7600cd452f2d88ed62cabcbca040aba54a89f8fcf819c3546",
+      "validation_command_inventory_sha256": "c5373d67a0bb97bb54ff0bd576ec7b089aa398a273e25115286a677ddb4140ce"
+    },
+    "frozen_files": [
+      {
+        "path": "configs/experiment-002-training.json",
+        "sha256": "a4a21ff66ef04bf15950853acda0897f24ed01eecf566c795a7330e69593d44a"
+      },
+      {
+        "path": "configs/experiment-002-numerics.json",
+        "sha256": "d11fc50ba8f609551dbf88d7863a5b45cd138c6681da6c10ca4c0a9eaf8f2be9"
+      },
+      {
+        "path": "configs/experiment-002-trainer.json",
+        "sha256": "768720d031a1f2f6d0a36466fd9b4fa095a2f1b9a6fbbc382d4af5fc51514b48"
+      },
+      {
+        "byte_count": 320,
+        "path": "models/experiment-002-normalization.f32",
+        "sha256": "891900d4c36fa8a71ba429384f3f4ff594de7c81347ed846c0f790dc4579268e"
+      },
+      {
+        "path": "reports/experiment-002-normalization.json",
+        "sha256": "2b95565fec7dc956a4b1f667638b87e3df64cfaaca3026017942a8057c5187a8"
+      },
+      {
+        "path": "reports/experiment-002-pcm-cache.json",
+        "sha256": "a07b02a78bb6e0d2eef8548ec71a48e717f26c756548665f004b0ca1bf3e52ca"
+      },
+      {
+        "path": "reports/experiment-002-implementation-audit.json",
+        "sha256": "0b8033e7f407550d1c8576d31485e5bbcf825592de0d3b86f42ce98c1fca7116"
+      },
+      {
+        "path": "src/falsewake/causal_kws.py",
+        "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+      }
+    ],
+    "registered_training": {
+      "class_count": 12,
+      "epochs_per_seed": 30,
+      "parameter_tensor_count": 53,
+      "parameter_value_count": 23724,
+      "seeds": [
+        20260719,
+        20260720,
+        20260721
+      ],
+      "selected_seed_rerun_required": true,
+      "total_updates_per_seed": 9390,
+      "training_example_count_per_epoch": 40027,
+      "updates_per_epoch": 313,
+      "validation_example_count": 10583
+    },
+    "runtime": {
+      "numpy_version": "2.5.1",
+      "python_version": "3.12.3",
+      "safetensors_version": "0.8.0",
+      "torch_version": "2.13.0+cpu"
+    },
+    "source_policy": {
+      "baseline_commit": "21bbcc56e898beb44edc8e3ff775fa9642f87577",
+      "immutable_scientific_source_blobs": {
+        "document_path": "configs/experiment-003-execution.json",
+        "document_sha256": "3f48cb48f6c3a56284f272fa9e308ae62b3749df64cb7a581e770da8bdd8218a",
+        "json_pointer": "/scientific_inheritance/source_blobs"
+      },
+      "predecessor_execution_protocol_sha256": "824d1677cf8f75567cf1915381f0a9bbc778a74cba879ace80733c3ceb48e54d",
+      "predecessor_preflight_incident_sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d",
+      "scientific_protocol": "002",
+      "scientific_semantics_change": "forbidden",
+      "shared_authority_exception": "execution_delta.permitted_existing_source_changes"
+    }
+  },
+  "verification_gate": {
+    "all_experiment_004_managed_outputs_absent_required": true,
+    "all_experiment_005_managed_outputs_absent_required": true,
+    "cross_profile_rejection": [
+      "002_to_003",
+      "002_to_004",
+      "002_to_005",
+      "002_to_006",
+      "003_to_002",
+      "003_to_004",
+      "003_to_005",
+      "003_to_006",
+      "004_to_002",
+      "004_to_003",
+      "004_to_005",
+      "004_to_006",
+      "005_to_002",
+      "005_to_003",
+      "005_to_004",
+      "005_to_006",
+      "006_to_002",
+      "006_to_003",
+      "006_to_004",
+      "006_to_005"
+    ],
+    "docstring_truth_required": true,
+    "experiment_002_scientific_source_hashes_required": true,
+    "experiment_003_source_hashes_required": true,
+    "experiment_004_attempt_marker_absent_and_never_consumed_required": true,
+    "experiment_004_preflight_incident_hash_required": true,
+    "experiment_004_registration_absent_required": true,
+    "experiment_004_source_hashes_required": true,
+    "experiment_005_attempt_marker_absent_and_never_consumed_required": true,
+    "experiment_005_preflight_incident_hash_required": true,
+    "experiment_005_registration_absent_required": true,
+    "experiment_005_source_hashes_required": true,
+    "external_attempt_marker_absent_before_registration": true,
+    "facade_exact_docstring_manifest_required": true,
+    "facade_global_byte_parity_forbidden": true,
+    "facade_semantic_ast_v1_required": true,
+    "facade_sync_nongenerator_function_contract_required": true,
+    "full_host_bound_suite_required": true,
+    "full_portable_suite_required": true,
+    "git_clean_required": true,
+    "github_actions_actionlint_required": true,
+    "live_cross_module_route_matrix_required": true,
+    "mypy_required": true,
+    "no_experiment_006_managed_outputs_before_registration": true,
+    "no_hidden_parent_claim_before_registration": true,
+    "no_registered_authority_issuer_before_registration": true,
+    "no_registered_coordinator_before_registration": true,
+    "no_registered_runner_before_registration": true,
+    "predecessor_source_hashes_required": true,
+    "prefreeze_negative_mutation_operators_required": true,
+    "prefreeze_satisfiability_witness_required": true,
+    "protocol_self_consistency_required": true,
+    "ruff_format_required": true,
+    "ruff_required": true,
+    "shared_authority_exact_six_dispatch_restoration_required": true,
+    "shared_authority_fake_git_history_trace_required": true,
+    "shared_authority_function_docstring_truth_required": true,
+    "shared_authority_history_ast_and_call_closure_required": true,
+    "shared_authority_history_primitive_trace_mapping_required": true,
+    "shared_authority_no_transient_managed_paths_required": true,
+    "shared_authority_profile_006_positive_semantics_required": true
+  }
+}
