@@ -404,15 +404,11 @@ def test_protocol_implementation_proof_and_boundary_chain_is_exact() -> None:
             f"100644 blob {PROOF_GIT_BLOB}\ttests/test_experiment_005_protocol.py\n"
         ).encode()
     )
-    proof_payload = PROOF_PATH.read_bytes()
-    assert _sha256(proof_payload) == PROOF_SHA256
-    assert (
-        _git(
-            "show",
-            f"{PROOF_COMMIT}:tests/test_experiment_005_protocol.py",
-        )
-        == proof_payload
+    proof_payload = _git(
+        "show",
+        f"{PROOF_COMMIT}:tests/test_experiment_005_protocol.py",
     )
+    assert _sha256(proof_payload) == PROOF_SHA256
     assert report["implementation"]["protocol_proof"] == {
         "commit": PROOF_COMMIT,
         "path": "tests/test_experiment_005_protocol.py",

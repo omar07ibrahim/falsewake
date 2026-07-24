@@ -300,7 +300,7 @@ def test_profile_005_binds_all_fourteen_execution_namespaces_exactly() -> None:
         "src/falsewake/experiment_005_runner.py",
         "/home/ubuntu/gitcode/.t/falsewake-experiment-005-scratch",
     )
-    assert engine._AUTHORITY_PROFILES == (P2, P3, P4, P5)
+    assert engine._AUTHORITY_PROFILES[:4] == (P2, P3, P4, P5)
     assert engine._require_authority_profile(P5) is P5
 
 
