@@ -17,6 +17,8 @@ This repository is as much about experimental systems engineering as it is about
 audio ML. It demonstrates explicit streaming state, open-set evaluation,
 speaker-aware uncertainty, deterministic artifact generation, fail-closed data
 boundaries, and an immutable record of unsuccessful execution attempts.
+The [architecture and evidence-boundary tour](docs/architecture.md) maps each
+component to the claim it can—and cannot—support.
 
 ## What is actually established
 
@@ -39,6 +41,19 @@ The distinction matters: tested code and frozen plans are engineering evidence,
 not performance evidence.
 
 ## Quickstart: inspect the evidence without running an experiment
+
+The standard-library-only inspector reads a fixed set of ten tracked evidence
+records. It validates each file's byte count, SHA-256 digest, and strict schema,
+imports no `falsewake` project code, and does not recompute an experiment:
+
+```console
+python3 tools/inspect_evidence.py
+```
+
+[![Measured Experiment 000 metrics and Experiment 001 development frontiers from the evidence inspector](docs/images/terminal/evidence-metrics-frontiers.svg)](docs/images/terminal/evidence-inspection.txt#L1-L16)
+
+_[Exact terminal transcript, lines 1–16](docs/images/terminal/evidence-inspection.txt#L1-L16):
+the read-only inspector reports the measured baseline and development replay._
 
 Python 3.12.3 is recorded in [`.python-version`](.python-version). This path
 installs the hash-locked dependencies for the portable `[dev]` environment from
@@ -239,7 +254,7 @@ scientific plan while attempting to repair a separately identified execution or
 admission defect. The lineage is closed; it is not a queue of experiments that a
 visitor should rerun.
 
-![Immutable Experiment 002–006 execution lineage](docs/images/readme/experiment-lineage.svg)
+![Experiment 000–006 evidence lineage with measured, failed, and preflight-rejected boundaries](docs/images/readme/experiment-lineage.svg)
 
 | Experiment | Terminal boundary | What may be claimed |
 | --- | --- | --- |
@@ -248,6 +263,11 @@ visitor should rerun.
 | 004 | Frozen preflight contract proved internally unsatisfiable | No registration, invocation, marker, optimizer update, or validation example |
 | 005 | Frozen normalization recipe could not express the truthful profile-005 docstring | No registration, invocation, marker, optimizer update, or validation example |
 | 006 | One registered invocation failed its final authority verification | Terminal incident only; no automatic report, published artifact, scientific result, or reusable checkpoint |
+
+[![Experiment 002–006 dispositions and explicit non-claims from the evidence inspector](docs/images/terminal/evidence-lineage-nonclaims.svg)](docs/images/terminal/evidence-inspection.txt#L18-L38)
+
+_[Exact terminal transcript, lines 18–38](docs/images/terminal/evidence-inspection.txt#L18-L38):
+failure and preflight dispositions remain separate from measured results._
 
 > **Experiment 006 evidence boundary:** retained post-exit state does not establish
 > whether seed children or training processes started, how many optimizer updates
@@ -286,11 +306,25 @@ The repository is designed so that a negative or failed outcome remains auditabl
   alone. Their source digests, derived facts, and explicit non-claims are recorded
   in the [visual provenance manifest](docs/images/readme/provenance.json).
 
+All three terminal panels in this README are excerpts from one inspector stdout,
+not independently edited summaries. The
+[terminal evidence manifest](docs/images/terminal/manifest.json) makes the full
+transcript digest, each panel's exact line range and excerpt digest, every SVG
+artifact digest, and the ten input-record digests manifest-bound to that one
+capture.
+
+[![SHA-256 provenance for the ten tracked evidence records](docs/images/terminal/evidence-provenance.svg)](docs/images/terminal/evidence-inspection.txt#L40-L50)
+
+_[Exact terminal transcript, lines 40–50](docs/images/terminal/evidence-inspection.txt#L40-L50):
+repository-relative SHA-256 provenance for the complete inspected source set._
+
 For the repository-level static checks and portable test selection, see
 [the CI workflow](.github/workflows/ci.yml). The local evidence-visual integrity
-check is:
+checks are:
 
 ```console
+python tools/inspect_evidence.py --json > /dev/null
+python tools/capture_evidence_terminal.py check
 python tools/render_portfolio_visuals.py check
 ```
 
@@ -336,7 +370,11 @@ execution-recovery history:
 | [`src/falsewake/librispeech.py`](src/falsewake/librispeech.py) | LibriSpeech archive and decoded-PCM audit |
 | [`src/falsewake/holdout.py`](src/falsewake/holdout.py) | Fail-closed selection and holdout boundary |
 | [`src/falsewake/result_plots.py`](src/falsewake/result_plots.py) | Report-backed figure generation |
+| [`tools/inspect_evidence.py`](tools/inspect_evidence.py) | Closed, hash-pinned reader for ten tracked evidence records |
+| [`tools/capture_evidence_terminal.py`](tools/capture_evidence_terminal.py) | Manifest-bound recorder and verifier for genuine terminal evidence |
 | [`tools/render_portfolio_visuals.py`](tools/render_portfolio_visuals.py) | Deterministic, evidence-bound README visual renderer |
+| [`docs/images/terminal/`](docs/images/terminal/) | Exact inspector transcript, terminal panels, and capture manifest |
+| [`docs/architecture.md`](docs/architecture.md) | Component contracts, execution planes, and evidence boundaries |
 | [`configs/`](configs/) | Frozen scientific and execution contracts |
 | [`reports/`](reports/) | Metrics, selections, reproducibility records, and incidents |
 | [`tests/`](tests/) | Numeric, streaming, data-boundary, and execution-protocol tests |
