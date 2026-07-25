@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="396" viewBox="0 0 1720 396" role="img" aria-labelledby="provenance-title provenance-description">
+  <title id="provenance-title">Tracked evidence provenance</title>
+  <desc id="provenance-description">Exact lines 40-50 from evidence-inspection.txt.</desc>
+  <style>
+    text { font-family: 'DejaVu Sans Mono', monospace; }
+    .title { fill: #f8fafc; font-size: 21px; font-weight: 700; }
+    .meta { fill: #94a3b8; font-size: 14px; }
+    .terminal { fill: #e2e8f0; font-size: 16px; }
+    .line-number { fill: #64748b; }
+  </style>
+  <rect x="1" y="1" width="1718" height="394" rx="12" fill="#0b1020" stroke="#334155" stroke-width="2"/>
+  <circle cx="28" cy="25" r="6" fill="#fb7185"/>
+  <circle cx="48" cy="25" r="6" fill="#fbbf24"/>
+  <circle cx="68" cy="25" r="6" fill="#4ade80"/>
+  <text x="92" y="32" class="title">Tracked evidence provenance</text>
+  <text x="28" y="63" class="meta">$ python3 tools/inspect_evidence.py | stdout lines 40-50</text>
+  <text x="28" y="85" class="meta">source: evidence-inspection.txt | exact line-range excerpt</text>
+  <text x="28" y="112" class="terminal"><tspan class="line-number">40</tspan><tspan x="72">PROVENANCE (repository-relative; SHA-256)</tspan></text>
+  <text x="28" y="136" class="terminal"><tspan class="line-number">41</tspan><tspan x="72">  reports/experiment-000-linear.json  3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9</tspan></text>
+  <text x="28" y="160" class="terminal"><tspan class="line-number">42</tspan><tspan x="72">  reports/experiment-001-dev-replay.json  b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d</tspan></text>
+  <text x="28" y="184" class="terminal"><tspan class="line-number">43</tspan><tspan x="72">  reports/experiment-001-selection.json  1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318</tspan></text>
+  <text x="28" y="208" class="terminal"><tspan class="line-number">44</tspan><tspan x="72">  reports/experiment-002-training.json  494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a</tspan></text>
+  <text x="28" y="232" class="terminal"><tspan class="line-number">45</tspan><tspan x="72">  reports/experiment-002-execution-incident.json  353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59</tspan></text>
+  <text x="28" y="256" class="terminal"><tspan class="line-number">46</tspan><tspan x="72">  reports/experiment-003-execution-incident.json  0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688</tspan></text>
+  <text x="28" y="280" class="terminal"><tspan class="line-number">47</tspan><tspan x="72">  reports/experiment-004-preflight-incident.json  d015b749acf6e98e87172372315c78ccfaad48b8ae6b3a29ae426890aa467f50</tspan></text>
+  <text x="28" y="304" class="terminal"><tspan class="line-number">48</tspan><tspan x="72">  reports/experiment-005-preflight-incident.json  3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d</tspan></text>
+  <text x="28" y="328" class="terminal"><tspan class="line-number">49</tspan><tspan x="72">  reports/experiment-006-execution-incident.json  c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d</tspan></text>
+  <text x="28" y="352" class="terminal"><tspan class="line-number">50</tspan><tspan x="72">  docs/images/readme/provenance.json  03dcac17981d27c36fddf83a4d19a00dc026562a7f9aecb72b015947867049fb</tspan></text>
+</svg>

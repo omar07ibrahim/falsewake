@@ -1,0 +1,50 @@
+FalseWake tracked evidence inspection
+mode: read-only, hash-pinned, no experiment-code imports
+sources: 10 fixed JSON records
+
+000 | MEASURED CLIP BASELINE
+  validation: n=4,429; accuracy=56.88%; macro-F1=0.562; target argmax error=43.61%; unknown->target=80.72%; silence->target=0.00%
+  test: n=4,884; accuracy=56.41%; macro-F1=0.558; target argmax error=44.18%; unknown->target=81.23%; silence->target=0.00%
+  limits: thresholds/streaming not evaluated; validation diagnostic only
+
+001 | MEASURED DEVELOPMENT REPLAY | REJECT
+  corpus: 2,703 utterances; 40 speakers; 308,310,400 scored samples
+  retention pass maximum: threshold=0.395; retention=0.801724; events=10,147; reported FEH=1895.710297
+  retention fail next: threshold=0.396; retention=0.799330; events=10,113; reported FEH=1889.358257
+  negative fail previous: threshold=0.990; retention=0.001916; events=6; reported FEH=1.120948
+  negative pass minimum: threshold=0.991; retention=0.001437; events=4; reported FEH=0.747299
+  limits: no selected threshold; no holdout or production-rate claim
+
+002-006 | DISPOSITIONS AND NON-CLAIMS
+  002: execution_failure | seed_selection_failed
+    - No published scientific result was admitted.
+    - No artifact or reusable checkpoint was published.
+  003: execution_failure | parent_route_signature_mismatch
+    - No training process, optimizer update, or validation example was started.
+    - No scientific result, artifact, or reusable checkpoint was published.
+    - The consumed attempt is not retryable.
+  004: preflight_rejected | facade_normalization_recipe_cannot_express_profile_004
+    - No registration or registered invocation was created.
+    - The authority issuer, coordinator, runner, and attempt marker were not invoked.
+    - No optimizer update, validation example, or scientific result was produced.
+  005: preflight_rejected | facade_normalization_recipe_cannot_express_truthful_profile_005
+    - No registration or registered invocation was created.
+    - The authority issuer, coordinator, runner, and attempt marker were not invoked.
+    - No optimizer update, validation example, or scientific result was produced.
+  006: execution_failure | final_registration_capability_rejected_after_prior_state_change
+    - No scientific result, automatic terminal report, artifact, or reusable checkpoint exists.
+    - Hidden execution progress is not established from retained evidence.
+    - Observer interference is plausible but not proven as the root cause.
+    - The consumed terminal attempt is not retryable.
+
+PROVENANCE (repository-relative; SHA-256)
+  reports/experiment-000-linear.json  3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9
+  reports/experiment-001-dev-replay.json  b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d
+  reports/experiment-001-selection.json  1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318
+  reports/experiment-002-training.json  494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a
+  reports/experiment-002-execution-incident.json  353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59
+  reports/experiment-003-execution-incident.json  0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688
+  reports/experiment-004-preflight-incident.json  d015b749acf6e98e87172372315c78ccfaad48b8ae6b3a29ae426890aa467f50
+  reports/experiment-005-preflight-incident.json  3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d
+  reports/experiment-006-execution-incident.json  c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d
+  docs/images/readme/provenance.json  03dcac17981d27c36fddf83a4d19a00dc026562a7f9aecb72b015947867049fb

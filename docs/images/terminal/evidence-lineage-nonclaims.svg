@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="636" viewBox="0 0 1720 636" role="img" aria-labelledby="lineage_nonclaims-title lineage_nonclaims-description">
+  <title id="lineage_nonclaims-title">Experiments 002-006: dispositions and non-claims</title>
+  <desc id="lineage_nonclaims-description">Exact lines 18-38 from evidence-inspection.txt.</desc>
+  <style>
+    text { font-family: 'DejaVu Sans Mono', monospace; }
+    .title { fill: #f8fafc; font-size: 21px; font-weight: 700; }
+    .meta { fill: #94a3b8; font-size: 14px; }
+    .terminal { fill: #e2e8f0; font-size: 16px; }
+    .line-number { fill: #64748b; }
+  </style>
+  <rect x="1" y="1" width="1718" height="634" rx="12" fill="#0b1020" stroke="#334155" stroke-width="2"/>
+  <circle cx="28" cy="25" r="6" fill="#fb7185"/>
+  <circle cx="48" cy="25" r="6" fill="#fbbf24"/>
+  <circle cx="68" cy="25" r="6" fill="#4ade80"/>
+  <text x="92" y="32" class="title">Experiments 002-006: dispositions and non-claims</text>
+  <text x="28" y="63" class="meta">$ python3 tools/inspect_evidence.py | stdout lines 18-38</text>
+  <text x="28" y="85" class="meta">source: evidence-inspection.txt | exact line-range excerpt</text>
+  <text x="28" y="112" class="terminal"><tspan class="line-number">18</tspan><tspan x="72">002-006 | DISPOSITIONS AND NON-CLAIMS</tspan></text>
+  <text x="28" y="136" class="terminal"><tspan class="line-number">19</tspan><tspan x="72">  002: execution_failure | seed_selection_failed</tspan></text>
+  <text x="28" y="160" class="terminal"><tspan class="line-number">20</tspan><tspan x="72">    - No published scientific result was admitted.</tspan></text>
+  <text x="28" y="184" class="terminal"><tspan class="line-number">21</tspan><tspan x="72">    - No artifact or reusable checkpoint was published.</tspan></text>
+  <text x="28" y="208" class="terminal"><tspan class="line-number">22</tspan><tspan x="72">  003: execution_failure | parent_route_signature_mismatch</tspan></text>
+  <text x="28" y="232" class="terminal"><tspan class="line-number">23</tspan><tspan x="72">    - No training process, optimizer update, or validation example was started.</tspan></text>
+  <text x="28" y="256" class="terminal"><tspan class="line-number">24</tspan><tspan x="72">    - No scientific result, artifact, or reusable checkpoint was published.</tspan></text>
+  <text x="28" y="280" class="terminal"><tspan class="line-number">25</tspan><tspan x="72">    - The consumed attempt is not retryable.</tspan></text>
+  <text x="28" y="304" class="terminal"><tspan class="line-number">26</tspan><tspan x="72">  004: preflight_rejected | facade_normalization_recipe_cannot_express_profile_004</tspan></text>
+  <text x="28" y="328" class="terminal"><tspan class="line-number">27</tspan><tspan x="72">    - No registration or registered invocation was created.</tspan></text>
+  <text x="28" y="352" class="terminal"><tspan class="line-number">28</tspan><tspan x="72">    - The authority issuer, coordinator, runner, and attempt marker were not invoked.</tspan></text>
+  <text x="28" y="376" class="terminal"><tspan class="line-number">29</tspan><tspan x="72">    - No optimizer update, validation example, or scientific result was produced.</tspan></text>
+  <text x="28" y="400" class="terminal"><tspan class="line-number">30</tspan><tspan x="72">  005: preflight_rejected | facade_normalization_recipe_cannot_express_truthful_profile_005</tspan></text>
+  <text x="28" y="424" class="terminal"><tspan class="line-number">31</tspan><tspan x="72">    - No registration or registered invocation was created.</tspan></text>
+  <text x="28" y="448" class="terminal"><tspan class="line-number">32</tspan><tspan x="72">    - The authority issuer, coordinator, runner, and attempt marker were not invoked.</tspan></text>
+  <text x="28" y="472" class="terminal"><tspan class="line-number">33</tspan><tspan x="72">    - No optimizer update, validation example, or scientific result was produced.</tspan></text>
+  <text x="28" y="496" class="terminal"><tspan class="line-number">34</tspan><tspan x="72">  006: execution_failure | final_registration_capability_rejected_after_prior_state_change</tspan></text>
+  <text x="28" y="520" class="terminal"><tspan class="line-number">35</tspan><tspan x="72">    - No scientific result, automatic terminal report, artifact, or reusable checkpoint exists.</tspan></text>
+  <text x="28" y="544" class="terminal"><tspan class="line-number">36</tspan><tspan x="72">    - Hidden execution progress is not established from retained evidence.</tspan></text>
+  <text x="28" y="568" class="terminal"><tspan class="line-number">37</tspan><tspan x="72">    - Observer interference is plausible but not proven as the root cause.</tspan></text>
+  <text x="28" y="592" class="terminal"><tspan class="line-number">38</tspan><tspan x="72">    - The consumed terminal attempt is not retryable.</tspan></text>
+</svg>

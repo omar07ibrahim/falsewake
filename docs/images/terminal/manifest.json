@@ -1,0 +1,139 @@
+{
+  "artifact_set": "falsewake_terminal_evidence",
+  "capture": {
+    "base_commit": "b607565f84ba4b10d2ae4cddc20bb4e01986b78d",
+    "command_argv": [
+      "{current-python}",
+      "tools/inspect_evidence.py"
+    ],
+    "command_display": "python3 tools/inspect_evidence.py",
+    "environment": {
+      "HOME": "<isolated>",
+      "LANG": "C",
+      "LC_ALL": "C",
+      "PATH": "",
+      "PYTHONHASHSEED": "0",
+      "PYTHONNOUSERSITE": "1",
+      "TMPDIR": "<isolated>",
+      "TZ": "UTC"
+    },
+    "exit_code": 0,
+    "invocation_count": 1,
+    "prior_manifest_sha256": null,
+    "python_version": "3.12.3",
+    "shell": false,
+    "working_directory": "repository-root"
+  },
+  "inspector": {
+    "byte_count": 47470,
+    "path": "tools/inspect_evidence.py",
+    "sha256": "97ceb7052be028c2cfacc341b9c769416fc0da9fe1adf01ab0cc8f4c80d1e423"
+  },
+  "panels": [
+    {
+      "byte_count": 3979,
+      "excerpt_sha256": "5265d66e14eeeb64df50e67f6acb9d582ba9b9a6e827af3837b4c7820f4c07b7",
+      "line_end": 16,
+      "line_start": 1,
+      "panel_id": "metrics_frontiers",
+      "path": "docs/images/terminal/evidence-metrics-frontiers.svg",
+      "sha256": "c2f6fcd6b405a4976b34f840f7580a0b477a3a06d735af444c893f8a4a42c109",
+      "title": "Measured metrics and development frontier"
+    },
+    {
+      "byte_count": 4933,
+      "excerpt_sha256": "ec9df1bc096ff2a0b93de72a93a91879b886147d9aa1c76589cd71cce75c8cec",
+      "line_end": 38,
+      "line_start": 18,
+      "panel_id": "lineage_nonclaims",
+      "path": "docs/images/terminal/evidence-lineage-nonclaims.svg",
+      "sha256": "2a9afb5331630e6f74d9bc6e260764b6efdac2d5ad04c8518d49c73db2f08f2b",
+      "title": "Experiments 002-006: dispositions and non-claims"
+    },
+    {
+      "byte_count": 3468,
+      "excerpt_sha256": "31bfc47f3a8c297367080e86d255ed705fa99c6dfaa067c4f05554411a9eb086",
+      "line_end": 50,
+      "line_start": 40,
+      "panel_id": "provenance",
+      "path": "docs/images/terminal/evidence-provenance.svg",
+      "sha256": "5e519aab65bc50a6f2ebdd17d803192fdcf113cc2615214868af6ce836374950",
+      "title": "Tracked evidence provenance"
+    }
+  ],
+  "recorder": {
+    "byte_count": 37435,
+    "path": "tools/capture_evidence_terminal.py",
+    "sha256": "7c52bbdc70591a32621cfcf554df94be06528c83a0197f1d7eac51e1f2da5613"
+  },
+  "schema_version": 1,
+  "sources": [
+    {
+      "byte_count": 20042,
+      "path": "reports/experiment-000-linear.json",
+      "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9",
+      "source_id": "experiment_000_report"
+    },
+    {
+      "byte_count": 1456860,
+      "path": "reports/experiment-001-dev-replay.json",
+      "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d",
+      "source_id": "experiment_001_replay"
+    },
+    {
+      "byte_count": 828,
+      "path": "reports/experiment-001-selection.json",
+      "sha256": "1d44ae6ff06a5fab1567d0342299e293fe001b8c91f9972cfa8e79a2dabf2318",
+      "source_id": "experiment_001_selection"
+    },
+    {
+      "byte_count": 637,
+      "path": "reports/experiment-002-training.json",
+      "sha256": "494336d12e47f7bce952251e4c079770920f57032354e9618050250ee32bb99a",
+      "source_id": "experiment_002_terminal_report"
+    },
+    {
+      "byte_count": 2682,
+      "path": "reports/experiment-002-execution-incident.json",
+      "sha256": "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59",
+      "source_id": "experiment_002_incident"
+    },
+    {
+      "byte_count": 4539,
+      "path": "reports/experiment-003-execution-incident.json",
+      "sha256": "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688",
+      "source_id": "experiment_003_incident"
+    },
+    {
+      "byte_count": 6431,
+      "path": "reports/experiment-004-preflight-incident.json",
+      "sha256": "d015b749acf6e98e87172372315c78ccfaad48b8ae6b3a29ae426890aa467f50",
+      "source_id": "experiment_004_incident"
+    },
+    {
+      "byte_count": 6612,
+      "path": "reports/experiment-005-preflight-incident.json",
+      "sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d",
+      "source_id": "experiment_005_incident"
+    },
+    {
+      "byte_count": 8839,
+      "path": "reports/experiment-006-execution-incident.json",
+      "sha256": "c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d",
+      "source_id": "experiment_006_incident"
+    },
+    {
+      "byte_count": 21186,
+      "path": "docs/images/readme/provenance.json",
+      "sha256": "03dcac17981d27c36fddf83a4d19a00dc026562a7f9aecb72b015947867049fb",
+      "source_id": "visual_provenance"
+    }
+  ],
+  "transcript": {
+    "byte_count": 3675,
+    "line_count": 50,
+    "output_sha256": "7e6d6c8458b61a42dfd2a21979e4b71041bcbeb152e62a9ff27a5e0cae8a3b34",
+    "path": "docs/images/terminal/evidence-inspection.txt",
+    "sha256": "7e6d6c8458b61a42dfd2a21979e4b71041bcbeb152e62a9ff27a5e0cae8a3b34"
+  }
+}
