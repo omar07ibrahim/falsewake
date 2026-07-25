@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">FalseWake data boundaries</title>
+<desc id="desc">Separate train, diagnostic validation, held-out test, positive-validation, and negative-replay roles with exact cohort sizes.</desc>
+<style>text{font-family:Arial, Helvetica, sans-serif;fill:#172033}.mono{font-family:'DejaVu Sans Mono', 'Liberation Mono', monospace}.title{font-size:34px;font-weight:700}.subtitle{font-size:17px}.section{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}.metric{font-size:29px;font-weight:700}.label{font-size:14px;font-weight:700;letter-spacing:.5px}</style>
+<rect width="1600" height="900" fill="#FFFFFF"/>
+<text x="70" y="55" class="label" fill="#234C78" text-anchor="start">FALSEWAKE · EVIDENCE BOUNDARIES</text>
+<text x="70" y="103" class="title" fill="#172033" text-anchor="start">Data boundaries and decision roles</text>
+<text x="70" y="139" class="subtitle" fill="#596579" text-anchor="start">Cohorts are separated by purpose; counts below come from committed reports.</text>
+<line x1="70" y1="165" x2="1530" y2="165" stroke="#D9E0EA" stroke-width="1.5"/>
+<rect x="75" y="225" width="320" height="235" rx="14" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="101" y="265" class="label" fill="#234C78" text-anchor="start">TRAIN</text>
+<text x="101" y="316" class="metric" fill="#172033" text-anchor="start">36,941</text>
+<text x="101" y="351" class="small" fill="#596579" text-anchor="start">Speech Commands clips</text>
+<text x="101" y="411" class="body" fill="#172033" text-anchor="start" font-weight="700">Fits scaler + linear classifier</text>
+<rect x="430" y="225" width="320" height="235" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="456" y="265" class="label" fill="#234C78" text-anchor="start">VALIDATION</text>
+<text x="456" y="316" class="metric" fill="#172033" text-anchor="start">4,429</text>
+<text x="456" y="351" class="small" fill="#596579" text-anchor="start">Speech Commands clips</text>
+<text x="456" y="411" class="body" fill="#172033" text-anchor="start" font-weight="700">Diagnostic only; no selection</text>
+<rect x="785" y="225" width="320" height="235" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="811" y="265" class="label" fill="#234C78" text-anchor="start">TEST</text>
+<text x="811" y="316" class="metric" fill="#172033" text-anchor="start">4,884</text>
+<text x="811" y="351" class="small" fill="#596579" text-anchor="start">Speech Commands clips</text>
+<text x="811" y="411" class="body" fill="#172033" text-anchor="start" font-weight="700">Experiment 000 headline split</text>
+<rect x="1140" y="225" width="385" height="235" rx="14" fill="#FBE9D2" stroke="#8E4E08" stroke-width="1.5"/>
+<text x="1166" y="265" class="label" fill="#8E4E08" text-anchor="start">NEGATIVE REPLAY</text>
+<text x="1166" y="316" class="metric" fill="#172033" text-anchor="start">2,703</text>
+<text x="1166" y="351" class="small" fill="#596579" text-anchor="start">dev-clean utterances · 40 speakers</text>
+<text x="1166" y="411" class="body" fill="#172033" text-anchor="start" font-weight="700">5.353 scored hours</text>
+<rect x="250" y="535" width="1100" height="190" rx="14" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="290" y="580" class="section" fill="#172033" text-anchor="start">Experiment 001 gate construction</text>
+<rect x="290" y="615" width="430" height="70" rx="10" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="315" y="646" class="body" fill="#172033" text-anchor="start" font-weight="700">3,703 target validation clips</text>
+<text x="315" y="672" class="small" fill="#596579" text-anchor="start">2,088 baseline-correct denominator</text>
+<line x1="740" y1="650" x2="860" y2="650" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 851.34 655.00 L 860.00 650.00 L 851.34 645.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="880" y="615" width="430" height="70" rx="10" fill="#FBE9D2" stroke="#8E4E08" stroke-width="1.5"/>
+<text x="905" y="646" class="body" fill="#172033" text-anchor="start" font-weight="700">2,703 negative replay utterances</text>
+<text x="905" y="672" class="small" fill="#596579" text-anchor="start">Raw events / exact exposure → FEH</text>
+<text x="800" y="712" class="small" fill="#8E4E08" text-anchor="middle" font-weight="700">both gates required at one threshold</text>
+<line x1="70" y1="832" x2="1530" y2="832" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="70" y="857" class="tiny" fill="#596579" text-anchor="start">Sources: experiment-000-linear.json · experiment-001-dev-replay.json</text>
+<text x="1530" y="857" class="tiny" fill="#8E4E08" text-anchor="end" font-weight="700">No test-set threshold tuning</text>
+</svg>

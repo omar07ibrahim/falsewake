@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">FalseWake measured system path</title>
+<desc id="desc">The measured baseline path from audited audio through deterministic features, clip scoring, and continuous replay.</desc>
+<style>text{font-family:Arial, Helvetica, sans-serif;fill:#172033}.mono{font-family:'DejaVu Sans Mono', 'Liberation Mono', monospace}.title{font-size:34px;font-weight:700}.subtitle{font-size:17px}.section{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}.metric{font-size:29px;font-weight:700}.label{font-size:14px;font-weight:700;letter-spacing:.5px}</style>
+<rect width="1600" height="900" fill="#FFFFFF"/>
+<text x="70" y="55" class="label" fill="#234C78" text-anchor="start">FALSEWAKE · IMPLEMENTATION MAP</text>
+<text x="70" y="103" class="title" fill="#172033" text-anchor="start">Measured system path</text>
+<text x="70" y="139" class="subtitle" fill="#596579" text-anchor="start">One deterministic frontend supports the reviewed clip baseline and replay.</text>
+<line x1="70" y1="165" x2="1530" y2="165" stroke="#D9E0EA" stroke-width="1.5"/>
+<rect x="80" y="250" width="245" height="210" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="104" y="292" class="section" fill="#172033" text-anchor="start">Audited audio</text>
+<text x="104" y="332" class="body" fill="#596579" text-anchor="start"><tspan x="104" dy="0">Speech Commands v0.02</tspan><tspan x="104" dy="28">LibriSpeech dev-clean</tspan><tspan x="104" dy="28">SHA-bound inputs</tspan></text>
+<line x1="334" y1="355" x2="375" y2="355" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 366.34 360.00 L 375.00 355.00 L 366.34 350.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="385" y="250" width="245" height="210" rx="14" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="409" y="292" class="section" fill="#172033" text-anchor="start">Fixed frontend</text>
+<text x="409" y="332" class="body" fill="#596579" text-anchor="start"><tspan x="409" dy="0">16 kHz mono PCM</tspan><tspan x="409" dy="28">25 ms window</tspan><tspan x="409" dy="28">10 ms hop</tspan><tspan x="409" dy="28">40 log-mel bins</tspan></text>
+<line x1="639" y1="355" x2="680" y2="355" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 671.34 360.00 L 680.00 355.00 L 671.34 350.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="690" y="250" width="245" height="210" rx="14" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="714" y="292" class="section" fill="#172033" text-anchor="start">Clip baseline</text>
+<text x="714" y="332" class="body" fill="#596579" text-anchor="start"><tspan x="714" dy="0">98 × 40 frames</tspan><tspan x="714" dy="28">mean + std → 80 values</tspan><tspan x="714" dy="28">linear classifier</tspan></text>
+<line x1="944" y1="355" x2="985" y2="355" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 976.34 360.00 L 985.00 355.00 L 976.34 350.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="995" y="250" width="245" height="210" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="1019" y="292" class="section" fill="#172033" text-anchor="start">Continuous replay</text>
+<text x="1019" y="332" class="body" fill="#596579" text-anchor="start"><tspan x="1019" dy="0">1.0 s windows</tspan><tspan x="1019" dy="28">100 ms stride</tspan><tspan x="1019" dy="28">1.0 s refractory</tspan></text>
+<line x1="1249" y1="355" x2="1290" y2="355" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 1281.34 360.00 L 1290.00 355.00 L 1281.34 350.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="1300" y="250" width="220" height="210" rx="14" fill="#FBE9D2" stroke="#8E4E08" stroke-width="1.5"/>
+<text x="1324" y="292" class="section" fill="#172033" text-anchor="start">Gate decision</text>
+<text x="1324" y="332" class="body" fill="#596579" text-anchor="start"><tspan x="1324" dy="0">1,001 thresholds</tspan><tspan x="1324" dy="28">retention + FEH</tspan><tspan x="1324" dy="28">registered reject</tspan></text>
+<rect x="220" y="545" width="1160" height="185" rx="14" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="255" y="590" class="section" fill="#172033" text-anchor="start">Evidence preserved at each boundary</text>
+<text x="255" y="630" class="body" fill="#596579" text-anchor="start"><tspan x="255" dy="0">Dataset identities and deterministic sampling</tspan><tspan x="255" dy="32">Raw event counts and scored exposure</tspan></text>
+<text x="820" y="630" class="body" fill="#596579" text-anchor="start"><tspan x="820" dy="0">Raw correct counts and baseline denominator</tspan><tspan x="820" dy="32">Static SVG/PNG regenerated and byte-compared</tspan></text>
+<line x1="70" y1="832" x2="1530" y2="832" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="70" y="857" class="tiny" fill="#596579" text-anchor="start">Sources: features.py · continuous_replay.py · experiment-000/001 reports</text>
+<text x="1530" y="857" class="tiny" fill="#8E4E08" text-anchor="end" font-weight="700">Measured baseline path only</text>
+</svg>

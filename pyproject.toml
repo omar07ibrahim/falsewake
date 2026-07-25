@@ -61,7 +61,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "tools"]
 
 [[tool.mypy.overrides]]
 module = ["scipy", "scipy.*", "sklearn", "sklearn.*"]

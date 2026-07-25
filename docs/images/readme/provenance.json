@@ -1,0 +1,612 @@
+{
+  "existing_report_assets": {
+    "reports/experiment-000-class-recall.png": {
+      "sha256": "ad9deaaf8c2c0aac7cb2bdaa3ba7498f14dcf147ce5b992b4b6b26e26451f078",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    },
+    "reports/experiment-000-class-recall.svg": {
+      "sha256": "5627d3fc78cbfed6c9465f250ec33578945ce4f37ed1f115b9dec703ab078977",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    },
+    "reports/experiment-000-open-set.png": {
+      "sha256": "dbea2f6d3470f916adc42d548d06cc8bafdd95e95726c436f20fafb39642cf0d",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    },
+    "reports/experiment-000-open-set.svg": {
+      "sha256": "0365bc7dc0deb5a45dc4a562cd436936bebfe7e8418a7d7a3ddc1eab4dd88e07",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    },
+    "reports/experiment-001-gate-feasibility.png": {
+      "sha256": "4a75be534f43a56f000193d3d3e61585482a65f8f4dda028bcd140627f359252",
+      "source_records": [
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    },
+    "reports/experiment-001-gate-feasibility.svg": {
+      "sha256": "cc1a0d2e07525f92801a0dc310959e186849be777432d18218e53b0e0877b114",
+      "source_records": [
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ],
+      "verified_byte_current": true
+    }
+  },
+  "renderer": {
+    "command": "python tools/render_portfolio_visuals.py check",
+    "name": "FalseWake evidence-bound portfolio renderer",
+    "path": "tools/render_portfolio_visuals.py",
+    "sha256": "8f525b0a524d1fdf375f28976dc19bede892db7621a55d127218102657fe4340",
+    "version": "1.0.0"
+  },
+  "schema_version": 1,
+  "source_allowlist": [
+    ".github/workflows/ci.yml",
+    ".python-version",
+    "pyproject.toml",
+    "reports/experiment-000-linear.json",
+    "reports/experiment-001-dev-replay.json",
+    "reports/experiment-002-execution-incident.json",
+    "reports/experiment-003-execution-incident.json",
+    "reports/experiment-004-preflight-incident.json",
+    "reports/experiment-005-preflight-incident.json",
+    "reports/experiment-006-execution-incident.json",
+    "requirements-dev.lock",
+    "requirements-train-ci.lock",
+    "src/falsewake/causal_kws.py",
+    "src/falsewake/continuous_replay.py",
+    "src/falsewake/features.py",
+    "src/falsewake/result_plots.py",
+    "tests/test_causal_kws.py",
+    "tools/render_portfolio_visuals.py"
+  ],
+  "visuals": {
+    "causal-tcn-state.svg": {
+      "facts": {
+        "channels": 48,
+        "dilations": [
+          1,
+          2,
+          4,
+          8,
+          1,
+          2,
+          4,
+          8
+        ],
+        "kernel_size": 3,
+        "mel_bins": 40,
+        "model_receptive_frames": 98,
+        "output_classes": 12,
+        "parameter_count": 23724,
+        "pool_frames": 38,
+        "state_values": 4656,
+        "tcn_receptive_frames": 61
+      },
+      "nonclaims": [
+        "Implemented and architecture-tested only.",
+        "No successful registered neural benchmark.",
+        "No selected checkpoint."
+      ],
+      "output_sha256": "1ef80c485c6a5e841dfa0a5f5827968e89943575ee348ede949b4dbe8db7ac45",
+      "path": "docs/images/readme/causal-tcn-state.svg",
+      "source_records": [
+        {
+          "path": "src/falsewake/causal_kws.py",
+          "sha256": "fa5d86aa218eaad7503b6e66ed9faa18e34e917696ccb98dc5ee4f1b2267c4a6"
+        },
+        {
+          "path": "tests/test_causal_kws.py",
+          "sha256": "2827e3cab622e7d5f3c8b727898f998598bb45476d6fb319b5a05ccecdc7c0e5"
+        }
+      ]
+    },
+    "data-boundaries.svg": {
+      "facts": {
+        "baseline_correct": 2088,
+        "dev_exposure_samples": 308310400,
+        "dev_speakers": 40,
+        "dev_utterances": 2703,
+        "headline_split": "test",
+        "positive_validation_examples": 3703,
+        "test_examples": 4884,
+        "training_examples": 36941,
+        "validation_examples": 4429,
+        "validation_role": "diagnostic_only_no_selection"
+      },
+      "nonclaims": [
+        "No test-set threshold tuning."
+      ],
+      "output_sha256": "4500ebd3331f1bcae4153a176a8c75fbdf08cbd2fb86e2cab87b875ad32432ee",
+      "path": "docs/images/readme/data-boundaries.svg",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        }
+      ]
+    },
+    "experiment-lineage.svg": {
+      "facts": {
+        "rows": [
+          {
+            "boundary": "MEASURED",
+            "detail": "Argmax clip metrics; thresholds and streaming were not evaluated.",
+            "experiment": "000",
+            "outcome": "Clip baseline complete"
+          },
+          {
+            "boundary": "MEASURED \u00b7 REJECTED",
+            "detail": "No threshold satisfied retention and false-event gates together.",
+            "experiment": "001",
+            "outcome": "Replay grid reject"
+          },
+          {
+            "boundary": "INVOKED",
+            "detail": "Registered execution failed; no scientific result admitted.",
+            "experiment": "002",
+            "outcome": "seed_selection_failed"
+          },
+          {
+            "boundary": "INVOKED",
+            "detail": "Admission failed before training processes started.",
+            "experiment": "003",
+            "outcome": "parent_route_signature_mismatch"
+          },
+          {
+            "boundary": "PREFLIGHT REJECTED",
+            "detail": "Registered authority/coordinator/runner were not invoked.",
+            "experiment": "004",
+            "outcome": "preflight_rejected"
+          },
+          {
+            "boundary": "PREFLIGHT REJECTED",
+            "detail": "Registered authority/coordinator/runner were not invoked.",
+            "experiment": "005",
+            "outcome": "preflight_rejected"
+          },
+          {
+            "boundary": "INVOKED \u00b7 TERMINAL",
+            "detail": "Root cause is undetermined from retained evidence; no retry.",
+            "experiment": "006",
+            "outcome": "final_registration_capability_rejected_after_prior_state_change"
+          }
+        ]
+      },
+      "nonclaims": [
+        "The renderer does not execute Experiments 002-006.",
+        "Experiment 006 root cause is undetermined from retained evidence.",
+        "Incidents are not successful scientific benchmarks."
+      ],
+      "output_sha256": "f9db494116b70cdeb4544b39dfad1b836b605b7622814896f7fc515ad1685098",
+      "path": "docs/images/readme/experiment-lineage.svg",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        },
+        {
+          "path": "reports/experiment-002-execution-incident.json",
+          "sha256": "353e33acc156e6e3a598d3dd777afbe5b15125b1b24f7f48266859f09f297b59"
+        },
+        {
+          "path": "reports/experiment-003-execution-incident.json",
+          "sha256": "0dc24fd211129cd2b81e29fb91ac9e66a0aad25f1deeae332f3b6ea420567688"
+        },
+        {
+          "path": "reports/experiment-004-preflight-incident.json",
+          "sha256": "d015b749acf6e98e87172372315c78ccfaad48b8ae6b3a29ae426890aa467f50"
+        },
+        {
+          "path": "reports/experiment-005-preflight-incident.json",
+          "sha256": "3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d"
+        },
+        {
+          "path": "reports/experiment-006-execution-incident.json",
+          "sha256": "c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d"
+        }
+      ]
+    },
+    "setup-verification.svg": {
+      "facts": {
+        "ci_checks": [
+          "python -m ruff check --no-cache --output-format=github .",
+          "python tools/render_portfolio_visuals.py check",
+          "tests/test_result_plots.py",
+          "tests/test_portfolio_visuals.py",
+          "python -m mypy --no-incremental --show-error-codes"
+        ],
+        "python_version": "3.12.3",
+        "report_assets_byte_compared": 6,
+        "visual_assets_checked": 7
+      },
+      "nonclaims": [
+        "No Experiment 002-006 imports or execution.",
+        "No runner, coordinator, supervisor, seed worker, or authority issuer.",
+        "No attempt-marker access."
+      ],
+      "output_sha256": "eea7a482a16baf23907f90ee05d97a54f474970b55bb79cd7ec744ed03bc34d4",
+      "path": "docs/images/readme/setup-verification.svg",
+      "source_records": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256": "9620b05d437a0a51f55bdd31bab9c18358ecf14c0d64dc0918ba9ca6a467799a"
+        },
+        {
+          "path": ".python-version",
+          "sha256": "fa682ae9d943f5c8076e68335c9ba3ab4d063ad035c07ac6928653dd4ac50af7"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "617329c7e112bec2188ffdfe50d7086a9e53db1292aa07b3a8427b5071da131f"
+        },
+        {
+          "path": "requirements-dev.lock",
+          "sha256": "603630fd4eeb406728084b40c2d5db3adfeac55aad8e435ac344bba468ed9424"
+        },
+        {
+          "path": "requirements-train-ci.lock",
+          "sha256": "4c673d4beb5fb60323ac1e5365a6c0616b6282feaba4bd02214001f9ef4a57b3"
+        },
+        {
+          "path": "src/falsewake/result_plots.py",
+          "sha256": "f08bcc6226aba8114129bf67a2b9dd8b42c49b299eeed527d6770dc7bab6a5e0"
+        }
+      ]
+    },
+    "system-path.svg": {
+      "facts": {
+        "clip_samples": 16000,
+        "frame_count": 98,
+        "frontend_hop_samples": 160,
+        "mel_bins": 40,
+        "replay_hop_samples": 1600,
+        "sample_rate": 16000,
+        "summary_values": 80,
+        "threshold_count": 1001,
+        "window_samples": 400
+      },
+      "nonclaims": [
+        "Measured baseline path only."
+      ],
+      "output_sha256": "1b09b64aa7aa6cb24140479f15eeaf885a7f351bfe1081e4118c6bf708bd1189",
+      "path": "docs/images/readme/system-path.svg",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        },
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        },
+        {
+          "path": "src/falsewake/continuous_replay.py",
+          "sha256": "cca70d0143dd6ef91efae97bbe505b08c6153672b4ad43280966f9ab9de00e1a"
+        },
+        {
+          "path": "src/falsewake/features.py",
+          "sha256": "3e7baf53c8dc772a68cd256ce6f4ca6428117c36f051c916f247dc409e515e3c"
+        }
+      ]
+    },
+    "threshold-tradeoff.svg": {
+      "facts": {
+        "baseline_correct": 2088,
+        "false_events_per_hour_formula": "dev_event_count * 57600000 / scored_exposure_samples",
+        "key_thresholds": {
+          "0.000": {
+            "correct_count": 2088,
+            "event_count": 14425,
+            "false_events_per_hour_recomputed": 2694.9463916883765,
+            "retention_recomputed": 1.0
+          },
+          "0.395": {
+            "correct_count": 1674,
+            "event_count": 10147,
+            "false_events_per_hour_recomputed": 1895.7102971550748,
+            "retention_recomputed": 0.8017241379310345
+          },
+          "0.396": {
+            "correct_count": 1669,
+            "event_count": 10113,
+            "false_events_per_hour_recomputed": 1889.358257133071,
+            "retention_recomputed": 0.7993295019157088
+          },
+          "0.990": {
+            "correct_count": 4,
+            "event_count": 6,
+            "false_events_per_hour_recomputed": 1.120948239177141,
+            "retention_recomputed": 0.0019157088122605363
+          },
+          "0.991": {
+            "correct_count": 3,
+            "event_count": 4,
+            "false_events_per_hour_recomputed": 0.747298826118094,
+            "retention_recomputed": 0.0014367816091954023
+          },
+          "1.000": {
+            "correct_count": 0,
+            "event_count": 0,
+            "false_events_per_hour_recomputed": 0.0,
+            "retention_recomputed": 0.0
+          }
+        },
+        "negative_frontier_milli": 991,
+        "point_count": 1001,
+        "retention_formula": "validation_correct_accept_count / baseline_correct_count",
+        "retention_frontier_milli": 395,
+        "scored_exposure_samples": 308310400,
+        "selection_status": "reject"
+      },
+      "nonclaims": [
+        "Derived false-events/hour and retention fields are not trusted.",
+        "No registered threshold satisfies both gates."
+      ],
+      "output_sha256": "74df4fd403ee8a5544ee599e257e141b5445857794e11c423575fa628f9c4db9",
+      "path": "docs/images/readme/threshold-tradeoff.svg",
+      "source_records": [
+        {
+          "path": "reports/experiment-001-dev-replay.json",
+          "sha256": "b8e30e26498af2600ece01f4cceb436e10a546b8390f039ca8a23cda45f00f2d"
+        }
+      ]
+    },
+    "unknown-word-recall.svg": {
+      "facts": {
+        "correct_total": 76,
+        "row_count": 25,
+        "rows": [
+          {
+            "predicted_unknown_count": 18,
+            "recall_recomputed": 0.72,
+            "source_word": "two",
+            "support": 25
+          },
+          {
+            "predicted_unknown_count": 5,
+            "recall_recomputed": 0.7142857142857143,
+            "source_word": "visual",
+            "support": 7
+          },
+          {
+            "predicted_unknown_count": 9,
+            "recall_recomputed": 0.5,
+            "source_word": "zero",
+            "support": 18
+          },
+          {
+            "predicted_unknown_count": 11,
+            "recall_recomputed": 0.4074074074074074,
+            "source_word": "three",
+            "support": 27
+          },
+          {
+            "predicted_unknown_count": 6,
+            "recall_recomputed": 0.375,
+            "source_word": "tree",
+            "support": 16
+          },
+          {
+            "predicted_unknown_count": 7,
+            "recall_recomputed": 0.30434782608695654,
+            "source_word": "eight",
+            "support": 23
+          },
+          {
+            "predicted_unknown_count": 5,
+            "recall_recomputed": 0.2777777777777778,
+            "source_word": "sheila",
+            "support": 18
+          },
+          {
+            "predicted_unknown_count": 2,
+            "recall_recomputed": 0.13333333333333333,
+            "source_word": "learn",
+            "support": 15
+          },
+          {
+            "predicted_unknown_count": 2,
+            "recall_recomputed": 0.1111111111111111,
+            "source_word": "five",
+            "support": 18
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.1111111111111111,
+            "source_word": "happy",
+            "support": 9
+          },
+          {
+            "predicted_unknown_count": 2,
+            "recall_recomputed": 0.1,
+            "source_word": "bed",
+            "support": 20
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.09090909090909091,
+            "source_word": "bird",
+            "support": 11
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.09090909090909091,
+            "source_word": "house",
+            "support": 11
+          },
+          {
+            "predicted_unknown_count": 2,
+            "recall_recomputed": 0.07692307692307693,
+            "source_word": "four",
+            "support": 26
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.07142857142857142,
+            "source_word": "forward",
+            "support": 14
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.0625,
+            "source_word": "seven",
+            "support": 16
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.058823529411764705,
+            "source_word": "nine",
+            "support": 17
+          },
+          {
+            "predicted_unknown_count": 1,
+            "recall_recomputed": 0.047619047619047616,
+            "source_word": "one",
+            "support": 21
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "backward",
+            "support": 10
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "cat",
+            "support": 7
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "dog",
+            "support": 10
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "follow",
+            "support": 7
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "marvin",
+            "support": 12
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "six",
+            "support": 27
+          },
+          {
+            "predicted_unknown_count": 0,
+            "recall_recomputed": 0.0,
+            "source_word": "wow",
+            "support": 20
+          }
+        ],
+        "support_total": 405
+      },
+      "nonclaims": [
+        "Deterministically sampled test slice, not a population-level estimate.",
+        "Argmax clips; no continuous-stream threshold."
+      ],
+      "output_sha256": "8cee2e3464d53b213b0207f5695b262894068830d70fda6b75fc60d52fb1e5ea",
+      "path": "docs/images/readme/unknown-word-recall.svg",
+      "source_records": [
+        {
+          "path": "reports/experiment-000-linear.json",
+          "sha256": "3ad2e6d630bc62810bb7a88418dd018cd0d7acd65b4173caa912af1fe33fcaf9"
+        }
+      ]
+    }
+  }
+}

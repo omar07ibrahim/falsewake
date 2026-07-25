@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">Causal TCN architecture and streaming state</title>
+<desc id="desc">The implemented and architecture-tested causal neural network, its residual dilation stack, receptive field, explicit state, and nonclaims.</desc>
+<style>text{font-family:Arial, Helvetica, sans-serif;fill:#172033}.mono{font-family:'DejaVu Sans Mono', 'Liberation Mono', monospace}.title{font-size:34px;font-weight:700}.subtitle{font-size:17px}.section{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}.metric{font-size:29px;font-weight:700}.label{font-size:14px;font-weight:700;letter-spacing:.5px}</style>
+<rect width="1600" height="900" fill="#FFFFFF"/>
+<text x="70" y="55" class="label" fill="#234C78" text-anchor="start">FALSEWAKE · NEURAL IMPLEMENTATION</text>
+<text x="70" y="103" class="title" fill="#172033" text-anchor="start">Causal TCN architecture and streaming state</text>
+<text x="70" y="139" class="subtitle" fill="#596579" text-anchor="start">Implemented and architecture-tested; explicit history makes chunking stateful.</text>
+<line x1="70" y1="165" x2="1530" y2="165" stroke="#D9E0EA" stroke-width="1.5"/>
+<rect x="80" y="255" width="220" height="180" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="102" y="297" class="section" fill="#172033" text-anchor="start">Input</text>
+<text x="102" y="337" class="body" fill="#596579" text-anchor="start"><tspan x="102" dy="0">40 log-mel bins</tspan><tspan x="102" dy="29">float32 frames</tspan></text>
+<line x1="308" y1="345" x2="346" y2="345" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 337.34 350.00 L 346.00 345.00 L 337.34 340.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="355" y="255" width="220" height="180" rx="14" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="377" y="297" class="section" fill="#172033" text-anchor="start">1×1 stem</text>
+<text x="377" y="337" class="body" fill="#596579" text-anchor="start"><tspan x="377" dy="0">48 channels</tspan><tspan x="377" dy="29">LayerNorm + ReLU</tspan></text>
+<line x1="583" y1="345" x2="621" y2="345" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 612.34 350.00 L 621.00 345.00 L 612.34 340.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="630" y="225" width="420" height="240" rx="14" fill="#DCEAF7" stroke="#234C78" stroke-width="1.5"/>
+<text x="652" y="267" class="section" fill="#172033" text-anchor="start">8 residual causal DS blocks</text>
+<text x="652" y="307" class="body" fill="#596579" text-anchor="start"><tspan x="652" dy="0">kernel 3</tspan><tspan x="652" dy="29">dilations (1, 2, 4, 8) × 2</tspan><tspan x="652" dy="29">depthwise → pointwise</tspan></text>
+<line x1="1058" y1="345" x2="1096" y2="345" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 1087.34 350.00 L 1096.00 345.00 L 1087.34 340.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="1105" y="255" width="220" height="180" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="1127" y="297" class="section" fill="#172033" text-anchor="start">Causal pool</text>
+<text x="1127" y="337" class="body" fill="#596579" text-anchor="start"><tspan x="1127" dy="0">38 frames</tspan><tspan x="1127" dy="29">37 history frames</tspan></text>
+<line x1="1333" y1="345" x2="1371" y2="345" stroke="#234C78" stroke-width="2.5"/>
+<path d="M 1362.34 350.00 L 1371.00 345.00 L 1362.34 340.00" fill="none" stroke="#234C78" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="1380" y="255" width="140" height="180" rx="14" fill="#F7F9FC" stroke="#234C78" stroke-width="1.5"/>
+<text x="1402" y="297" class="section" fill="#172033" text-anchor="start">Head</text>
+<text x="1402" y="337" class="body" fill="#596579" text-anchor="start"><tspan x="1402" dy="0">12 logits</tspan><tspan x="1402" dy="29">per frame</tspan></text>
+<rect x="120" y="535" width="420" height="150" rx="14" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="150" y="577" class="section" fill="#172033" text-anchor="start">Receptive field</text>
+<text x="150" y="625" class="metric" fill="#234C78" text-anchor="start">61 TCN frames</text>
+<text x="150" y="657" class="small" fill="#596579" text-anchor="start">98 frames including pooling</text>
+<rect x="590" y="535" width="420" height="150" rx="14" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="620" y="577" class="section" fill="#172033" text-anchor="start">Explicit streaming state</text>
+<text x="620" y="625" class="metric" fill="#234C78" text-anchor="start">4,656 float values</text>
+<text x="620" y="657" class="small" fill="#596579" text-anchor="start">8 depthwise histories + pool history</text>
+<rect x="1060" y="535" width="420" height="150" rx="14" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="1090" y="577" class="section" fill="#172033" text-anchor="start">Trainable parameters</text>
+<text x="1090" y="625" class="metric" fill="#234C78" text-anchor="start">23,724</text>
+<text x="1090" y="657" class="small" fill="#596579" text-anchor="start">source constant + architecture test</text>
+<rect x="230" y="730" width="1140" height="70" rx="10" fill="#FBE9D2" stroke="#8E4E08" stroke-width="1.5"/>
+<text x="800" y="760" class="body" fill="#8E4E08" text-anchor="middle" font-weight="700">Boundary: no successful registered neural benchmark and no selected checkpoint</text>
+<text x="800" y="787" class="small" fill="#8E4E08" text-anchor="middle">The diagram documents implemented architecture—not measured model quality.</text>
+<line x1="70" y1="832" x2="1530" y2="832" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="70" y="857" class="tiny" fill="#596579" text-anchor="start">Sources: causal_kws.py · test_causal_kws.py</text>
+<text x="1530" y="857" class="tiny" fill="#8E4E08" text-anchor="end" font-weight="700">Architecture evidence ≠ benchmark evidence</text>
+</svg>

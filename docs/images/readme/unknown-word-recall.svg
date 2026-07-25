@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1280" viewBox="0 0 1600 1280" role="img" aria-labelledby="title desc">
+<title id="title">Test unknown-word recall by sampled source word</title>
+<desc id="desc">Horizontal bars for all 25 exact Experiment 000 test unknown-word rows, with predicted-unknown counts and support.</desc>
+<style>text{font-family:Arial, Helvetica, sans-serif;fill:#172033}.mono{font-family:'DejaVu Sans Mono', 'Liberation Mono', monospace}.title{font-size:34px;font-weight:700}.subtitle{font-size:17px}.section{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}.metric{font-size:29px;font-weight:700}.label{font-size:14px;font-weight:700;letter-spacing:.5px}</style>
+<rect width="1600" height="1280" fill="#FFFFFF"/>
+<text x="70" y="55" class="label" fill="#234C78" text-anchor="start">FALSEWAKE · OPEN-SET DIAGNOSTIC</text>
+<text x="70" y="103" class="title" fill="#172033" text-anchor="start">Test unknown-word recall by sampled source word</text>
+<text x="70" y="139" class="subtitle" fill="#596579" text-anchor="start">Experiment 000 test slice · n=405 across 25 source words · exact counts shown</text>
+<line x1="70" y1="165" x2="1530" y2="165" stroke="#D9E0EA" stroke-width="1.5"/>
+<line x1="245" y1="205" x2="245" y2="1065" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="245" y="193" class="tiny" fill="#596579" text-anchor="middle">0%</text>
+<line x1="542.5" y1="205" x2="542.5" y2="1065" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="542.5" y="193" class="tiny" fill="#596579" text-anchor="middle">25%</text>
+<line x1="840" y1="205" x2="840" y2="1065" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="840" y="193" class="tiny" fill="#596579" text-anchor="middle">50%</text>
+<line x1="1137.5" y1="205" x2="1137.5" y2="1065" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="1137.5" y="193" class="tiny" fill="#596579" text-anchor="middle">75%</text>
+<line x1="1435" y1="205" x2="1435" y2="1065" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="1435" y="193" class="tiny" fill="#596579" text-anchor="middle">100%</text>
+<text x="227" y="235" class="small" fill="#172033" text-anchor="end" font-weight="700">two</text>
+<rect x="245" y="218" width="856.8" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="1113.8" y="235" class="tiny" fill="#172033" text-anchor="start" font-weight="700">18/25 · 72.0%</text>
+<text x="227" y="269" class="small" fill="#172033" text-anchor="end" font-weight="700">visual</text>
+<rect x="245" y="252" width="850" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="1107" y="269" class="tiny" fill="#172033" text-anchor="start" font-weight="700">5/7 · 71.4%</text>
+<text x="227" y="303" class="small" fill="#172033" text-anchor="end" font-weight="700">zero</text>
+<rect x="245" y="286" width="595" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="852" y="303" class="tiny" fill="#172033" text-anchor="start" font-weight="700">9/18 · 50.0%</text>
+<text x="227" y="337" class="small" fill="#172033" text-anchor="end" font-weight="700">three</text>
+<rect x="245" y="320" width="484.815" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="741.815" y="337" class="tiny" fill="#172033" text-anchor="start" font-weight="700">11/27 · 40.7%</text>
+<text x="227" y="371" class="small" fill="#172033" text-anchor="end" font-weight="700">tree</text>
+<rect x="245" y="354" width="446.25" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="703.25" y="371" class="tiny" fill="#172033" text-anchor="start" font-weight="700">6/16 · 37.5%</text>
+<text x="227" y="405" class="small" fill="#172033" text-anchor="end" font-weight="700">eight</text>
+<rect x="245" y="388" width="362.174" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="619.174" y="405" class="tiny" fill="#172033" text-anchor="start" font-weight="700">7/23 · 30.4%</text>
+<text x="227" y="439" class="small" fill="#172033" text-anchor="end" font-weight="700">sheila</text>
+<rect x="245" y="422" width="330.556" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="587.556" y="439" class="tiny" fill="#172033" text-anchor="start" font-weight="700">5/18 · 27.8%</text>
+<text x="227" y="473" class="small" fill="#172033" text-anchor="end" font-weight="700">learn</text>
+<rect x="245" y="456" width="158.667" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="415.667" y="473" class="tiny" fill="#172033" text-anchor="start" font-weight="700">2/15 · 13.3%</text>
+<text x="227" y="507" class="small" fill="#172033" text-anchor="end" font-weight="700">five</text>
+<rect x="245" y="490" width="132.222" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="389.222" y="507" class="tiny" fill="#172033" text-anchor="start" font-weight="700">2/18 · 11.1%</text>
+<text x="227" y="541" class="small" fill="#172033" text-anchor="end" font-weight="700">happy</text>
+<rect x="245" y="524" width="132.222" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="389.222" y="541" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/9 · 11.1%</text>
+<text x="227" y="575" class="small" fill="#172033" text-anchor="end" font-weight="700">bed</text>
+<rect x="245" y="558" width="119" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="376" y="575" class="tiny" fill="#172033" text-anchor="start" font-weight="700">2/20 · 10.0%</text>
+<text x="227" y="609" class="small" fill="#172033" text-anchor="end" font-weight="700">bird</text>
+<rect x="245" y="592" width="108.182" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="365.182" y="609" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/11 · 9.1%</text>
+<text x="227" y="643" class="small" fill="#172033" text-anchor="end" font-weight="700">house</text>
+<rect x="245" y="626" width="108.182" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="365.182" y="643" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/11 · 9.1%</text>
+<text x="227" y="677" class="small" fill="#172033" text-anchor="end" font-weight="700">four</text>
+<rect x="245" y="660" width="91.5385" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="348.538" y="677" class="tiny" fill="#172033" text-anchor="start" font-weight="700">2/26 · 7.7%</text>
+<text x="227" y="711" class="small" fill="#172033" text-anchor="end" font-weight="700">forward</text>
+<rect x="245" y="694" width="85" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="342" y="711" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/14 · 7.1%</text>
+<text x="227" y="745" class="small" fill="#172033" text-anchor="end" font-weight="700">seven</text>
+<rect x="245" y="728" width="74.375" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="331.375" y="745" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/16 · 6.2%</text>
+<text x="227" y="779" class="small" fill="#172033" text-anchor="end" font-weight="700">nine</text>
+<rect x="245" y="762" width="70" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="327" y="779" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/17 · 5.9%</text>
+<text x="227" y="813" class="small" fill="#172033" text-anchor="end" font-weight="700">one</text>
+<rect x="245" y="796" width="56.6667" height="22" rx="3" fill="#356FAE" stroke="#234C78" stroke-width="1"/>
+<text x="313.667" y="813" class="tiny" fill="#172033" text-anchor="start" font-weight="700">1/21 · 4.8%</text>
+<text x="227" y="847" class="small" fill="#172033" text-anchor="end" font-weight="700">backward</text>
+<rect x="245" y="830" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="847" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/10 · 0.0%</text>
+<text x="227" y="881" class="small" fill="#172033" text-anchor="end" font-weight="700">cat</text>
+<rect x="245" y="864" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="881" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/7 · 0.0%</text>
+<text x="227" y="915" class="small" fill="#172033" text-anchor="end" font-weight="700">dog</text>
+<rect x="245" y="898" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="915" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/10 · 0.0%</text>
+<text x="227" y="949" class="small" fill="#172033" text-anchor="end" font-weight="700">follow</text>
+<rect x="245" y="932" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="949" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/7 · 0.0%</text>
+<text x="227" y="983" class="small" fill="#172033" text-anchor="end" font-weight="700">marvin</text>
+<rect x="245" y="966" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="983" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/12 · 0.0%</text>
+<text x="227" y="1017" class="small" fill="#172033" text-anchor="end" font-weight="700">six</text>
+<rect x="245" y="1000" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="1017" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/27 · 0.0%</text>
+<text x="227" y="1051" class="small" fill="#172033" text-anchor="end" font-weight="700">wow</text>
+<rect x="245" y="1034" width="1" height="22" rx="3" fill="#FFFFFF" stroke="#234C78" stroke-width="1"/>
+<text x="257" y="1051" class="tiny" fill="#172033" text-anchor="start" font-weight="700">0/20 · 0.0%</text>
+<rect x="245" y="1082" width="1190" height="62" rx="10" fill="#FBE9D2" stroke="#8E4E08" stroke-width="1.5"/>
+<text x="840" y="1109" class="small" fill="#8E4E08" text-anchor="middle" font-weight="700">Caveat: this is a deterministically sampled test slice, not a population-level per-word estimate.</text>
+<text x="840" y="1134" class="small" fill="#8E4E08" text-anchor="middle">Per-word supports are small (7–27 clips); compare exact denominators.</text>
+<line x1="70" y1="1212" x2="1530" y2="1212" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="70" y="1237" class="tiny" fill="#596579" text-anchor="start">Source: experiment-000-linear.json · test.unknown_by_source_word</text>
+<text x="1530" y="1237" class="tiny" fill="#8E4E08" text-anchor="end" font-weight="700">Argmax clips; no streaming threshold</text>
+</svg>

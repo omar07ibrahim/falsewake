@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1160" viewBox="0 0 1600 1160" role="img" aria-labelledby="title desc">
+<title id="title">FalseWake experiment lineage</title>
+<desc id="desc">Experiments 000 through 006 with measured, invoked, preflight-rejected, and terminal boundaries distinguished.</desc>
+<style>text{font-family:Arial, Helvetica, sans-serif;fill:#172033}.mono{font-family:'DejaVu Sans Mono', 'Liberation Mono', monospace}.title{font-size:34px;font-weight:700}.subtitle{font-size:17px}.section{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}.metric{font-size:29px;font-weight:700}.label{font-size:14px;font-weight:700;letter-spacing:.5px}</style>
+<rect width="1600" height="1160" fill="#FFFFFF"/>
+<text x="70" y="55" class="label" fill="#234C78" text-anchor="start">FALSEWAKE · EXECUTION HISTORY</text>
+<text x="70" y="103" class="title" fill="#172033" text-anchor="start">Experiment lineage and fail-closed boundaries</text>
+<text x="70" y="139" class="subtitle" fill="#596579" text-anchor="start">A preserved engineering record: successful measurements, rejections, and incidents.</text>
+<line x1="70" y1="165" x2="1530" y2="165" stroke="#D9E0EA" stroke-width="1.5"/>
+<line x1="170" y1="235" x2="170" y2="907" stroke="#D9E0EA" stroke-width="5"/>
+<circle cx="170" cy="235" r="20" fill="#356FAE" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="242" class="section" fill="#172033" text-anchor="middle">000</text>
+<rect x="235" y="192" width="1280" height="86" rx="12" fill="#DCEAF7" stroke="#356FAE" stroke-width="1.5"/>
+<text x="265" y="225" class="label" fill="#356FAE" text-anchor="start">MEASURED</text>
+<text x="520" y="226" class="body" fill="#172033" text-anchor="start" font-weight="700">Clip baseline complete</text>
+<text x="265" y="260" class="small" fill="#596579" text-anchor="start">Argmax clip metrics; thresholds and streaming were not evaluated.</text>
+<circle cx="170" cy="347" r="20" fill="#356FAE" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="354" class="section" fill="#172033" text-anchor="middle">001</text>
+<rect x="235" y="304" width="1280" height="86" rx="12" fill="#DCEAF7" stroke="#356FAE" stroke-width="1.5"/>
+<text x="265" y="337" class="label" fill="#356FAE" text-anchor="start">MEASURED · REJECTED</text>
+<text x="520" y="338" class="body" fill="#172033" text-anchor="start" font-weight="700">Replay grid reject</text>
+<text x="265" y="372" class="small" fill="#596579" text-anchor="start">No threshold satisfied retention and false-event gates together.</text>
+<circle cx="170" cy="459" r="20" fill="#D27A16" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="466" class="section" fill="#172033" text-anchor="middle">002</text>
+<rect x="235" y="416" width="1280" height="86" rx="12" fill="#FBE9D2" stroke="#D27A16" stroke-width="1.5"/>
+<text x="265" y="449" class="label" fill="#D27A16" text-anchor="start">INVOKED</text>
+<text x="520" y="450" class="body" fill="#172033" text-anchor="start" font-weight="700">seed_selection_failed</text>
+<text x="265" y="484" class="small" fill="#596579" text-anchor="start">Registered execution failed; no scientific result admitted.</text>
+<circle cx="170" cy="571" r="20" fill="#D27A16" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="578" class="section" fill="#172033" text-anchor="middle">003</text>
+<rect x="235" y="528" width="1280" height="86" rx="12" fill="#FBE9D2" stroke="#D27A16" stroke-width="1.5"/>
+<text x="265" y="561" class="label" fill="#D27A16" text-anchor="start">INVOKED</text>
+<text x="520" y="562" class="body" fill="#172033" text-anchor="start" font-weight="700">parent_route_signature_mismatch</text>
+<text x="265" y="596" class="small" fill="#596579" text-anchor="start">Admission failed before training processes started.</text>
+<circle cx="170" cy="683" r="20" fill="#4C566A" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="690" class="section" fill="#172033" text-anchor="middle">004</text>
+<rect x="235" y="640" width="1280" height="86" rx="12" fill="#F7F9FC" stroke="#4C566A" stroke-width="1.5"/>
+<text x="265" y="673" class="label" fill="#4C566A" text-anchor="start">PREFLIGHT REJECTED</text>
+<text x="520" y="674" class="body" fill="#172033" text-anchor="start" font-weight="700">preflight_rejected</text>
+<text x="265" y="708" class="small" fill="#596579" text-anchor="start">Registered authority/coordinator/runner were not invoked.</text>
+<circle cx="170" cy="795" r="20" fill="#4C566A" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="802" class="section" fill="#172033" text-anchor="middle">005</text>
+<rect x="235" y="752" width="1280" height="86" rx="12" fill="#F7F9FC" stroke="#4C566A" stroke-width="1.5"/>
+<text x="265" y="785" class="label" fill="#4C566A" text-anchor="start">PREFLIGHT REJECTED</text>
+<text x="520" y="786" class="body" fill="#172033" text-anchor="start" font-weight="700">preflight_rejected</text>
+<text x="265" y="820" class="small" fill="#596579" text-anchor="start">Registered authority/coordinator/runner were not invoked.</text>
+<circle cx="170" cy="907" r="20" fill="#D27A16" stroke="#FFFFFF" stroke-width="2"/>
+<text x="105" y="914" class="section" fill="#172033" text-anchor="middle">006</text>
+<rect x="235" y="864" width="1280" height="86" rx="12" fill="#FBE9D2" stroke="#D27A16" stroke-width="1.5"/>
+<text x="265" y="897" class="label" fill="#D27A16" text-anchor="start">INVOKED · TERMINAL</text>
+<text x="520" y="898" class="body" fill="#172033" text-anchor="start" font-weight="700">final_registration_capability_rejected_after_prior_state_change</text>
+<text x="265" y="932" class="small" fill="#596579" text-anchor="start">Root cause is undetermined from retained evidence; no retry.</text>
+<rect x="235" y="965" width="1280" height="62" rx="10" fill="#FFFFFF" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="875" y="992" class="small" fill="#8E4E08" text-anchor="middle" font-weight="700">Experiment 006: plausible observer interference was recorded, but overlap and root cause were not established.</text>
+<text x="875" y="1017" class="small" fill="#596579" text-anchor="middle">Incidents are evidence of controls and limits—not successful scientific benchmarks.</text>
+<line x1="70" y1="1092" x2="1530" y2="1092" stroke="#D9E0EA" stroke-width="1.5"/>
+<text x="70" y="1117" class="tiny" fill="#596579" text-anchor="start">Sources: committed result and incident JSON for Experiments 000–006</text>
+<text x="1530" y="1117" class="tiny" fill="#8E4E08" text-anchor="end" font-weight="700">No experiment executed by this renderer</text>
+</svg>

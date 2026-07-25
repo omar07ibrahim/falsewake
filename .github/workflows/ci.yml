@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,6 +21,7 @@ env:
   PYTHONHASHSEED: "0"
   PYTHONNOUSERSITE: "1"
   MPLBACKEND: Agg
+  MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
   OMP_DYNAMIC: "FALSE"
   OMP_NUM_THREADS: "2"
   MKL_DYNAMIC: "FALSE"
@@ -28,26 +30,42 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
-  lint:
-    name: Ruff
+  quality:
+    name: Locked quality and portfolio evidence
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12.3"
+          python-version-file: .python-version
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
 
-      - name: Install Ruff
-        run: python -m pip install "ruff>=0.15,<1"
+      - name: Install locked portable environment
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          python -m pip install --no-deps --no-build-isolation --editable .
 
       - name: Lint
         run: python -m ruff check --no-cache --output-format=github .
+
+      - name: Verify portfolio evidence
+        run: python tools/render_portfolio_visuals.py check
+
+      - name: Test evidence rendering
+        run: |
+          python -m pytest -q -W error -p no:cacheprovider \
+            tests/test_result_plots.py \
+            tests/test_portfolio_visuals.py
 
   validation:
     name: Types and portable tests
@@ -55,17 +73,22 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Protocol tests verify the immutable Experiment 002/003 commit chain.
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12.3"
+          python-version-file: .python-version
+          architecture: x64
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            requirements-dev.lock
+            requirements-train-ci.lock
 
       - name: Materialize the registered repository path
         run: |
@@ -79,18 +102,23 @@ jobs:
       - name: Install registered CPU runtime
         working-directory: /home/ubuntu/gitcode/falsewake
         run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
           python -m pip install \
-            --index-url https://download.pytorch.org/whl/cpu \
-            "torch==2.13.0+cpu"
+            --require-hashes \
+            -r requirements-train-ci.lock
           python -m pip install \
-            "numpy==2.5.1" \
-            "safetensors==0.8.0"
-          python -m pip install -e ".[dev,train]"
+            --no-deps \
+            --no-build-isolation \
+            --editable .
           python -m pip check
 
       - name: Strict type check
         working-directory: /home/ubuntu/gitcode/falsewake
         run: python -m mypy --no-incremental --show-error-codes
+
+      - name: Verify portfolio evidence
+        working-directory: /home/ubuntu/gitcode/falsewake
+        run: python tools/render_portfolio_visuals.py check
 
       - name: Portable unit tests
         # The omitted files exercise the registered host's fixed paths,
