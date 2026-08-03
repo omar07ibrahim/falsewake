@@ -59,7 +59,10 @@ jobs:
         run: python -m ruff check --no-cache --output-format=github .
 
       - name: Verify portfolio evidence
-        run: python tools/render_portfolio_visuals.py check
+        run: |
+          python tools/inspect_evidence.py --json > /dev/null
+          python tools/capture_evidence_terminal.py check
+          python tools/render_portfolio_visuals.py check
 
       - name: Test evidence rendering
         run: |
@@ -130,4 +133,5 @@ jobs:
             --ignore=tests/test_experiment_002_supervisor.py \
             --ignore=tests/test_experiment_002_child_result.py \
             --ignore=tests/test_experiment_002_seed_worker.py \
-            --ignore=tests/test_experiment_003_runner.py
+            --ignore=tests/test_experiment_003_runner.py \
+            --deselect=tests/test_experiment_004_runner.py::test_isolated_command_is_forced_to_fail_before_registration

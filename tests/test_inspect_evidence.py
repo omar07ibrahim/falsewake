@@ -85,7 +85,7 @@ def test_json_output_is_exact_deterministic_and_evidence_bound() -> None:
     assert first.stderr == second.stderr == b""
     assert first.stdout == second.stdout
     assert hashlib.sha256(first.stdout).hexdigest() == (
-        "4cdd806224521afb9c41239352eb37272df6b12ea0b9c591ae0efcfea3be4d04"
+        "3c75ce48517ea9cfd9016ea3eb2421690fc94d581a7496b1510d39ba3ba92bc1"
     )
     assert first.stdout.endswith(b"\n")
     assert first.stdout.count(b"\n") == 1
@@ -126,7 +126,7 @@ def test_human_output_is_exact_path_safe_and_deterministic() -> None:
     assert first.stderr == second.stderr == b""
     assert first.stdout == second.stdout
     assert hashlib.sha256(first.stdout).hexdigest() == (
-        "7e6d6c8458b61a42dfd2a21979e4b71041bcbeb152e62a9ff27a5e0cae8a3b34"
+        "73c44df1eda44f657d307ae6211580b82cae5e9247654ca900eb4bf365dbcf74"
     )
     assert first.stdout.startswith(b"FalseWake tracked evidence inspection\n")
     assert b"000 | MEASURED CLIP BASELINE\n" in first.stdout
