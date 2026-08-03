@@ -123,7 +123,7 @@ SOURCE_SPECS: Final = (
         ("docs", "images", "readme"),
         "provenance.json",
         21_186,
-        "47bf0f5dd554b84bbdcf5543c4b8377451ee49e0ea62d78aee9fb429a5b3bbb0",
+        "5b32752075839e8218f161c7c681b753fde69a596ed1bde34300d8f1aa0fbdd7",
         "tracked visual source-hash provenance",
     ),
 )
