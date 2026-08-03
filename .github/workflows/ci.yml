@@ -21,7 +21,7 @@ env:
   PYTHONHASHSEED: "0"
   PYTHONNOUSERSITE: "1"
   MPLBACKEND: Agg
-  MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+  MPLCONFIGDIR: /tmp/falsewake-matplotlib
   OMP_DYNAMIC: "FALSE"
   OMP_NUM_THREADS: "2"
   MKL_DYNAMIC: "FALSE"
