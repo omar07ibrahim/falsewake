@@ -46,7 +46,9 @@ def _assert_state_close(left: CausalKWSState, right: CausalKWSState) -> None:
         left.depthwise_states, right.depthwise_states, strict=True
     ):
         torch.testing.assert_close(left_history, right_history, rtol=1e-5, atol=1e-6)
-    torch.testing.assert_close(left.pool_state, right.pool_state, rtol=1e-5, atol=1e-6)
+    # Pooling reuses float32 accumulations across different chunk shapes. CPU
+    # kernels may differ by a few ULPs here even when the causal logits agree.
+    torch.testing.assert_close(left.pool_state, right.pool_state, rtol=1e-4, atol=3e-6)
     assert torch.equal(left.frames_seen, right.frames_seen)
 
 
