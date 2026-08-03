@@ -57,7 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Protocol tests verify the immutable Experiment 002 commit chain.
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -66,7 +67,19 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Materialize the registered repository path
+        run: |
+          test ! -e /home/ubuntu/gitcode/falsewake
+          sudo install -d \
+            -o "$(id -u)" \
+            -g "$(id -g)" \
+            /home/ubuntu/gitcode
+          cp -a -- "$GITHUB_WORKSPACE" /home/ubuntu/gitcode/falsewake
+          chmod 0444 \
+            /home/ubuntu/gitcode/falsewake/reports/experiment-002-training.json
+
       - name: Install registered CPU runtime
+        working-directory: /home/ubuntu/gitcode/falsewake
         run: |
           python -m pip install \
             --index-url https://download.pytorch.org/whl/cpu \
@@ -78,11 +91,13 @@ jobs:
           python -m pip check
 
       - name: Strict type check
+        working-directory: /home/ubuntu/gitcode/falsewake
         run: python -m mypy --no-incremental --show-error-codes
 
       - name: Portable unit tests
         # The omitted files exercise the registered host's fixed paths,
         # frozen executables, live taskset chain, and owned output roots.
+        working-directory: /home/ubuntu/gitcode/falsewake
         run: |
           python -m pytest -q -W error -p no:cacheprovider \
             --ignore=tests/test_experiment_002_runner.py \
