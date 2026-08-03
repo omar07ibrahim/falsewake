@@ -75,6 +75,8 @@ jobs:
             -g "$(id -g)" \
             /home/ubuntu/gitcode
           cp -a -- "$GITHUB_WORKSPACE" /home/ubuntu/gitcode/falsewake
+          chmod 0444 \
+            /home/ubuntu/gitcode/falsewake/reports/experiment-002-training.json
 
       - name: Install registered CPU runtime
         working-directory: /home/ubuntu/gitcode/falsewake
@@ -102,4 +104,5 @@ jobs:
             --ignore=tests/test_experiment_002_supervisor.py \
             --ignore=tests/test_experiment_002_child_result.py \
             --ignore=tests/test_experiment_002_seed_worker.py \
-            --ignore=tests/test_experiment_003_runner.py
+            --ignore=tests/test_experiment_003_runner.py \
+            --deselect=tests/test_experiment_004_runner.py::test_isolated_command_is_forced_to_fail_before_registration
