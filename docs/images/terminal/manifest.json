@@ -1,7 +1,7 @@
 {
   "artifact_set": "falsewake_terminal_evidence",
   "capture": {
-    "base_commit": "b607565f84ba4b10d2ae4cddc20bb4e01986b78d",
+    "base_commit": "2806c7bdb890828094b2811e941fc7af6c70af56",
     "command_argv": [
       "{current-python}",
       "tools/inspect_evidence.py"
@@ -19,7 +19,7 @@
     },
     "exit_code": 0,
     "invocation_count": 1,
-    "prior_manifest_sha256": null,
+    "prior_manifest_sha256": "262fbb423914dea0a908e4e7ecb6e966ef41fe5632e66247c9fbf0777d275459",
     "python_version": "3.12.3",
     "shell": false,
     "working_directory": "repository-root"
@@ -27,7 +27,7 @@
   "inspector": {
     "byte_count": 47470,
     "path": "tools/inspect_evidence.py",
-    "sha256": "97ceb7052be028c2cfacc341b9c769416fc0da9fe1adf01ab0cc8f4c80d1e423"
+    "sha256": "d6598d786dae54fbf494ba1e72d7996c2d0e335eec0545d86bdb5bde7e4d5116"
   },
   "panels": [
     {
@@ -52,19 +52,19 @@
     },
     {
       "byte_count": 3468,
-      "excerpt_sha256": "31bfc47f3a8c297367080e86d255ed705fa99c6dfaa067c4f05554411a9eb086",
+      "excerpt_sha256": "a3a5306cb761ab913229239fbe5638950826ae0e3976d0cf66f3dbe407684abd",
       "line_end": 50,
       "line_start": 40,
       "panel_id": "provenance",
       "path": "docs/images/terminal/evidence-provenance.svg",
-      "sha256": "5e519aab65bc50a6f2ebdd17d803192fdcf113cc2615214868af6ce836374950",
+      "sha256": "cdd059f8d5967e784149893792af2b9598c491582944e4c029e4982541d4ba50",
       "title": "Tracked evidence provenance"
     }
   ],
   "recorder": {
     "byte_count": 37435,
     "path": "tools/capture_evidence_terminal.py",
-    "sha256": "7c52bbdc70591a32621cfcf554df94be06528c83a0197f1d7eac51e1f2da5613"
+    "sha256": "7495d4c358f86a7a41a427a347709fbef342fa83d502e12f0c0ceaa0ba70f799"
   },
   "schema_version": 1,
   "sources": [
@@ -125,15 +125,15 @@
     {
       "byte_count": 21186,
       "path": "docs/images/readme/provenance.json",
-      "sha256": "03dcac17981d27c36fddf83a4d19a00dc026562a7f9aecb72b015947867049fb",
+      "sha256": "3aa4bbaebf43b84cb0e3c2310541e40d7d8739a4af009d911471a9c80eb6d74a",
       "source_id": "visual_provenance"
     }
   ],
   "transcript": {
     "byte_count": 3675,
     "line_count": 50,
-    "output_sha256": "7e6d6c8458b61a42dfd2a21979e4b71041bcbeb152e62a9ff27a5e0cae8a3b34",
+    "output_sha256": "73c44df1eda44f657d307ae6211580b82cae5e9247654ca900eb4bf365dbcf74",
     "path": "docs/images/terminal/evidence-inspection.txt",
-    "sha256": "7e6d6c8458b61a42dfd2a21979e4b71041bcbeb152e62a9ff27a5e0cae8a3b34"
+    "sha256": "73c44df1eda44f657d307ae6211580b82cae5e9247654ca900eb4bf365dbcf74"
   }
 }
