@@ -47,4 +47,4 @@ PROVENANCE (repository-relative; SHA-256)
   reports/experiment-004-preflight-incident.json  d015b749acf6e98e87172372315c78ccfaad48b8ae6b3a29ae426890aa467f50
   reports/experiment-005-preflight-incident.json  3de6fbbd6912bee47f3ef01f5371b57ae8d5942b6fc9915fc0ec243b9e931e3d
   reports/experiment-006-execution-incident.json  c5cf002ea876890e3b3769af2bcc850433d3d08ac1071c864ed69ee2172af77d
-  docs/images/readme/provenance.json  3aa4bbaebf43b84cb0e3c2310541e40d7d8739a4af009d911471a9c80eb6d74a
+  docs/images/readme/provenance.json  b2be2341b59f3c4d2d6ad5860d326a1b33347cd81ad3eca13e0c808b14d67e00
