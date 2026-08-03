@@ -68,7 +68,7 @@ RECORDER_RELATIVE_PATH: Final = "tools/capture_evidence_terminal.py"
 INSPECTOR_RELATIVE_PATH: Final = "tools/inspect_evidence.py"
 INSPECTOR_BYTE_COUNT: Final = 47_470
 INSPECTOR_SHA256: Final = (
-    "62ccad89b3e11cfd235bca8fa183124a1bb7542af792d89e95afa3022a00f3b8"
+    "b8663513addedd1b0b73c2ac1937dcb37e1be1aee9c7fb2a683a074ad32e373d"
 )
 TRANSCRIPT_FILENAME: Final = "evidence-inspection.txt"
 MANIFEST_FILENAME: Final = "manifest.json"
@@ -78,7 +78,7 @@ SYMBOLIC_ARGV: Final = ("{current-python}", INSPECTOR_RELATIVE_PATH)
 PYTHON_VERSION: Final = "3.12.3"
 EXPECTED_TRANSCRIPT_BYTE_COUNT: Final = 3_675
 EXPECTED_TRANSCRIPT_SHA256: Final = (
-    "cc2fd40f30ae7a71a486407d94e51e8fa091f89e3d6289982a7e624948fec00f"
+    "61e2d8915443fbda039a79decc11f2fb2c8c93d41100688e59e6e2288e9a1584"
 )
 MAX_MANIFEST_BYTE_COUNT: Final = 65_536
 MAX_TRANSCRIPT_BYTE_COUNT: Final = 16_384
@@ -143,7 +143,7 @@ EVIDENCE_SOURCES: Final = (
         "visual_provenance",
         "docs/images/readme/provenance.json",
         21_186,
-        "f83044063e099a8755bafa2614785288a74716e77d24a1b754a0a72754a9b388",
+        "8cf7c41bef86c4478b7993b1fbae3bfba5c34819250698d29e6e5107c8705082",
     ),
 )
 

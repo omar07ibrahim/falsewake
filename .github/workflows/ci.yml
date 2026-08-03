@@ -42,7 +42,7 @@ jobs:
           # Terminal evidence is bound to the reviewed head, not GitHub's
           # ephemeral pull-request merge commit.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Set up Python
