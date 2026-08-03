@@ -315,7 +315,7 @@
       "source_records": [
         {
           "path": ".github/workflows/ci.yml",
-          "sha256": "66dcd40b50656c582ae9ea4b0d4cbe2e5afb6f28d441c2b23e8e2628bdcab580"
+          "sha256": "2e00f50e66a5b03c5428e89265461ce22f685909d20087d601cc83ae30947c91"
         },
         {
           "path": ".python-version",

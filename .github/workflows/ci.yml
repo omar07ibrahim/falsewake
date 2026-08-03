@@ -101,6 +101,8 @@ jobs:
             -g "$(id -g)" \
             /home/ubuntu/gitcode
           cp -a -- "$GITHUB_WORKSPACE" /home/ubuntu/gitcode/falsewake
+          chmod 0444 \
+            /home/ubuntu/gitcode/falsewake/reports/experiment-002-training.json
 
       - name: Install registered CPU runtime
         working-directory: /home/ubuntu/gitcode/falsewake
