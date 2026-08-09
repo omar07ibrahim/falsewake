@@ -1,7 +1,7 @@
 {
   "artifact_set": "falsewake_terminal_evidence",
   "capture": {
-    "base_commit": "d7fad1f9315397baa75b2342c8228e6ec274d367",
+    "base_commit": "69efd7fe8f6b0dd7efb61d9088239d37b6b84ece",
     "command_argv": [
       "{current-python}",
       "tools/inspect_evidence.py"
@@ -19,7 +19,7 @@
     },
     "exit_code": 0,
     "invocation_count": 1,
-    "prior_manifest_sha256": "96fb2cd26793f5fd21f82d7063f9da6e0e677cf52c74b3ce5bb7e4c5ce38f292",
+    "prior_manifest_sha256": "3065bc7999d5e020430e78ed6e82b56f824cc7b50905b67ec9fb447191f3a793",
     "python_version": "3.12.3",
     "shell": false,
     "working_directory": "repository-root"
@@ -62,9 +62,9 @@
     }
   ],
   "recorder": {
-    "byte_count": 37435,
+    "byte_count": 40577,
     "path": "tools/capture_evidence_terminal.py",
-    "sha256": "2da99ac461c8c283720ce9ea4d3548e1177c70a97b8ce8790f8d5ede81e9bf63"
+    "sha256": "57248ddb0b6e5a500de07cd65418f08922f50248055b1e3d8dd7ec091908ee0f"
   },
   "schema_version": 1,
   "sources": [
