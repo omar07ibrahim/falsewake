@@ -2008,7 +2008,7 @@ def test_child_bundle_failure_paths_close_every_owned_descriptor(
         def injected_open(
             path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
             flags: int,
-            mode: int = 0o777,
+            mode: int = 0o600,
             *,
             dir_fd: int | None = None,
         ) -> int:
@@ -2111,7 +2111,7 @@ def test_child_bundle_reader_writer_alias_retains_one_close_owner(
     def aliased_reader_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -3128,7 +3128,7 @@ def test_fd_walk_regular_to_fifo_race_is_nonblocking_and_rejected(
     def swap_before_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:

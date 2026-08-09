@@ -1247,7 +1247,8 @@ def test_scratch_preflight_rejects_nonempty_mode_and_symlink_paths(
 
     wrong_mode = scratch_directory / "wrong-mode"
     wrong_mode.mkdir(mode=0o755)
-    os.chmod(wrong_mode, 0o755)
+    # Deliberately permissive: the owner-only preflight must reject this fixture.
+    wrong_mode.chmod(0o755)
     with pytest.raises(worker.Experiment002SeedWorkerError):
         worker._preflight_scratch_directory(wrong_mode)
 

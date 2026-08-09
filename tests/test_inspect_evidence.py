@@ -180,7 +180,7 @@ def test_source_surface_is_closed_hash_pinned_and_regular_file_only(
     def recording_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -343,7 +343,7 @@ def test_path_replacement_after_open_never_supplies_replacement_bytes(
     def replacing_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -454,7 +454,7 @@ def test_all_opened_descriptors_close_after_late_failure(
     def recording_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -492,7 +492,7 @@ def test_opened_directory_closes_after_nested_symlink_failure(
     def recording_open(
         path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:

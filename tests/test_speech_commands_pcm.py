@@ -451,7 +451,7 @@ def test_pinned_leaf_descriptor_defeats_symlink_swap(
     def swapping_open(
         path: str | bytes | os.PathLike[str],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -487,7 +487,7 @@ def test_pinned_parent_descriptor_defeats_directory_swap(
     def swapping_open(
         path: str | bytes | os.PathLike[str],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
@@ -547,7 +547,7 @@ def test_concurrent_close_cannot_redirect_a_load_through_fd_reuse(
     def reusing_open(
         path: str | bytes | os.PathLike[str],
         flags: int,
-        mode: int = 0o777,
+        mode: int = 0o600,
         *,
         dir_fd: int | None = None,
     ) -> int:
