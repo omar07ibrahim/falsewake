@@ -83,6 +83,8 @@ EXPECTED_TRANSCRIPT_SHA256: Final = (
 MAX_MANIFEST_BYTE_COUNT: Final = 65_536
 MAX_TRANSCRIPT_BYTE_COUNT: Final = 16_384
 MAX_PANEL_BYTE_COUNT: Final = 65_536
+STAGED_ARTIFACT_MODE: Final = 0o600
+PUBLISHED_ARTIFACT_MODE: Final = 0o644
 
 EVIDENCE_SOURCES: Final = (
     BoundFile(
@@ -782,6 +784,28 @@ def _prepare_output_directory() -> int:
     return directory_fd
 
 
+def _artifact_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _require_artifact_file(
+    metadata: os.stat_result,
+    *,
+    identity: tuple[int, int],
+    permissions: int,
+    byte_count: int,
+) -> None:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or _artifact_identity(metadata) != identity
+        or stat.S_IMODE(metadata.st_mode) != permissions
+        or metadata.st_nlink != 1
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_size != byte_count
+    ):
+        _fail("artifacts:file_identity")
+
+
 def _write_one(directory_fd: int, filename: str, contents: bytes) -> None:
     temporary = f".{filename}.tmp"
     try:
@@ -802,12 +826,24 @@ def _write_one(directory_fd: int, filename: str, contents: bytes) -> None:
         if not stat.S_ISREG(metadata.st_mode):
             _fail("artifacts:destination")
     descriptor = -1
+    identity: tuple[int, int] | None = None
+    temporary_owned = False
     try:
         descriptor = os.open(
             temporary,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
-            0o644,
+            STAGED_ARTIFACT_MODE,
             dir_fd=directory_fd,
+        )
+        temporary_owned = True
+        os.fchmod(descriptor, STAGED_ARTIFACT_MODE)
+        created = os.fstat(descriptor)
+        identity = _artifact_identity(created)
+        _require_artifact_file(
+            created,
+            identity=identity,
+            permissions=STAGED_ARTIFACT_MODE,
+            byte_count=0,
         )
         offset = 0
         while offset < len(contents):
@@ -816,20 +852,74 @@ def _write_one(directory_fd: int, filename: str, contents: bytes) -> None:
                 _fail("artifacts:write")
             offset += written
         os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
+        _require_artifact_file(
+            os.fstat(descriptor),
+            identity=identity,
+            permissions=STAGED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
+        _require_artifact_file(
+            os.stat(temporary, dir_fd=directory_fd, follow_symlinks=False),
+            identity=identity,
+            permissions=STAGED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
         os.replace(
             temporary,
             filename,
             src_dir_fd=directory_fd,
             dst_dir_fd=directory_fd,
         )
+        temporary_owned = False
+        _require_artifact_file(
+            os.stat(filename, dir_fd=directory_fd, follow_symlinks=False),
+            identity=identity,
+            permissions=STAGED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
+        _require_artifact_file(
+            os.fstat(descriptor),
+            identity=identity,
+            permissions=STAGED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
+        # Publish only after the pinned final name identifies the staged inode.
+        os.fchmod(descriptor, PUBLISHED_ARTIFACT_MODE)
+        os.fsync(descriptor)
+        _require_artifact_file(
+            os.stat(filename, dir_fd=directory_fd, follow_symlinks=False),
+            identity=identity,
+            permissions=PUBLISHED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
+        _require_artifact_file(
+            os.fstat(descriptor),
+            identity=identity,
+            permissions=PUBLISHED_ARTIFACT_MODE,
+            byte_count=len(contents),
+        )
+        os.fsync(directory_fd)
+        os.close(descriptor)
+        descriptor = -1
     except (OSError, TerminalEvidenceError):
+        if temporary_owned and identity is not None and descriptor >= 0:
+            with suppress(OSError):
+                opened = os.fstat(descriptor)
+                named = os.stat(
+                    temporary,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    _artifact_identity(opened) == identity
+                    and _artifact_identity(named) == identity
+                    and opened.st_nlink == 1
+                    and named.st_nlink == 1
+                ):
+                    os.unlink(temporary, dir_fd=directory_fd)
         if descriptor >= 0:
             with suppress(OSError):
                 os.close(descriptor)
-        with suppress(OSError):
-            os.unlink(temporary, dir_fd=directory_fd)
         _fail("artifacts:write")
 
 

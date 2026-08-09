@@ -5,6 +5,7 @@ import functools
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -97,6 +98,50 @@ def _mapping(value: object) -> dict[str, object]:
 def _list(value: object) -> list[object]:
     assert type(value) is list
     return cast(list[object], value)
+
+
+def test_writer_stages_private_then_publishes_validated_public_file(
+    isolated_output: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_replace = os.replace
+    observed_modes: list[tuple[int, int]] = []
+
+    def recording_replace(
+        source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        destination: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        staged = os.stat(source, dir_fd=src_dir_fd, follow_symlinks=False)
+        original_replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+        published = os.stat(
+            destination,
+            dir_fd=dst_dir_fd,
+            follow_symlinks=False,
+        )
+        observed_modes.append(
+            (stat.S_IMODE(staged.st_mode), stat.S_IMODE(published.st_mode))
+        )
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+    directory_fd = capture._prepare_output_directory()
+    try:
+        capture._write_one(directory_fd, capture.TRANSCRIPT_FILENAME, b"evidence\n")
+    finally:
+        os.close(directory_fd)
+
+    destination = isolated_output / capture.TRANSCRIPT_FILENAME
+    assert observed_modes == [(0o600, 0o600)]
+    assert destination.read_bytes() == b"evidence\n"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o644
+    assert not (isolated_output / f".{capture.TRANSCRIPT_FILENAME}.tmp").exists()
 
 
 def test_cli_is_a_literal_two_operation_allowlist(
