@@ -1,0 +1,163 @@
+name: Terminal evidence candidate
+
+on:
+  pull_request:
+    paths:
+      - tools/capture_evidence_terminal.py
+      - .github/workflows/terminal-evidence-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminal-evidence-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  LC_ALL: C
+  TZ: UTC
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONHASHSEED: "0"
+  PYTHONNOUSERSITE: "1"
+  MPLBACKEND: Agg
+  MPLCONFIGDIR: /tmp/falsewake-matplotlib
+  OMP_DYNAMIC: "FALSE"
+  OMP_NUM_THREADS: "2"
+  MKL_DYNAMIC: "FALSE"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  candidate:
+    name: Build terminal evidence candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the reviewed head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version-file: .python-version
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+
+      - name: Install locked portable environment
+        run: |
+          python -m pip install --require-hashes -r requirements-dev.lock
+          python -m pip install --no-deps --no-build-isolation --editable .
+
+      - name: Determine whether a candidate is required
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python tools/capture_evidence_terminal.py check; then
+            echo "required=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Generate the isolated candidate
+        if: steps.evidence.outputs.required == 'true'
+        run: python tools/capture_evidence_terminal.py record
+
+      - name: Audit the candidate boundary
+        if: steps.evidence.outputs.required == 'true'
+        env:
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import stat
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          relative_paths = {
+              "docs/images/terminal/evidence-inspection.txt",
+              "docs/images/terminal/evidence-lineage-nonclaims.svg",
+              "docs/images/terminal/evidence-metrics-frontiers.svg",
+              "docs/images/terminal/evidence-provenance.svg",
+              "docs/images/terminal/manifest.json",
+          }
+          changed = {
+              path.decode("utf-8")
+              for path in subprocess.check_output(
+                  ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRTUXB"]
+              ).split(b"\0")
+              if path
+          }
+          if not changed or not changed <= relative_paths:
+              raise SystemExit(f"candidate changed unexpected paths: {sorted(changed)!r}")
+          untracked = subprocess.check_output(
+              ["git", "ls-files", "--others", "--exclude-standard", "-z"]
+          )
+          if untracked:
+              raise SystemExit("candidate created untracked files")
+          subprocess.run(["git", "diff", "--check"], check=True)
+          forbidden = (
+              b"/home/",
+              b"/Users/",
+              b"AKIA",
+              b"BEGIN PRIVATE KEY",
+              b"github_pat_",
+              b"ghp_",
+          )
+          for relative in sorted(relative_paths):
+              path = root / relative
+              metadata = path.lstat()
+              contents = path.read_bytes()
+              if (
+                  not stat.S_ISREG(metadata.st_mode)
+                  or stat.S_IMODE(metadata.st_mode) != 0o644
+                  or not contents
+                  or any(token in contents for token in forbidden)
+              ):
+                  raise SystemExit(f"candidate artifact failed audit: {relative}")
+          manifest_path = root / "docs/images/terminal/manifest.json"
+          manifest = json.loads(manifest_path.read_bytes())
+          head = os.environ["CANDIDATE_HEAD_SHA"]
+          if manifest["capture"]["base_commit"] != head:
+              raise SystemExit("candidate base commit differs from reviewed head")
+          recorder = (root / "tools/capture_evidence_terminal.py").read_bytes()
+          if manifest["recorder"] != {
+              "byte_count": len(recorder),
+              "path": "tools/capture_evidence_terminal.py",
+              "sha256": hashlib.sha256(recorder).hexdigest(),
+          }:
+              raise SystemExit("candidate recorder binding differs")
+          prior = subprocess.check_output(
+              ["git", "show", "HEAD:docs/images/terminal/manifest.json"]
+          )
+          if manifest["capture"]["prior_manifest_sha256"] != hashlib.sha256(
+              prior
+          ).hexdigest():
+              raise SystemExit("candidate lineage differs from committed manifest")
+          PY
+
+      - name: Upload the audited candidate without adopting it
+        if: steps.evidence.outputs.required == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: terminal-evidence-candidate-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            docs/images/terminal/evidence-inspection.txt
+            docs/images/terminal/evidence-lineage-nonclaims.svg
+            docs/images/terminal/evidence-metrics-frontiers.svg
+            docs/images/terminal/evidence-provenance.svg
+            docs/images/terminal/manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
